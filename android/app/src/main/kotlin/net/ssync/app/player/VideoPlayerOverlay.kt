@@ -315,14 +315,14 @@ fun VideoPlayerOverlay(
                     .fillMaxSize()
                     .background(Color.Black.copy(alpha = 0.36f)),
             ) {
-                // Top Bar: Close + Title + Quick Cinema Pills
+                // Top Bar: Close + Title (+ clickable Channel/Show subtitle) + Cast icon
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .align(Alignment.TopCenter)
                         .background(
                             Brush.verticalGradient(
-                                listOf(Color.Black.copy(alpha = 0.85f), Color.Transparent),
+                                listOf(Color.Black.copy(alpha = 0.88f), Color.Transparent),
                             ),
                         )
                         .statusBarsPadding()
@@ -344,6 +344,7 @@ fun VideoPlayerOverlay(
                         Icon(Icons.Default.Close, contentDescription = "Close video", tint = Color.White)
                     }
                     Spacer(modifier = Modifier.width(12.dp))
+                    val canJumpToChannel = item.itemType == "youtube" && !item.parentId.isNullOrBlank() && onOpenChannel != null
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
                             text = item.title,
@@ -355,61 +356,40 @@ fun VideoPlayerOverlay(
                         )
                         if (item.subtitle.isNotBlank()) {
                             Text(
-                                text = item.subtitle,
-                                color = SoulSyncColors.TextSoft,
+                                text = if (canJumpToChannel) "${item.subtitle} ›" else item.subtitle,
+                                color = if (canJumpToChannel) SoulSyncColors.AccentLight else SoulSyncColors.TextSoft,
                                 fontSize = 12.sp,
+                                fontWeight = if (canJumpToChannel) FontWeight.SemiBold else FontWeight.Normal,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
+                                modifier = if (canJumpToChannel) {
+                                    Modifier
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .clickable { onOpenChannel?.invoke(item.parentId!!) }
+                                        .padding(vertical = 2.dp)
+                                } else {
+                                    Modifier
+                                },
                             )
                         }
                     }
 
-                    if (item.itemType == "youtube" && !item.parentId.isNullOrBlank() && onOpenChannel != null) {
-                        CinemaPill(
-                            icon = Icons.Default.PlayArrow,
-                            label = "Channel",
-                            onClick = { onOpenChannel(item.parentId) },
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                    }
-
-                    // Cast button (opens Android Cast / Wireless Display picker)
-                    CinemaPill(
-                        icon = Icons.Default.Cast,
-                        label = "Cast",
+                    Spacer(modifier = Modifier.width(8.dp))
+                    IconButton(
                         onClick = {
                             runCatching {
                                 context.startActivity(Intent(Settings.ACTION_CAST_SETTINGS))
                             }
                             hudPoke++
                         },
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-
-                    // Picture Fit cycle pill
-                    CinemaPill(
-                        icon = Icons.Default.AspectRatio,
-                        label = displayPrefs.pictureFit.replaceFirstChar { it.uppercase() },
-                        onClick = {
-                            val order = listOf("fit", "fill", "stretch")
-                            val next = order[(order.indexOf(displayPrefs.pictureFit) + 1) % order.size]
-                            PlayerDevicePrefs.update { it.copy(pictureFit = next) }
-                            hudPoke++
-                        },
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    // Brightness quick-dim pill
-                    CinemaPill(
-                        icon = Icons.Default.Brightness6,
-                        label = "${(displayPrefs.brightness * 100).roundToInt()}%",
-                        onClick = {
-                            val steps = listOf(1.0f, 0.80f, 0.60f, 0.45f, 0.30f)
-                            val curIdx = steps.indexOfFirst { kotlin.math.abs(it - displayPrefs.brightness) < 0.08f }
-                            val next = steps[(curIdx + 1) % steps.size]
-                            PlayerDevicePrefs.update { it.copy(brightness = next) }
-                            hudPoke++
-                        },
-                    )
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(CircleShape)
+                            .background(Color.White.copy(alpha = 0.12f))
+                            .dpadFocusable(CircleShape),
+                    ) {
+                        Icon(Icons.Default.Cast, contentDescription = "Cast", tint = Color.White, modifier = Modifier.size(20.dp))
+                    }
                 }
 
                 // Center Cinema Transport: -10s / Play-Pause / +10s
@@ -508,20 +488,34 @@ fun VideoPlayerOverlay(
                         modifier = Modifier.fillMaxWidth(),
                     )
 
+                    val shownPos = if (scrubbing && durationMs > 0L) (scrubValue * durationMs).toLong() else positionMs
+                    val remaining = (durationMs - shownPos).coerceAtLeast(0L)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween,
                     ) {
-                        val shownPos = if (scrubbing && durationMs > 0L) (scrubValue * durationMs).toLong() else positionMs
-                        val remaining = (durationMs - shownPos).coerceAtLeast(0L)
                         Text(
-                            text = "${formatVideoTime(shownPos)}  /  -${formatVideoTime(remaining)}",
+                            text = formatVideoTime(shownPos),
                             color = Color.White,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.SemiBold,
                         )
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            text = "-${formatVideoTime(remaining)}",
+                            color = SoulSyncColors.TextSoft,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    // Clean scrollable cinema action bar (never overflows portrait or landscape)
+                    LazyRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        item {
                             CinemaPill(
                                 icon = Icons.Default.Speed,
                                 label = "${VIDEO_SPEEDS[speedIndex]}x",
@@ -531,6 +525,8 @@ fun VideoPlayerOverlay(
                                     hudPoke++
                                 },
                             )
+                        }
+                        item {
                             CinemaPill(
                                 icon = Icons.Default.Subtitles,
                                 label = "Audio & Subs",
@@ -539,6 +535,40 @@ fun VideoPlayerOverlay(
                                     hudPoke++
                                 },
                             )
+                        }
+                        item {
+                            CinemaPill(
+                                icon = Icons.Default.AspectRatio,
+                                label = displayPrefs.pictureFit.replaceFirstChar { it.uppercase() },
+                                onClick = {
+                                    val order = listOf("fit", "fill", "stretch")
+                                    val next = order[(order.indexOf(displayPrefs.pictureFit) + 1) % order.size]
+                                    PlayerDevicePrefs.update { it.copy(pictureFit = next) }
+                                    hudPoke++
+                                },
+                            )
+                        }
+                        item {
+                            CinemaPill(
+                                icon = Icons.Default.Brightness6,
+                                label = "${(displayPrefs.brightness * 100).roundToInt()}%",
+                                onClick = {
+                                    val steps = listOf(1.0f, 0.80f, 0.60f, 0.45f, 0.30f)
+                                    val curIdx = steps.indexOfFirst { kotlin.math.abs(it - displayPrefs.brightness) < 0.08f }
+                                    val next = steps[(curIdx + 1) % steps.size]
+                                    PlayerDevicePrefs.update { it.copy(brightness = next) }
+                                    hudPoke++
+                                },
+                            )
+                        }
+                        if (item.itemType == "youtube" && !item.parentId.isNullOrBlank() && onOpenChannel != null) {
+                            item {
+                                CinemaPill(
+                                    icon = Icons.Default.PlayArrow,
+                                    label = "Channel",
+                                    onClick = { onOpenChannel(item.parentId) },
+                                )
+                            }
                         }
                     }
                 }

@@ -73,6 +73,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -193,11 +194,12 @@ fun PlayerShell(
     val imageLoader = remember(context, activeBaseUrl, pinnedClient) {
         createPinnedImageLoader(context.applicationContext, activeBaseUrl, pinnedClient)
     }
+    val latestMediaController by rememberUpdatedState(mediaController)
     val coordinator = remember(api) {
         PlaybackCoordinator(
             api = api,
             scope = scope,
-            controllerProvider = { mediaController },
+            controllerProvider = { latestMediaController },
         )
     }
 
