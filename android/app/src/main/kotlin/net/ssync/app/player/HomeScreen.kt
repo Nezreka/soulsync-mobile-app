@@ -574,9 +574,11 @@ fun HomeScreen(
                                                 itemId = yt.id,
                                                 title = yt.title,
                                                 subtitle = yt.channelTitle.orEmpty(),
-                                                artworkUrl = api.artwork.resolve(yt.thumbnailUrl),
+                                                artworkUrl = api.artwork.resolve(yt.thumbnailUrl)
+                                                    ?: api.artwork.forItem("youtube", yt.id),
                                                 streamUrl = api.streamUrl("youtube", yt.id),
                                                 isVideo = true,
+                                                parentId = yt.channelId,
                                             ),
                                         )
                                     },

@@ -99,9 +99,10 @@ fun YouTubeScreen(
                 itemId = v.id,
                 title = v.title,
                 subtitle = v.channelTitle.orEmpty(),
-                artworkUrl = api.artwork.resolve(v.thumbnail),
+                artworkUrl = api.artwork.resolve(v.thumbnail) ?: api.artwork.forItem("youtube", v.id),
                 streamUrl = api.streamUrl("youtube", v.id),
                 isVideo = true,
+                parentId = v.channelId,
             ),
         )
     }

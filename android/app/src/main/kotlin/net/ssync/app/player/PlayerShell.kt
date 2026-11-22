@@ -1,5 +1,8 @@
 package net.ssync.app.player
 
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Network
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
@@ -62,6 +65,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -132,8 +136,28 @@ fun PlayerShell(
         )
     }
 
-    // Seamless Wi-Fi <-> 5G LAN/WAN failover: race cached candidate addresses on start
-    LaunchedEffect(currentRecord.lookupId, pinnedClient) {
+    var networkEpoch by remember { mutableIntStateOf(0) }
+
+    // Listen for Wi-Fi <-> 5G/LTE network transitions so we automatically re-race LAN/WAN candidates
+    DisposableEffect(context) {
+        val cm = context.applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                networkEpoch += 1
+            }
+
+            override fun onLost(network: Network) {
+                networkEpoch += 1
+            }
+        }
+        runCatching { cm?.registerDefaultNetworkCallback(callback) }
+        onDispose {
+            runCatching { cm?.unregisterNetworkCallback(callback) }
+        }
+    }
+
+    // Seamless Wi-Fi <-> 5G LAN/WAN failover: race cached candidate addresses on start & network change
+    LaunchedEffect(currentRecord.lookupId, pinnedClient, networkEpoch) {
         if (currentRecord.candidateAddresses.size > 1) {
             val best = CandidateAddressRacer(pinnedClient).selectBestBaseUrl(currentRecord.candidateAddresses)
             if (best != null && best != activeBaseUrl) {
@@ -382,6 +406,10 @@ fun PlayerShell(
                     item = videoItem,
                     api = api,
                     pinnedHttpClient = pinnedClient,
+                    onOpenChannel = { channelId ->
+                        coordinator.closeVideo(coordinator.positionMs, coordinator.durationMs)
+                        navigateTo(PlayerDestination.YouTubeChannel(channelId, videoItem.subtitle.ifBlank { "Channel" }))
+                    },
                     onClose = { pos, dur -> coordinator.closeVideo(pos, dur) },
                 )
             }

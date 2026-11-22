@@ -24,6 +24,7 @@ data class ActivePlayable(
     val isVideo: Boolean = false,
     val resumePositionMs: Long = 0L,
     val durationMs: Long = 0L,
+    val parentId: String? = null,
 )
 
 /**

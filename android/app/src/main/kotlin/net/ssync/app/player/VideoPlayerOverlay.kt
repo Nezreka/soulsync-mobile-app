@@ -73,6 +73,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
@@ -102,6 +103,7 @@ fun VideoPlayerOverlay(
     item: ActivePlayable,
     api: PlayerApiClient,
     pinnedHttpClient: OkHttpClient,
+    onOpenChannel: ((String) -> Unit)? = null,
     onClose: (positionMs: Long, durationMs: Long) -> Unit,
 ) {
     val context = LocalContext.current
@@ -145,16 +147,26 @@ fun VideoPlayerOverlay(
     var hudPoke by remember { mutableStateOf(0) }
     var speedIndex by remember { mutableStateOf(1) }
     var showTracksSheet by remember { mutableStateOf(false) }
+    var playbackError by remember { mutableStateOf<String?>(null) }
 
     DisposableEffect(exoPlayer) {
         val listener = object : Player.Listener {
             override fun onIsPlayingChanged(playing: Boolean) {
                 isPlaying = playing
+                if (playing) playbackError = null
             }
 
             override fun onPlaybackStateChanged(playbackState: Int) {
                 isBuffering = playbackState == Player.STATE_BUFFERING
                 if (exoPlayer.duration > 0L) durationMs = exoPlayer.duration
+            }
+
+            override fun onPlayerError(error: PlaybackException) {
+                isBuffering = false
+                isPlaying = false
+                showHud = true
+                playbackError = error.localizedMessage
+                    ?: "Couldn't play this video (${error.errorCodeName}). The file may be corrupt or unreachable."
             }
         }
         exoPlayer.addListener(listener)
@@ -223,11 +235,54 @@ fun VideoPlayerOverlay(
             )
         }
 
-        if (isBuffering) {
+        if (isBuffering && playbackError == null) {
             CircularProgressIndicator(
                 color = SoulSyncColors.AccentLight,
                 modifier = Modifier.align(Alignment.Center),
             )
+        }
+
+        if (playbackError != null) {
+            Column(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .padding(horizontal = 28.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(Color.Black.copy(alpha = 0.86f))
+                    .border(1.dp, Color.White.copy(alpha = 0.16f), RoundedCornerShape(16.dp))
+                    .padding(20.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text(
+                    text = "Playback error",
+                    color = Color.White,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                )
+                Text(
+                    text = playbackError.orEmpty(),
+                    color = SoulSyncColors.TextSoft,
+                    fontSize = 13.sp,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    CinemaPill(
+                        icon = Icons.Default.PlayArrow,
+                        label = "Retry",
+                        onClick = {
+                            playbackError = null
+                            isBuffering = true
+                            exoPlayer.prepare()
+                            exoPlayer.playWhenReady = true
+                        },
+                    )
+                    CinemaPill(
+                        icon = Icons.Default.Close,
+                        label = "Close",
+                        onClick = { onClose(positionMs, durationMs) },
+                    )
+                }
+            }
         }
 
         // Custom Best-in-Class Cinema HUD
@@ -289,6 +344,15 @@ fun VideoPlayerOverlay(
                                 overflow = TextOverflow.Ellipsis,
                             )
                         }
+                    }
+
+                    if (item.itemType == "youtube" && !item.parentId.isNullOrBlank() && onOpenChannel != null) {
+                        CinemaPill(
+                            icon = Icons.Default.PlayArrow,
+                            label = "Channel",
+                            onClick = { onOpenChannel(item.parentId) },
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
                     }
 
                     // Picture Fit cycle pill
