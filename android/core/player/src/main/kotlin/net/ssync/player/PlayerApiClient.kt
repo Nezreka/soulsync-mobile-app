@@ -303,6 +303,105 @@ class PlayerApiClient(
             json.decodeFromString<TogetherEnvelope>(body).titles
         }
 
+    // ── Watch Parties (Watch Together + Theater Waiting Rooms) ──────────
+
+    private fun encodeSeg(s: String): String = java.net.URLEncoder.encode(s, "UTF-8")
+
+    suspend fun fetchWatchParties(): MusicApiResult<List<WatchParty>> =
+        getJson("$base/api/player/parties") { body ->
+            json.decodeFromString<WatchPartiesEnvelope>(body).parties
+        }
+
+    suspend fun fetchWatchParty(partyId: String): MusicApiResult<WatchParty> =
+        getJson("$base/api/player/parties/${encodeSeg(partyId)}") { body ->
+            json.decodeFromString<WatchPartyEnvelope>(body).party
+        }
+
+    suspend fun createWatchParty(
+        title: String,
+        itemType: String,
+        itemId: String,
+        meta: ProgressMeta? = null,
+        showId: Int? = null,
+        scheduledForSec: Long? = null,
+        controlMode: String = "host",
+        lobbyMusic: Boolean = true,
+    ): MusicApiResult<WatchParty> = withContext(Dispatchers.IO) {
+        val bodyObj = kotlinx.serialization.json.buildJsonObject {
+            put("title", kotlinx.serialization.json.JsonPrimitive(title))
+            put("item_type", kotlinx.serialization.json.JsonPrimitive(itemType))
+            put("item_id", kotlinx.serialization.json.JsonPrimitive(itemId))
+            if (meta != null) put("meta", json.encodeToJsonElement(ProgressMeta.serializer(), meta))
+            if (showId != null) put("show_id", kotlinx.serialization.json.JsonPrimitive(showId))
+            if (scheduledForSec != null) put("scheduled_for", kotlinx.serialization.json.JsonPrimitive(scheduledForSec))
+            put("control_mode", kotlinx.serialization.json.JsonPrimitive(controlMode))
+            put("lobby_music", kotlinx.serialization.json.JsonPrimitive(lobbyMusic))
+        }
+        val req = Request.Builder()
+            .url("$base/api/player/parties")
+            .post(bodyObj.toString().toRequestBody(JSON_MEDIA_TYPE))
+            .build()
+        execute(req) { json.decodeFromString<WatchPartyEnvelope>(it).party }
+    }
+
+    suspend fun joinWatchParty(
+        partyId: String,
+        ready: Boolean? = null,
+        rsvp: Boolean = false,
+    ): MusicApiResult<WatchParty> = withContext(Dispatchers.IO) {
+        val bodyObj = kotlinx.serialization.json.buildJsonObject {
+            if (ready != null) put("ready", kotlinx.serialization.json.JsonPrimitive(ready))
+            put("rsvp", kotlinx.serialization.json.JsonPrimitive(rsvp))
+        }
+        val req = Request.Builder()
+            .url("$base/api/player/parties/${encodeSeg(partyId)}/join")
+            .post(bodyObj.toString().toRequestBody(JSON_MEDIA_TYPE))
+            .build()
+        execute(req) { json.decodeFromString<WatchPartyEnvelope>(it).party }
+    }
+
+    suspend fun updateWatchPartyState(
+        partyId: String,
+        action: String? = null,
+        position: Double? = null,
+        shuffleLobbyMusic: Boolean = false,
+    ): MusicApiResult<WatchParty> = withContext(Dispatchers.IO) {
+        val bodyObj = kotlinx.serialization.json.buildJsonObject {
+            if (action != null) put("action", kotlinx.serialization.json.JsonPrimitive(action))
+            if (position != null) put("position", kotlinx.serialization.json.JsonPrimitive(position))
+            if (shuffleLobbyMusic) put("shuffle_lobby_music", kotlinx.serialization.json.JsonPrimitive(true))
+        }
+        val req = Request.Builder()
+            .url("$base/api/player/parties/${encodeSeg(partyId)}/state")
+            .post(bodyObj.toString().toRequestBody(JSON_MEDIA_TYPE))
+            .build()
+        execute(req) { json.decodeFromString<WatchPartyEnvelope>(it).party }
+    }
+
+    suspend fun postWatchPartyChat(
+        partyId: String,
+        kind: String,
+        bodyText: String,
+    ): MusicApiResult<WatchPartyMessage> = withContext(Dispatchers.IO) {
+        val bodyObj = kotlinx.serialization.json.buildJsonObject {
+            put("kind", kotlinx.serialization.json.JsonPrimitive(kind))
+            put("body", kotlinx.serialization.json.JsonPrimitive(bodyText))
+        }
+        val req = Request.Builder()
+            .url("$base/api/player/parties/${encodeSeg(partyId)}/chat")
+            .post(bodyObj.toString().toRequestBody(JSON_MEDIA_TYPE))
+            .build()
+        execute(req) { json.decodeFromString<WatchPartyMessageEnvelope>(it).message }
+    }
+
+    suspend fun deleteWatchParty(partyId: String): MusicApiResult<Unit> = withContext(Dispatchers.IO) {
+        val req = Request.Builder()
+            .url("$base/api/player/parties/${encodeSeg(partyId)}")
+            .delete()
+            .build()
+        execute(req) { }
+    }
+
     suspend fun sendPresence(
         itemType: String,
         itemId: String,

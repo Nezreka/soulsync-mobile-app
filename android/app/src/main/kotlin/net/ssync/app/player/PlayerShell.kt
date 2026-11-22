@@ -1084,7 +1084,7 @@ private fun PlayerContent(
         PlayerDestination.Audiobooks -> AudiobooksScreen(api, { onNavigate(PlayerDestination.AudiobookDetail(it)) }, onDeviceRevoked)
         is PlayerDestination.AudiobookDetail -> AudiobookDetailScreen(current.book, api, coordinator)
         PlayerDestination.Watchlist -> WatchlistScreen(api, onNavigate, onDeviceRevoked)
-        PlayerDestination.WatchingNow -> WatchingNowScreen(api, onDeviceRevoked)
+        PlayerDestination.WatchingNow -> WatchingNowScreen(api, coordinator, onNavigate, onDeviceRevoked)
         PlayerDestination.Search -> SearchScreen(api, coordinator, onNavigate, onDeviceRevoked)
         PlayerDestination.Settings -> SettingsScreen(
             record = record,

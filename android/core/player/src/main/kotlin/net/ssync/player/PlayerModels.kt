@@ -523,9 +523,26 @@ data class WatchlistItem(
 )
 
 @Serializable
+data class SocialProfileRef(
+    val name: String = "Someone",
+    @SerialName("avatar_color")
+    val avatarColor: String? = null,
+    @SerialName("avatar_url")
+    val avatarUrl: String? = null,
+)
+
+@Serializable
+data class PresenceChannelRef(
+    val id: String = "",
+    val name: String = "",
+    val number: Int? = null,
+)
+
+@Serializable
 data class WatchingSession(
     @SerialName("profile_id")
     val profileId: Int = 0,
+    val profile: SocialProfileRef? = null,
     @SerialName("profile_name")
     val profileName: String = "",
     @SerialName("avatar_color")
@@ -538,12 +555,26 @@ data class WatchingSession(
     val title: String = "",
     val subtitle: String? = null,
     val artwork: String? = null,
+    val meta: ProgressMeta? = null,
+    val playing: Boolean = true,
     val paused: Boolean = false,
+    val live: Boolean = false,
+    val channel: PresenceChannelRef? = null,
+    val position: Double = 0.0,
+    val duration: Double? = null,
     @SerialName("position_seconds")
     val positionSeconds: Double = 0.0,
     @SerialName("duration_seconds")
     val durationSeconds: Double? = null,
-)
+) {
+    val resolvedName: String get() = profile?.name?.takeIf { it.isNotBlank() } ?: profileName.ifBlank { "Someone" }
+    val resolvedTitle: String get() = meta?.title?.takeIf { it.isNotBlank() } ?: title.ifBlank { "Playing" }
+    val resolvedSubtitle: String? get() = meta?.subtitle?.takeIf { it.isNotBlank() } ?: subtitle
+    val resolvedArtwork: String? get() = meta?.backdrop ?: meta?.artwork ?: artwork
+    val resolvedPosition: Double get() = if (position > 0.0) position else positionSeconds
+    val resolvedDuration: Double? get() = duration ?: durationSeconds
+    val isPlayingNow: Boolean get() = playing && !paused
+}
 
 @Serializable
 data class PresenceResponse(
@@ -552,7 +583,25 @@ data class PresenceResponse(
 )
 
 @Serializable
+data class TogetherPlace(
+    @SerialName("item_type")
+    val itemType: String = "",
+    @SerialName("item_id")
+    val itemId: String = "",
+    val position: Double = 0.0,
+    val duration: Double? = null,
+    val finished: Boolean = false,
+    val meta: ProgressMeta? = null,
+    @SerialName("profile_id")
+    val profileId: Int = 0,
+    val profile: SocialProfileRef? = null,
+)
+
+@Serializable
 data class TogetherTitle(
+    val key: String = "",
+    val mine: TogetherPlace? = null,
+    val others: List<TogetherPlace> = emptyList(),
     @SerialName("item_type")
     val itemType: String = "",
     @SerialName("item_id")
@@ -561,6 +610,95 @@ data class TogetherTitle(
     val artwork: String? = null,
     val profiles: List<String> = emptyList(),
 )
+
+// ── Watch Parties (Watch Together + Theater Waiting Rooms) ───────────────────
+
+@Serializable
+data class WatchPartyLobbyTrack(
+    @SerialName("track_id")
+    val trackId: String,
+    val title: String = "Lobby Music",
+    val artist: String = "",
+    @SerialName("album_id")
+    val albumId: Int? = null,
+    val artwork: String? = null,
+    @SerialName("duration_ms")
+    val durationMs: Long? = null,
+    @SerialName("live_position")
+    val livePosition: Double = 0.0,
+)
+
+@Serializable
+data class WatchPartyMember(
+    @SerialName("profile_id")
+    val profileId: Int,
+    val profile: SocialProfileRef? = null,
+    val status: String = "joined",
+    val ready: Boolean = false,
+    @SerialName("is_host")
+    val isHost: Boolean = false,
+    val you: Boolean = false,
+)
+
+@Serializable
+data class WatchPartyMessage(
+    val id: Int = 0,
+    @SerialName("profile_id")
+    val profileId: Int = 0,
+    val profile: SocialProfileRef? = null,
+    val kind: String = "chat", // "chat" | "reaction" | "system"
+    val body: String = "",
+    @SerialName("created_at")
+    val createdAt: Double = 0.0,
+    val you: Boolean = false,
+)
+
+@Serializable
+data class WatchParty(
+    val id: String,
+    @SerialName("host_profile_id")
+    val hostProfileId: Int = 0,
+    @SerialName("host_profile")
+    val hostProfile: SocialProfileRef? = null,
+    @SerialName("is_host")
+    val isHost: Boolean = false,
+    @SerialName("is_member")
+    val isMember: Boolean = false,
+    @SerialName("can_control")
+    val canControl: Boolean = false,
+    val title: String = "Watch Party",
+    @SerialName("item_type")
+    val itemType: String = "movie",
+    @SerialName("item_id")
+    val itemId: String = "",
+    val meta: ProgressMeta? = null,
+    @SerialName("show_id")
+    val showId: Int? = null,
+    val status: String = "lobby", // "scheduled" | "lobby" | "playing" | "paused" | "ended"
+    @SerialName("scheduled_for")
+    val scheduledFor: Double? = null,
+    @SerialName("control_mode")
+    val controlMode: String = "host",
+    @SerialName("live_position")
+    val livePosition: Double = 0.0,
+    @SerialName("lobby_track")
+    val lobbyTrack: WatchPartyLobbyTrack? = null,
+    val members: List<WatchPartyMember> = emptyList(),
+    @SerialName("member_count")
+    val memberCount: Int = 0,
+    @SerialName("ready_count")
+    val readyCount: Int = 0,
+    val messages: List<WatchPartyMessage> = emptyList(),
+)
+
+@Serializable
+internal data class WatchPartiesEnvelope(val parties: List<WatchParty> = emptyList())
+
+@Serializable
+internal data class WatchPartyEnvelope(val party: WatchParty)
+
+@Serializable
+internal data class WatchPartyMessageEnvelope(val message: WatchPartyMessage)
 
 @Serializable
 data class GuideChannel(
