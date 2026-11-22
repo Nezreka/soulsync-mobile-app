@@ -10,6 +10,7 @@ sealed interface PlayerDestination {
     data class MovieDetail(val movieId: Int) : PlayerDestination
     data object Tv : PlayerDestination
     data class ShowDetail(val showId: Int) : PlayerDestination
+    data class PersonDetail(val tmdbId: Int, val name: String) : PlayerDestination
     data object Music : PlayerDestination
     data class ArtistDetail(val artistId: Int) : PlayerDestination
     data class AlbumDetail(val albumId: Int) : PlayerDestination

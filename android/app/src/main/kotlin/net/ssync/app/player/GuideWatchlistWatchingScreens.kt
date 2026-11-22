@@ -68,6 +68,7 @@ fun GuideScreen(
     coordinator: PlaybackCoordinator,
     onDeviceRevoked: () -> Unit,
 ) {
+    val scope = rememberCoroutineScope()
     var channels by remember { mutableStateOf<List<GuideChannel>>(emptyList()) }
     var musicChannels by remember { mutableStateOf<List<MusicChannel>>(emptyList()) }
     var favorites by remember { mutableStateOf<Set<String>>(emptySet()) }
@@ -198,13 +199,29 @@ fun GuideScreen(
                             modifier = Modifier.fillMaxSize().padding(horizontal = 10.dp, vertical = 8.dp),
                             verticalArrangement = Arrangement.SpaceBetween,
                         ) {
-                            Text(
-                                text = "● LIVE  ${ch.name}",
-                                color = SoulSyncColors.AccentLight,
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold,
-                                maxLines = 1,
-                            )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = "● LIVE  ${ch.name}",
+                                    color = SoulSyncColors.AccentLight,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                val isFav = ch.id in favorites
+                                Icon(
+                                    imageVector = Icons.Default.Star,
+                                    contentDescription = "Favorite channel",
+                                    tint = if (isFav) SoulSyncColors.Warning else SoulSyncColors.TextSecondary.copy(alpha = 0.45f),
+                                    modifier = Modifier
+                                        .size(16.dp)
+                                        .clickable {
+                                            val updated = if (isFav) favorites - ch.id else favorites + ch.id
+                                            favorites = updated
+                                            scope.launch { api.saveGuideFavorites(updated.toList()) }
+                                        },
+                                )
+                            }
                             Text(
                                 text = ch.currentTitle ?: ch.description ?: "Live stream",
                                 color = SoulSyncColors.TextPrimary,

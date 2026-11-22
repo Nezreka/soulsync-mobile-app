@@ -81,11 +81,13 @@ import androidx.compose.ui.unit.sp
 import androidx.media3.session.MediaController
 import kotlinx.coroutines.delay
 import net.ssync.app.R
+import net.ssync.network.CandidateAddressRacer
 import net.ssync.network.CertPinningOkHttp
 import net.ssync.pairing.theme.SoulSyncColors
 import net.ssync.pairing.ui.dpadFocusable
 import net.ssync.player.MusicApiResult
 import net.ssync.player.PlayerApiClient
+import net.ssync.storage.KeystoreServerVault
 import net.ssync.storage.PairedServerRecord
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -106,11 +108,23 @@ fun PlayerShell(
             onUnauthorized = onDeviceRevoked,
         )
     }
-    val api = remember(record, pinnedClient) {
+    var activeBaseUrl by remember(record) { mutableStateOf(record.lastWorkingBaseUrl) }
+    val api = remember(activeBaseUrl, pinnedClient) {
         PlayerApiClient(
-            baseUrl = record.lastWorkingBaseUrl,
+            baseUrl = activeBaseUrl,
             pinnedAuthenticatedClient = pinnedClient,
         )
+    }
+
+    // Seamless Wi-Fi <-> 5G LAN/WAN failover: race cached candidate addresses on start
+    LaunchedEffect(record, pinnedClient) {
+        if (record.candidateAddresses.size > 1) {
+            val best = CandidateAddressRacer(pinnedClient).selectBestBaseUrl(record.candidateAddresses)
+            if (best != null && best != activeBaseUrl) {
+                activeBaseUrl = best
+                KeystoreServerVault(context.applicationContext).save(record.copy(lastWorkingBaseUrl = best))
+            }
+        }
     }
     val imageLoader = remember(context, pinnedClient) {
         createPinnedImageLoader(context.applicationContext, pinnedClient)
@@ -127,7 +141,12 @@ fun PlayerShell(
     val current = backStack.last()
     var showMoreSheet by remember { mutableStateOf(false) }
     var sidebarCollapsed by remember { mutableStateOf(false) }
+    var headerScrolled by remember { mutableStateOf(false) }
     var watchingOthersCount by remember { mutableIntStateOf(0) }
+
+    LaunchedEffect(current) {
+        headerScrolled = false
+    }
 
     fun navigateTo(dest: PlayerDestination, clearToRoot: Boolean = false) {
         backStack = if (clearToRoot) listOf(dest) else backStack + dest
@@ -197,17 +216,18 @@ fun PlayerShell(
                                 api = api,
                                 coordinator = coordinator,
                                 onNavigate = { navigateTo(it) },
+                                onScrolledChanged = { headerScrolled = it },
                                 onDeviceRevoked = onDeviceRevoked,
                                 onUnpair = onUnpair,
                             )
                         }
 
-                        // Floating Translucent Top Header (clear over full-bleed Hero, frosted elsewhere)
+                        // Floating Translucent Top Header (clear over Hero top, solid frosted once scrolled)
                         FloatingTopHeader(
                             record = record,
                             showBack = backStack.size > 1,
                             showBrand = !useSidebar,
-                            transparentOverHero = hasFullBleedHero,
+                            transparentOverHero = hasFullBleedHero && !headerScrolled,
                             onBack = { popBack() },
                             onSearch = { navigateTo(PlayerDestination.Search) },
                             onSettings = { navigateTo(PlayerDestination.Settings) },
@@ -563,16 +583,18 @@ private fun PlayerContent(
     api: PlayerApiClient,
     coordinator: PlaybackCoordinator,
     onNavigate: (PlayerDestination) -> Unit,
+    onScrolledChanged: (Boolean) -> Unit,
     onDeviceRevoked: () -> Unit,
     onUnpair: () -> Unit,
 ) {
     when (current) {
-        PlayerDestination.Home -> HomeScreen(api, coordinator, onNavigate, onDeviceRevoked)
+        PlayerDestination.Home -> HomeScreen(api, coordinator, onNavigate, onDeviceRevoked, onScrolledChanged)
         PlayerDestination.Guide -> GuideScreen(api, coordinator, onDeviceRevoked)
         PlayerDestination.Movies -> MoviesScreen(api, { onNavigate(PlayerDestination.MovieDetail(it)) }, onDeviceRevoked)
-        is PlayerDestination.MovieDetail -> MovieDetailScreen(current.movieId, api, coordinator, onDeviceRevoked)
+        is PlayerDestination.MovieDetail -> MovieDetailScreen(current.movieId, api, coordinator, onNavigate, onDeviceRevoked)
         PlayerDestination.Tv -> TvScreen(api, { onNavigate(PlayerDestination.ShowDetail(it)) }, onDeviceRevoked)
         is PlayerDestination.ShowDetail -> ShowDetailScreen(current.showId, api, coordinator, onDeviceRevoked)
+        is PlayerDestination.PersonDetail -> PersonDetailScreen(current.tmdbId, current.name, api, onNavigate, onDeviceRevoked)
         PlayerDestination.Music -> MusicScreen(api, coordinator, onNavigate, onDeviceRevoked)
         is PlayerDestination.ArtistDetail -> ArtistDetailScreen(current.artistId, api, { onNavigate(PlayerDestination.AlbumDetail(it)) }, onDeviceRevoked)
         is PlayerDestination.AlbumDetail -> AlbumDetailScreen(current.albumId, api, coordinator, onDeviceRevoked)

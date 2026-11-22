@@ -22,13 +22,18 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -52,8 +57,11 @@ import net.ssync.player.CatalogMovie
 import net.ssync.player.CatalogShow
 import net.ssync.player.MovieDetail
 import net.ssync.player.MusicApiResult
+import net.ssync.player.PersonDetail
 import net.ssync.player.PlayerApiClient
+import net.ssync.player.PlayerNote
 import net.ssync.player.ShowDetail
+import net.ssync.player.TitleExtras
 
 @Composable
 fun MoviesScreen(
@@ -107,10 +115,14 @@ fun MovieDetailScreen(
     movieId: Int,
     api: PlayerApiClient,
     coordinator: PlaybackCoordinator,
+    onNavigate: (PlayerDestination) -> Unit,
     onDeviceRevoked: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
     var detail by remember { mutableStateOf<MovieDetail?>(null) }
+    var extras by remember { mutableStateOf<TitleExtras?>(null) }
+    var notes by remember { mutableStateOf<List<PlayerNote>>(emptyList()) }
+    var noteDraft by remember { mutableStateOf("") }
     var inWatchlist by remember { mutableStateOf(false) }
     var isLoading by remember { mutableStateOf(true) }
 
@@ -124,6 +136,8 @@ fun MovieDetailScreen(
         (api.fetchWatchlist() as? MusicApiResult.Success)?.let { list ->
             inWatchlist = list.data.any { it.itemType == "movie" && it.itemId == movieId.toString() }
         }
+        (api.fetchTitleExtras("movie", movieId) as? MusicApiResult.Success)?.let { extras = it.data }
+        (api.fetchNotes("movie", movieId.toString()) as? MusicApiResult.Success)?.let { notes = it.data }
         isLoading = false
     }
 
@@ -200,11 +214,166 @@ fun MovieDetailScreen(
                             title = member.name,
                             subtitle = member.character,
                             artworkUrl = api.artwork.resolve(member.photo),
+                            fallbackIcon = Icons.Default.Person,
                             width = 104.dp,
-                            onClick = {},
+                            onClick = {
+                                member.tmdbId?.let { id ->
+                                    onNavigate(PlayerDestination.PersonDetail(id, member.name))
+                                }
+                            },
                         )
                     }
                 }
+            }
+        }
+        val similar = (extras?.recommendations.orEmpty() + extras?.similar.orEmpty()).distinctBy { it.tmdbId }.take(12)
+        if (similar.isNotEmpty()) {
+            item {
+                MediaRail(title = "More Like This") {
+                    items(similar, key = { "${it.kind}-${it.tmdbId}" }) { rec ->
+                        PosterCard(
+                            title = rec.title,
+                            artworkUrl = api.artwork.resolve(rec.poster),
+                            onClick = {
+                                rec.libraryId?.let { libId ->
+                                    if (rec.kind == "movie") onNavigate(PlayerDestination.MovieDetail(libId))
+                                    else onNavigate(PlayerDestination.ShowDetail(libId))
+                                }
+                            },
+                        )
+                    }
+                }
+            }
+        }
+        item {
+            NotesSection(
+                notes = notes,
+                draft = noteDraft,
+                onDraftChange = { noteDraft = it },
+                onAdd = {
+                    val body = noteDraft.trim()
+                    if (body.isNotEmpty()) {
+                        noteDraft = ""
+                        scope.launch {
+                            api.addNote("movie", movie.id.toString(), body)
+                            (api.fetchNotes("movie", movie.id.toString()) as? MusicApiResult.Success)?.let { notes = it.data }
+                        }
+                    }
+                },
+                onDelete = { noteId ->
+                    scope.launch {
+                        api.deleteNote(noteId)
+                        notes = notes.filterNot { it.id == noteId }
+                    }
+                },
+            )
+        }
+    }
+}
+
+@Composable
+private fun NotesSection(
+    notes: List<PlayerNote>,
+    draft: String,
+    onDraftChange: (String) -> Unit,
+    onAdd: () -> Unit,
+    onDelete: (Int) -> Unit,
+) {
+    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 10.dp)) {
+        Text("Personal Notes", style = MaterialTheme.typography.titleMedium)
+        Spacer(modifier = Modifier.height(8.dp))
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(
+                value = draft,
+                onValueChange = onDraftChange,
+                placeholder = { Text("Add a note...") },
+                singleLine = true,
+                modifier = Modifier.weight(1f).dpadFocusable(),
+            )
+            IconButton(onClick = onAdd, modifier = Modifier.dpadFocusable()) {
+                Icon(Icons.Default.Add, contentDescription = "Save note", tint = SoulSyncColors.AccentLight)
+            }
+        }
+        notes.forEach { n ->
+            Spacer(modifier = Modifier.height(6.dp))
+            Card(
+                colors = CardDefaults.cardColors(containerColor = SoulSyncColors.Card),
+                border = BorderStroke(1.dp, SoulSyncColors.Line),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(n.body, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                    IconButton(onClick = { onDelete(n.id) }) {
+                        Icon(Icons.Default.Delete, contentDescription = "Delete", tint = SoulSyncColors.TextSecondary, modifier = Modifier.size(18.dp))
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun PersonDetailScreen(
+    tmdbId: Int,
+    fallbackName: String,
+    api: PlayerApiClient,
+    onNavigate: (PlayerDestination) -> Unit,
+    onDeviceRevoked: () -> Unit,
+) {
+    var person by remember { mutableStateOf<PersonDetail?>(null) }
+    var isLoading by remember { mutableStateOf(true) }
+
+    LaunchedEffect(tmdbId, api) {
+        isLoading = true
+        when (val r = api.fetchPerson(tmdbId)) {
+            is MusicApiResult.Success -> person = r.data
+            MusicApiResult.DeviceRevoked -> onDeviceRevoked()
+            is MusicApiResult.Error -> Unit
+        }
+        isLoading = false
+    }
+
+    if (isLoading) {
+        LoadingBox()
+        return
+    }
+    val p = person
+    LazyColumn(contentPadding = PaddingValues(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        item {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                SoulSyncArtwork(
+                    url = api.artwork.resolve(p?.photo),
+                    contentDescription = p?.name ?: fallbackName,
+                    fallbackIcon = Icons.Default.Person,
+                    modifier = Modifier.size(88.dp).clip(RoundedCornerShape(14.dp)),
+                )
+                Spacer(Modifier.width(14.dp))
+                Column {
+                    Text(p?.name ?: fallbackName, style = MaterialTheme.typography.headlineMedium)
+                    p?.placeOfBirth?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
+                }
+            }
+        }
+        if (!p?.biography.isNullOrBlank()) {
+            item { Text(p?.biography.orEmpty(), style = MaterialTheme.typography.bodyMedium) }
+        }
+        val credits = p?.credits.orEmpty()
+        if (credits.isNotEmpty()) {
+            item { SectionHeader("Filmography") }
+            items(credits.take(30)) { c ->
+                SimpleTrackRow(
+                    title = c.title,
+                    subtitle = listOfNotNull(c.role, if (c.libraryId != null) "In Library" else null).joinToString(" • "),
+                    artworkUrl = api.artwork.resolve(c.poster),
+                    onClick = {
+                        c.libraryId?.let { libId ->
+                            if (c.kind == "movie") onNavigate(PlayerDestination.MovieDetail(libId))
+                            else onNavigate(PlayerDestination.ShowDetail(libId))
+                        }
+                    },
+                )
             }
         }
     }

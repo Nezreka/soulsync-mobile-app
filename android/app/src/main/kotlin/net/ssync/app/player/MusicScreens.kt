@@ -49,6 +49,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import net.ssync.pairing.theme.SoulSyncColors
 import net.ssync.pairing.ui.dpadFocusable
+import net.ssync.player.DiscoverPlaylistSummary
 import net.ssync.player.LibAlbum
 import net.ssync.player.LibAlbumDetail
 import net.ssync.player.LibArtist
@@ -64,6 +65,7 @@ private enum class MusicSubTab(val label: String) {
     ARTISTS("Artists"),
     SONGS("Songs"),
     PLAYLISTS("Playlists"),
+    DISCOVER("Discover"),
 }
 
 @Composable
@@ -79,6 +81,7 @@ fun MusicScreen(
     var artists by remember { mutableStateOf<List<LibArtist>>(emptyList()) }
     var songs by remember { mutableStateOf<List<LibSong>>(emptyList()) }
     var playlists by remember { mutableStateOf<List<MusicPlaylist>>(emptyList()) }
+    var discoverPlaylists by remember { mutableStateOf<List<DiscoverPlaylistSummary>>(emptyList()) }
 
     LaunchedEffect(tab, api) {
         isLoading = true
@@ -100,6 +103,11 @@ fun MusicScreen(
             }
             MusicSubTab.PLAYLISTS -> when (val r = api.fetchPlaylists()) {
                 is MusicApiResult.Success -> playlists = r.data
+                MusicApiResult.DeviceRevoked -> onDeviceRevoked()
+                is MusicApiResult.Error -> Unit
+            }
+            MusicSubTab.DISCOVER -> when (val r = api.fetchDiscoverPlaylists()) {
+                is MusicApiResult.Success -> discoverPlaylists = r.data
                 MusicApiResult.DeviceRevoked -> onDeviceRevoked()
                 is MusicApiResult.Error -> Unit
             }
@@ -246,6 +254,27 @@ fun MusicScreen(
                                     }
                                 }
                             }
+                        }
+                    }
+                }
+            }
+            MusicSubTab.DISCOVER -> {
+                if (discoverPlaylists.isEmpty()) {
+                    EmptyBox("No Discover playlists generated for your profile yet.")
+                } else {
+                    LazyVerticalGrid(
+                        columns = GridCells.Adaptive(140.dp),
+                        contentPadding = PaddingValues(16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(14.dp),
+                    ) {
+                        items(discoverPlaylists, key = { it.key }) { dp ->
+                            SquareMediaCard(
+                                title = dp.title,
+                                subtitle = dp.subtitle ?: "${dp.trackCount} tracks",
+                                artworkUrl = api.artwork.resolve(dp.coverUrl),
+                                onClick = {},
+                            )
                         }
                     }
                 }

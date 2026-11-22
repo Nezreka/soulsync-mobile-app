@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Headphones
@@ -59,6 +60,7 @@ fun HomeScreen(
     coordinator: PlaybackCoordinator,
     onNavigate: (PlayerDestination) -> Unit,
     onDeviceRevoked: () -> Unit,
+    onScrolledChanged: (Boolean) -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
     var isLoading by remember { mutableStateOf(true) }
@@ -137,7 +139,14 @@ fun HomeScreen(
         return
     }
 
+    val listState = rememberLazyListState()
+    val scrolled = listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 24
+    LaunchedEffect(scrolled) {
+        onScrolledChanged(scrolled)
+    }
+
     LazyColumn(
+        state = listState,
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(bottom = 28.dp),
     ) {
