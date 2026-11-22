@@ -19,11 +19,11 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Logout
+import androidx.compose.material.icons.automirrored.filled.Logout
+import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.QueueMusic
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
@@ -35,6 +35,7 @@ import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -94,6 +95,7 @@ fun MusicHomeScreen(
     }
 
     var activeTab by remember { mutableStateOf(MusicTab.RECENT) }
+    var searchQuery by remember { mutableStateOf("") }
     var tracks by remember { mutableStateOf<List<MusicTrack>>(emptyList()) }
     var playlists by remember { mutableStateOf<List<MusicPlaylist>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
@@ -121,7 +123,7 @@ fun MusicHomeScreen(
         onDispose { mediaController?.removeListener(listener) }
     }
 
-    fun loadTab(tab: MusicTab) {
+    fun loadTab(tab: MusicTab, query: String = searchQuery) {
         scope.launch {
             isLoading = true
             errorMessage = null
@@ -131,7 +133,7 @@ fun MusicHomeScreen(
                     MusicApiResult.DeviceRevoked -> onDeviceRevoked()
                     is MusicApiResult.Error -> errorMessage = res.message
                 }
-                MusicTab.LIBRARY -> when (val res = apiClient.fetchLibraryTracks()) {
+                MusicTab.LIBRARY -> when (val res = apiClient.searchLibraryTracks(query)) {
                     is MusicApiResult.Success -> tracks = res.data
                     MusicApiResult.DeviceRevoked -> onDeviceRevoked()
                     is MusicApiResult.Error -> errorMessage = res.message
@@ -217,7 +219,7 @@ fun MusicHomeScreen(
                         modifier = Modifier.dpadFocusable(),
                     ) {
                         Icon(
-                            imageVector = Icons.Default.Logout,
+                            imageVector = Icons.AutoMirrored.Filled.Logout,
                             contentDescription = "Unpair",
                             tint = SoulSyncColors.TextSoft,
                         )
@@ -264,6 +266,20 @@ fun MusicHomeScreen(
                 }
             }
 
+            if (activeTab == MusicTab.LIBRARY) {
+                Spacer(modifier = Modifier.height(10.dp))
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = {
+                        searchQuery = it
+                        loadTab(MusicTab.LIBRARY, it)
+                    },
+                    placeholder = { Text("Search tracks or artists...") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().dpadFocusable(),
+                )
+            }
+
             Spacer(modifier = Modifier.height(12.dp))
 
             when {
@@ -277,7 +293,7 @@ fun MusicHomeScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.fillMaxSize(),
                 ) {
-                    items(playlists, key = { it.id }) { pl ->
+                    items(playlists, key = { it.idString }) { pl ->
                         PlaylistRow(pl)
                     }
                 }
@@ -362,7 +378,7 @@ private fun PlaylistRow(playlist: MusicPlaylist) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Icon(
-                imageVector = Icons.Default.QueueMusic,
+                imageVector = Icons.AutoMirrored.Filled.QueueMusic,
                 contentDescription = null,
                 tint = SoulSyncColors.Accent,
             )
