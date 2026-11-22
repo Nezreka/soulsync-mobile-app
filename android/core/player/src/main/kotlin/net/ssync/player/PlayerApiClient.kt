@@ -302,6 +302,91 @@ class PlayerApiClient(
             }
         }
 
+    // ── Home Layout (Shared / Per-Device Customizable Dashboard) ─────────────
+
+    suspend fun fetchHomeLayout(device: String = "phone"): MusicApiResult<HomeLayoutResponse> =
+        getJson("$base/api/player/home-layout?device=$device") { body ->
+            json.decodeFromString<HomeLayoutResponse>(body)
+        }
+
+    suspend fun saveHomeLayout(
+        layout: HomeLayout,
+        device: String = "phone",
+        shared: Boolean = true,
+    ): MusicApiResult<HomeLayoutResponse> = withContext(Dispatchers.IO) {
+        val payload = HomeLayoutPutRequest(layout = layout, device = if (shared) null else device, shared = shared)
+        val req = Request.Builder()
+            .url("$base/api/player/home-layout")
+            .put(json.encodeToString(HomeLayoutPutRequest.serializer(), payload).toRequestBody(JSON_MEDIA_TYPE))
+            .build()
+        execute(req) { body ->
+            runCatching { json.decodeFromString<HomeLayoutResponse>(body) }
+                .getOrDefault(HomeLayoutResponse(layout = layout, shared = shared))
+        }
+    }
+
+    suspend fun resetHomeLayout(device: String = "phone"): MusicApiResult<Unit> =
+        withContext(Dispatchers.IO) {
+            val req = Request.Builder().url("$base/api/player/home-layout?device=$device").delete().build()
+            execute(req) { }
+        }
+
+    // ── Extras, Person, Notes, Guide Favorites & Discover Playlists ──────────
+
+    suspend fun fetchTitleExtras(kind: String, id: Int): MusicApiResult<TitleExtras> =
+        getJson("$base/api/video/detail/$kind/$id/extras") { body ->
+            json.decodeFromString<TitleExtras>(body)
+        }
+
+    suspend fun fetchPerson(tmdbId: Int): MusicApiResult<PersonDetail> =
+        getJson("$base/api/video/person/$tmdbId") { body ->
+            json.decodeFromString<PersonDetail>(body)
+        }
+
+    suspend fun fetchNotes(itemType: String, itemId: String): MusicApiResult<List<PlayerNote>> =
+        getJson("$base/api/player/notes/$itemType/$itemId") { body ->
+            json.decodeFromString<NotesEnvelope>(body).notes
+        }
+
+    suspend fun addNote(itemType: String, itemId: String, text: String): MusicApiResult<Unit> =
+        withContext(Dispatchers.IO) {
+            val payload = NoteCreateRequest(body = text)
+            val req = Request.Builder()
+                .url("$base/api/player/notes/$itemType/$itemId")
+                .post(json.encodeToString(NoteCreateRequest.serializer(), payload).toRequestBody(JSON_MEDIA_TYPE))
+                .build()
+            execute(req) { }
+        }
+
+    suspend fun deleteNote(noteId: Int): MusicApiResult<Unit> = withContext(Dispatchers.IO) {
+        val req = Request.Builder().url("$base/api/player/note/$noteId").delete().build()
+        execute(req) { }
+    }
+
+    suspend fun saveGuideFavorites(channels: List<String>): MusicApiResult<Unit> =
+        withContext(Dispatchers.IO) {
+            val payload = GuideFavoritesPutRequest(channels = channels)
+            val req = Request.Builder()
+                .url("$base/api/player/guide/favorites")
+                .put(json.encodeToString(GuideFavoritesPutRequest.serializer(), payload).toRequestBody(JSON_MEDIA_TYPE))
+                .build()
+            execute(req) { }
+        }
+
+    suspend fun fetchDiscoverPlaylists(): MusicApiResult<List<DiscoverPlaylistSummary>> =
+        getJson("$base/api/player/discover-playlists") { body ->
+            json.decodeFromString<DiscoverPlaylistsEnvelope>(body).playlists
+        }
+
+    suspend fun removeProgress(itemType: String, itemId: String): MusicApiResult<Unit> =
+        withContext(Dispatchers.IO) {
+            val url = "$base/api/player/progress".toHttpUrl().newBuilder()
+                .addQueryParameter("item_type", itemType)
+                .addQueryParameter("item_id", itemId)
+                .build()
+            execute(Request.Builder().url(url).delete().build()) { }
+        }
+
     private suspend fun <T> getJson(url: String, parser: (String) -> T): MusicApiResult<T> =
         withContext(Dispatchers.IO) {
             execute(Request.Builder().url(url).get().build(), parser)

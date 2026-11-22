@@ -576,6 +576,149 @@ data class PlayerSettings(
     val subtitleLanguage: String = "en",
 )
 
+// ── Customizable Home Layout (1:1 with core/player/home_layout.py) ───────────
+
+@Serializable
+data class LayoutRow(
+    val id: String,
+    val style: String = "standard", // "standard" | "large" | "wide" | "ranked"
+    val on: Boolean = true,
+)
+
+@Serializable
+data class HomeLayout(
+    val version: Int = 1,
+    val billboard: Boolean = true,
+    val rows: List<LayoutRow> = defaultRows(),
+) {
+    companion object {
+        fun defaultRows(): List<LayoutRow> = listOf(
+            LayoutRow("continue", "wide", true),
+            LayoutRow("watchlist", "standard", true),
+            LayoutRow("top-rated", "ranked", true),
+            LayoutRow("recent-movies", "standard", true),
+            LayoutRow("recent-shows", "standard", true),
+            LayoutRow("recent-music", "standard", true),
+            LayoutRow("youtube", "wide", true),
+            LayoutRow("podcasts", "standard", true),
+            LayoutRow("audiobooks", "standard", true),
+        )
+    }
+}
+
+@Serializable
+data class RowDef(
+    val id: String,
+    val label: String,
+    val hint: String = "",
+    val styles: List<String> = listOf("standard", "large", "wide", "ranked"),
+    val style: String = "standard",
+    val on: Boolean = true,
+)
+
+@Serializable
+data class LayoutCatalog(
+    val version: Int = 1,
+    val rows: List<RowDef> = emptyList(),
+)
+
+@Serializable
+data class HomeLayoutResponse(
+    val layout: HomeLayout = HomeLayout(),
+    val catalog: LayoutCatalog = LayoutCatalog(),
+    val shared: Boolean = true,
+)
+
+// ── Extras, Person, Notes & Discover Playlists ───────────────────────────────
+
+@Serializable
+data class TrailerInfo(
+    val key: String,
+    val name: String? = null,
+)
+
+@Serializable
+data class ExtraTitle(
+    val title: String,
+    @SerialName("tmdb_id")
+    val tmdbId: Int = 0,
+    val kind: String = "movie",
+    val poster: String? = null,
+    @SerialName("library_id")
+    val libraryId: Int? = null,
+)
+
+@Serializable
+data class TitleExtras(
+    val trailer: TrailerInfo? = null,
+    val keywords: List<String> = emptyList(),
+    val recommendations: List<ExtraTitle> = emptyList(),
+    val similar: List<ExtraTitle> = emptyList(),
+)
+
+@Serializable
+data class PersonCredit(
+    val kind: String = "movie",
+    @SerialName("tmdb_id")
+    val tmdbId: Int = 0,
+    val title: String = "",
+    val role: String? = null,
+    val poster: String? = null,
+    @SerialName("library_id")
+    val libraryId: Int? = null,
+)
+
+@Serializable
+data class PersonDetail(
+    val name: String,
+    val biography: String? = null,
+    val birthday: String? = null,
+    @SerialName("place_of_birth")
+    val placeOfBirth: String? = null,
+    val photo: String? = null,
+    val credits: List<PersonCredit> = emptyList(),
+)
+
+@Serializable
+data class PlayerNote(
+    val id: Int,
+    val body: String,
+    @SerialName("created_at")
+    val createdAt: String? = null,
+)
+
+@Serializable
+data class DiscoverPlaylistSummary(
+    val key: String,
+    val title: String,
+    val subtitle: String? = null,
+    @SerialName("track_count")
+    val trackCount: Int = 0,
+    @SerialName("cover_url")
+    val coverUrl: String? = null,
+)
+
+@Serializable
+internal data class NotesEnvelope(val notes: List<PlayerNote> = emptyList())
+
+@Serializable
+internal data class NoteCreateRequest(val body: String)
+
+@Serializable
+internal data class GuideFavoritesPutRequest(val channels: List<String>)
+
+@Serializable
+internal data class HomeLayoutPutRequest(
+    val layout: HomeLayout,
+    val device: String? = null,
+    val shared: Boolean = true,
+)
+
+@Serializable
+internal data class DiscoverPlaylistsEnvelope(
+    val playlists: List<DiscoverPlaylistSummary> = emptyList(),
+)
+
 // ── Internal Envelopes ───────────────────────────────────────────────────────
 
 @Serializable

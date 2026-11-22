@@ -415,6 +415,36 @@ fun WideMediaCard(
 }
 
 @Composable
+fun RankedPosterCard(
+    rank: Int,
+    title: String,
+    artworkUrl: String?,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .dpadFocusable(RoundedCornerShape(10.dp))
+            .clickable(onClick = onClick),
+        verticalAlignment = Alignment.Bottom,
+    ) {
+        Text(
+            text = rank.toString(),
+            color = SoulSyncColors.TextPrimary.copy(alpha = 0.22f),
+            fontSize = 68.sp,
+            fontWeight = FontWeight.Black,
+            letterSpacing = (-4).sp,
+            modifier = Modifier.padding(end = 2.dp),
+        )
+        PosterCard(
+            title = title,
+            artworkUrl = artworkUrl,
+            width = 116.dp,
+            onClick = onClick,
+        )
+    }
+}
+
+@Composable
 fun LoadingBox() {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         CircularProgressIndicator(color = SoulSyncColors.Accent)
