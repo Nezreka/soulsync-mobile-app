@@ -314,7 +314,7 @@ private fun ProfilePickCard(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
                 modifier = Modifier.fillMaxWidth().height(240.dp),
             ) {
-                items(state.profiles, key = { it.id }) { profile ->
+                items(state.profiles, key = { it.idString }) { profile ->
                     Card(
                         modifier = Modifier
                             .fillMaxWidth()

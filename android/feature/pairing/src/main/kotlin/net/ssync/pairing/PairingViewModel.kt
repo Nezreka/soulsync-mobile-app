@@ -127,12 +127,12 @@ class PairingViewModel(
                 return@launch
             }
 
-            when (val listResult = admit.fetchProfilePickList(redeem.data.deviceToken)) {
+            when (val listResult = admit.fetchProfilePickList(redeem.data.token)) {
                 is AdmitResult.Success -> {
                     _step.value = PairingStep.ProfilePick(
                         answer = current.answer,
                         baseUrl = baseUrl,
-                        unprofiledToken = redeem.data.deviceToken,
+                        unprofiledToken = redeem.data.token,
                         profiles = listResult.data,
                     )
                 }
@@ -178,7 +178,7 @@ class PairingViewModel(
                 expectedCertFingerprintSha256 = current.answer.certFingerprintSha256,
             )
             val admit = AdmitClient(baseUrl = current.baseUrl, pinnedClient = pinnedClient)
-            when (val res = admit.pickProfile(current.unprofiledToken, profile.id, pin, password)) {
+            when (val res = admit.pickProfile(current.unprofiledToken, profile.idInt, pin, password)) {
                 is AdmitResult.Success -> {
                     val record = PairedServerRecord(
                         lookupId = current.answer.lookupId,
