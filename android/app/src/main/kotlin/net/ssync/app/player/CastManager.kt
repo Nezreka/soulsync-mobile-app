@@ -71,14 +71,17 @@ import net.ssync.pairing.theme.SoulSyncColors
 import net.ssync.player.MusicApiResult
 import net.ssync.player.PlayerApiClient
 
+const val SOULSYNC_CAST_APP_ID = "4567F316"
+
 /**
- * Configures Google Cast with the built-in Default Media Receiver (`CC1AD845`),
- * which natively trusts SoulSync Connect's Let's Encrypt wildcard TLS certificate.
+ * Configures Google Cast with SoulSync's branded Styled Media Receiver (`4567F316`),
+ * which displays the SoulSync logo + emerald progress bar and natively trusts
+ * SoulSync Connect's Let's Encrypt wildcard TLS certificate.
  */
 class SoulSyncCastOptionsProvider : OptionsProvider {
     override fun getCastOptions(context: Context): CastOptions =
         CastOptions.Builder()
-            .setReceiverApplicationId(CastMediaControlIntent.DEFAULT_MEDIA_RECEIVER_APPLICATION_ID)
+            .setReceiverApplicationId(SOULSYNC_CAST_APP_ID)
             .build()
 
     override fun getAdditionalSessionProviders(context: Context): List<SessionProvider>? = null
@@ -178,11 +181,7 @@ class SoulSyncCastController(private val appContext: Context) {
 
             val router = MediaRouter.getInstance(appContext)
             val sel = MediaRouteSelector.Builder()
-                .addControlCategory(
-                    CastMediaControlIntent.categoryForCast(
-                        CastMediaControlIntent.DEFAULT_MEDIA_RECEIVER_APPLICATION_ID,
-                    ),
-                )
+                .addControlCategory(CastMediaControlIntent.categoryForCast(SOULSYNC_CAST_APP_ID))
                 .build()
             mediaRouter = router
             selector = sel
