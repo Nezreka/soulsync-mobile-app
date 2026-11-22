@@ -31,6 +31,9 @@ class PlayerArtwork(baseUrl: String) {
     fun audiobookCover(asin: String): String =
         "$base/api/audiobooks/library/$asin/cover"
 
+    fun profileAvatar(profileId: String): String =
+        "$base/api/profiles/$profileId/avatar"
+
     /**
      * Guaranteed fallback artwork resolver by item type and ID when metadata
      * omits an explicit `backdrop` or `artwork` path.

@@ -463,6 +463,118 @@ class PlayerApiClient(
         execute(req) { }
     }
 
+    suspend fun fetchVideoRequestOptions(): MusicApiResult<VideoRequestModes> =
+        getJson("$base/api/video/requests/options") { body ->
+            val root = json.parseToJsonElement(body).jsonObject
+            val modes = root["modes"] as? JsonObject
+            val movie = (modes?.get("movie") as? kotlinx.serialization.json.JsonPrimitive)?.content ?: "none"
+            val show = (modes?.get("show") as? kotlinx.serialization.json.JsonPrimitive)?.content ?: "none"
+            VideoRequestModes(movie = movie, show = show)
+        }
+
+    suspend fun requestVideoTitle(
+        kind: String,
+        tmdbId: Int,
+        title: String,
+        year: String? = null,
+        posterUrl: String? = null,
+        get: Boolean = false,
+    ): MusicApiResult<VideoRequestResult> = withContext(Dispatchers.IO) {
+        val payload = VideoRequestPayload(
+            kind = kind,
+            tmdbId = tmdbId,
+            title = title,
+            year = year,
+            posterUrl = posterUrl,
+            get = get,
+        )
+        val req = Request.Builder()
+            .url("$base/api/video/requests")
+            .post(json.encodeToString(VideoRequestPayload.serializer(), payload).toRequestBody(JSON_MEDIA_TYPE))
+            .build()
+        try {
+            pinnedAuthenticatedClient.newCall(req).execute().use { response ->
+                val body = response.body?.string().orEmpty()
+                if (response.code == 401) return@withContext MusicApiResult.DeviceRevoked
+                val root = runCatching { json.parseToJsonElement(body).jsonObject }.getOrNull()
+                val success = (root?.get("success") as? kotlinx.serialization.json.JsonPrimitive)
+                    ?.content?.toBooleanStrictOrNull() ?: false
+                val got = (root?.get("got") as? kotlinx.serialization.json.JsonPrimitive)
+                    ?.content?.toBooleanStrictOrNull() ?: false
+                val already = (root?.get("already") as? kotlinx.serialization.json.JsonPrimitive)
+                    ?.content?.toBooleanStrictOrNull() ?: false
+                val onTheWay = (root?.get("on_the_way") as? kotlinx.serialization.json.JsonPrimitive)
+                    ?.content?.toBooleanStrictOrNull() ?: false
+                val error = (root?.get("error") as? kotlinx.serialization.json.JsonPrimitive)?.content
+                val message = (root?.get("message") as? kotlinx.serialization.json.JsonPrimitive)?.content
+                val result = when {
+                    success && got -> VideoRequestResult.Got
+                    success -> VideoRequestResult.Asked(already = already)
+                    onTheWay -> VideoRequestResult.OnTheWay
+                    (error ?: "").contains("already in the library", ignoreCase = true) -> VideoRequestResult.Owned
+                    else -> VideoRequestResult.Error(message ?: error ?: "Could not request title (HTTP ${response.code})")
+                }
+                MusicApiResult.Success(result)
+            }
+        } catch (e: Exception) {
+            MusicApiResult.Error(e.message ?: "Network error")
+        }
+    }
+
+    suspend fun requestMusicTrack(
+        title: String,
+        artist: String,
+        album: String? = null,
+        albumId: Int? = null,
+        artistId: Int? = null,
+        trackId: Int? = null,
+        trackNumber: Int? = null,
+        discNumber: Int? = null,
+        durationMs: Long? = null,
+        year: Int? = null,
+        imageUrl: String? = null,
+    ): MusicApiResult<MusicTrackRequestResult> = withContext(Dispatchers.IO) {
+        val payload = MusicTrackRequestPayload(
+            title = title,
+            artist = artist,
+            album = album,
+            albumId = albumId,
+            artistId = artistId,
+            trackId = trackId,
+            trackNumber = trackNumber,
+            discNumber = discNumber,
+            durationMs = durationMs,
+            year = year,
+            imageUrl = imageUrl,
+        )
+        val req = Request.Builder()
+            .url("$base/api/player/music/request-track")
+            .post(json.encodeToString(MusicTrackRequestPayload.serializer(), payload).toRequestBody(JSON_MEDIA_TYPE))
+            .build()
+        try {
+            pinnedAuthenticatedClient.newCall(req).execute().use { response ->
+                val body = response.body?.string().orEmpty()
+                if (response.code == 401) return@withContext MusicApiResult.DeviceRevoked
+                val root = runCatching { json.parseToJsonElement(body).jsonObject }.getOrNull()
+                val success = (root?.get("success") as? kotlinx.serialization.json.JsonPrimitive)
+                    ?.content?.toBooleanStrictOrNull() ?: false
+                val skipped = (root?.get("skipped") as? kotlinx.serialization.json.JsonPrimitive)
+                    ?.content?.toBooleanStrictOrNull() ?: false
+                val mode = (root?.get("mode") as? kotlinx.serialization.json.JsonPrimitive)?.content ?: "download"
+                val error = (root?.get("error") as? kotlinx.serialization.json.JsonPrimitive)?.content
+                val message = (root?.get("message") as? kotlinx.serialization.json.JsonPrimitive)?.content
+                val result = when {
+                    success && skipped -> MusicTrackRequestResult.Owned
+                    success -> if (mode == "ask") MusicTrackRequestResult.Requested else MusicTrackRequestResult.Wishlist
+                    else -> MusicTrackRequestResult.Error(message ?: error ?: "Could not request track (HTTP ${response.code})")
+                }
+                MusicApiResult.Success(result)
+            }
+        } catch (e: Exception) {
+            MusicApiResult.Error(e.message ?: "Network error")
+        }
+    }
+
     private suspend fun <T> getJson(url: String, parser: (String) -> T): MusicApiResult<T> =
         withContext(Dispatchers.IO) {
             execute(Request.Builder().url(url).get().build(), parser)

@@ -76,13 +76,18 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.media3.session.MediaController
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import net.ssync.app.R
@@ -158,7 +163,16 @@ fun PlayerShell(
     var headerScrolled by remember { mutableStateOf(false) }
     var homeHasHero by remember { mutableStateOf(false) }
     var watchingOthersCount by remember { mutableIntStateOf(0) }
+    var activeAvatarUrl by remember { mutableStateOf<String?>(null) }
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
+
+    LaunchedEffect(api, currentRecord.profileId, profileEpoch) {
+        val fallback = api.artwork.profileAvatar(currentRecord.profileId)
+        val fetched = (api.fetchDeviceProfiles() as? MusicApiResult.Success)?.data
+            ?.firstOrNull { it.id.toString() == currentRecord.profileId }
+            ?.avatarUrl
+        activeAvatarUrl = api.artwork.resolve(fetched) ?: fallback
+    }
 
     LaunchedEffect(current) {
         headerScrolled = false
@@ -263,6 +277,7 @@ fun PlayerShell(
 
                             FloatingTopHeader(
                                 record = currentRecord,
+                                avatarUrl = activeAvatarUrl ?: api.artwork.profileAvatar(currentRecord.profileId),
                                 showBack = backStack.size > 1,
                                 showMenuButton = !usePermanentSidebar,
                                 transparentOverHero = hasFullBleedHero && !headerScrolled,
@@ -375,8 +390,48 @@ fun PlayerShell(
 }
 
 @Composable
+private fun ProfileAvatarCircle(
+    avatarUrl: String?,
+    name: String,
+    size: Dp,
+    fontSize: TextUnit,
+    containerColor: Color = SoulSyncColors.Accent,
+    initialColor: Color = Color.Black,
+) {
+    val context = LocalContext.current
+    val imageLoader = LocalSoulSyncImageLoader.current
+    Box(
+        modifier = Modifier
+            .size(size)
+            .clip(CircleShape)
+            .background(containerColor),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = name.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "S",
+            color = initialColor,
+            fontSize = fontSize,
+            fontWeight = FontWeight.ExtraBold,
+        )
+        if (!avatarUrl.isNullOrBlank()) {
+            AsyncImage(
+                model = ImageRequest.Builder(context)
+                    .data(avatarUrl)
+                    .crossfade(150)
+                    .build(),
+                imageLoader = imageLoader,
+                contentDescription = name,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize().clip(CircleShape),
+            )
+        }
+    }
+}
+
+@Composable
 private fun FloatingTopHeader(
     record: PairedServerRecord,
+    avatarUrl: String?,
     showBack: Boolean,
     showMenuButton: Boolean,
     transparentOverHero: Boolean,
@@ -474,20 +529,12 @@ private fun FloatingTopHeader(
                     .padding(start = 6.dp, end = 8.dp, top = 5.dp, bottom = 5.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(22.dp)
-                        .clip(CircleShape)
-                        .background(SoulSyncColors.Accent),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        text = record.profileName.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "S",
-                        color = Color.Black,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                    )
-                }
+                ProfileAvatarCircle(
+                    avatarUrl = avatarUrl,
+                    name = record.profileName,
+                    size = 24.dp,
+                    fontSize = 11.sp,
+                )
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
                     text = record.profileName,
@@ -548,20 +595,17 @@ private fun ProfileMenuSheet(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(44.dp)
-                        .clip(CircleShape)
-                        .background(SoulSyncColors.Accent),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        text = record.profileName.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "S",
-                        color = Color.Black,
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                    )
-                }
+                val currentProfileAvatar = profiles
+                    .firstOrNull { it.id.toString() == record.profileId }
+                    ?.avatarUrl
+                    ?.let { api.artwork.resolve(it) }
+                    ?: api.artwork.profileAvatar(record.profileId)
+                ProfileAvatarCircle(
+                    avatarUrl = currentProfileAvatar,
+                    name = record.profileName,
+                    size = 44.dp,
+                    fontSize = 18.sp,
+                )
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = record.profileName,
@@ -600,20 +644,14 @@ private fun ProfileMenuSheet(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .size(32.dp)
-                                .clip(CircleShape)
-                                .background(SoulSyncColors.Accent.copy(alpha = 0.25f)),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Text(
-                                text = p.name.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "?",
-                                color = SoulSyncColors.AccentLight,
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.Bold,
-                            )
-                        }
+                        ProfileAvatarCircle(
+                            avatarUrl = api.artwork.resolve(p.avatarUrl) ?: api.artwork.profileAvatar(p.id.toString()),
+                            name = p.name,
+                            size = 32.dp,
+                            fontSize = 14.sp,
+                            containerColor = SoulSyncColors.Accent.copy(alpha = 0.25f),
+                            initialColor = SoulSyncColors.AccentLight,
+                        )
                         Text(
                             text = p.name,
                             color = Color.White,

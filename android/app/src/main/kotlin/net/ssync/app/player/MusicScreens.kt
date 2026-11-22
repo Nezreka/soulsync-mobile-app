@@ -22,6 +22,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.QueueMusic
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PlayArrow
@@ -33,10 +34,12 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -59,6 +62,7 @@ import net.ssync.player.LibArtistDetail
 import net.ssync.player.LibSong
 import net.ssync.player.MusicApiResult
 import net.ssync.player.MusicPlaylist
+import net.ssync.player.MusicTrackRequestResult
 import net.ssync.player.PlayerApiClient
 import net.ssync.player.PlaylistDetail
 
@@ -504,6 +508,10 @@ fun AlbumDetailScreen(
         return
     }
 
+    val scope = rememberCoroutineScope()
+    val reqState = remember(albumId) { mutableStateMapOf<String, String>() }
+    var requestingAll by remember { mutableStateOf(false) }
+
     val coverUrl = api.artwork.resolve(al.imageUrl) ?: api.artwork.albumArtwork(al.id)
     val playableTracks = al.tracks.filter { it.id != null && !it.isMissing }.map { t ->
         ActivePlayable(
@@ -515,8 +523,46 @@ fun AlbumDetailScreen(
             streamUrl = api.streamUrl("track", t.id.toString()),
         )
     }
+    val missingEntries = al.tracks.mapIndexedNotNull { idx, t ->
+        if (t.isMissing || t.id == null) Triple(idx, t, "${t.id ?: "m-$idx"}") else null
+    }
+    val unrequestedMissing = missingEntries.filter { (_, _, key) ->
+        val st = reqState[key]
+        st == null || st == "error"
+    }
 
-    LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    suspend fun requestTrack(idx: Int, t: net.ssync.player.LibTrack, key: String) {
+        val cur = reqState[key]
+        if (cur == "sending" || cur == "wishlist" || cur == "requested" || cur == "owned") return
+        reqState[key] = "sending"
+        when (val r = api.requestMusicTrack(
+            title = t.title,
+            artist = al.primaryArtist?.name ?: "Unknown Artist",
+            album = al.title,
+            albumId = al.id,
+            artistId = al.primaryArtist?.id,
+            trackId = t.id,
+            trackNumber = t.trackNumber ?: (idx + 1),
+            discNumber = t.discNumber ?: 1,
+            durationMs = t.duration,
+            year = al.year,
+            imageUrl = al.imageUrl,
+        )) {
+            is MusicApiResult.Success -> reqState[key] = when (r.data) {
+                MusicTrackRequestResult.Wishlist -> "wishlist"
+                MusicTrackRequestResult.Requested -> "requested"
+                MusicTrackRequestResult.Owned -> "owned"
+                is MusicTrackRequestResult.Error -> "error"
+            }
+            MusicApiResult.DeviceRevoked -> onDeviceRevoked()
+            is MusicApiResult.Error -> reqState[key] = "error"
+        }
+    }
+
+    LazyColumn(
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 74.dp, bottom = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
         item {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 SoulSyncArtwork(
@@ -529,42 +575,107 @@ fun AlbumDetailScreen(
                 Column(modifier = Modifier.weight(1f)) {
                     Text(al.title, style = MaterialTheme.typography.titleLarge)
                     Text(
-                        text = listOfNotNull(al.primaryArtist?.name, al.year?.toString()).joinToString(" • "),
+                        text = listOfNotNull(
+                            al.primaryArtist?.name,
+                            al.year?.toString(),
+                            "${playableTracks.size} of ${al.tracks.size} tracks",
+                        ).joinToString(" • "),
                         style = MaterialTheme.typography.bodyMedium,
                     )
                     Spacer(modifier = Modifier.height(8.dp))
-                    Button(
-                        onClick = {
-                            if (playableTracks.isNotEmpty()) {
-                                coordinator.playAudio(playableTracks.first(), playableTracks.drop(1))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(
+                            onClick = {
+                                if (playableTracks.isNotEmpty()) {
+                                    coordinator.playAudio(playableTracks.first(), playableTracks.drop(1))
+                                }
+                            },
+                            enabled = playableTracks.isNotEmpty(),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = SoulSyncColors.Accent,
+                                contentColor = SoulSyncColors.OnAccent,
+                            ),
+                            modifier = Modifier.dpadFocusable(),
+                        ) {
+                            Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Play")
+                        }
+                        if (unrequestedMissing.isNotEmpty()) {
+                            OutlinedButton(
+                                onClick = {
+                                    if (!requestingAll) {
+                                        requestingAll = true
+                                        scope.launch {
+                                            for ((i, tr, k) in unrequestedMissing) {
+                                                requestTrack(i, tr, k)
+                                            }
+                                            requestingAll = false
+                                        }
+                                    }
+                                },
+                                enabled = !requestingAll,
+                                border = BorderStroke(1.dp, SoulSyncColors.Accent),
+                                modifier = Modifier.dpadFocusable(),
+                            ) {
+                                Icon(
+                                    Icons.Default.Download,
+                                    contentDescription = null,
+                                    tint = SoulSyncColors.AccentLight,
+                                    modifier = Modifier.size(16.dp),
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = if (requestingAll) "Requesting…" else "Request ${unrequestedMissing.size}",
+                                    color = SoulSyncColors.AccentLight,
+                                )
                             }
-                        },
-                        enabled = playableTracks.isNotEmpty(),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = SoulSyncColors.Accent,
-                            contentColor = SoulSyncColors.OnAccent,
-                        ),
-                        modifier = Modifier.dpadFocusable(),
-                    ) {
-                        Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("Play Album")
+                        }
                     }
                 }
             }
             Spacer(modifier = Modifier.height(10.dp))
         }
         itemsIndexed(al.tracks) { idx, t ->
+            val playable = !t.isMissing && t.id != null
+            val rowKey = "${t.id ?: "m-$idx"}"
+            val st = reqState[rowKey]
             val fmt = t.file?.format?.uppercase()
+            val badge = if (playable) {
+                fmt
+            } else {
+                when (st) {
+                    "sending" -> "Requesting…"
+                    "wishlist" -> "On wishlist"
+                    "requested" -> "Requested"
+                    "owned" -> "In library"
+                    "error" -> "Try again"
+                    else -> "Request"
+                }
+            }
+            val sub = if (playable) {
+                fmt ?: ""
+            } else {
+                when (st) {
+                    "wishlist" -> "Added to wishlist"
+                    "requested" -> "Request submitted"
+                    "error" -> "Could not request • Tap to retry"
+                    else -> "Not in library • Tap to request"
+                }
+            }
             SimpleTrackRow(
                 title = "${t.trackNumber ?: (idx + 1)}. ${t.title}",
-                subtitle = if (t.isMissing) "Not in library" else (fmt ?: ""),
+                subtitle = sub,
                 artworkUrl = null,
-                trailingBadge = fmt,
+                trailingBadge = badge,
                 onClick = {
-                    val pIdx = playableTracks.indexOfFirst { it.itemId == t.id?.toString() }
-                    if (pIdx >= 0) {
-                        coordinator.playAudio(playableTracks[pIdx], playableTracks.drop(pIdx + 1))
+                    if (playable) {
+                        val pIdx = playableTracks.indexOfFirst { it.itemId == t.id?.toString() }
+                        if (pIdx >= 0) {
+                            coordinator.playAudio(playableTracks[pIdx], playableTracks.drop(pIdx + 1))
+                        }
+                    } else {
+                        scope.launch { requestTrack(idx, t, rowKey) }
                     }
                 },
             )

@@ -616,6 +616,60 @@ internal data class SubtitleDownloadRequest(
     val candidateId: String,
 )
 
+data class VideoRequestModes(
+    val movie: String = "none", // "download" | "ask" | "none"
+    val show: String = "none",
+)
+
+sealed class VideoRequestResult {
+    data object Got : VideoRequestResult()
+    data class Asked(val already: Boolean) : VideoRequestResult()
+    data object OnTheWay : VideoRequestResult()
+    data object Owned : VideoRequestResult()
+    data class Error(val message: String) : VideoRequestResult()
+}
+
+sealed class MusicTrackRequestResult {
+    data object Wishlist : MusicTrackRequestResult()
+    data object Requested : MusicTrackRequestResult()
+    data object Owned : MusicTrackRequestResult()
+    data class Error(val message: String) : MusicTrackRequestResult()
+}
+
+@Serializable
+internal data class VideoRequestPayload(
+    val kind: String,
+    @SerialName("tmdb_id")
+    val tmdbId: Int,
+    val title: String,
+    val year: String? = null,
+    @SerialName("poster_url")
+    val posterUrl: String? = null,
+    val get: Boolean = false,
+)
+
+@Serializable
+internal data class MusicTrackRequestPayload(
+    val title: String,
+    val artist: String,
+    val album: String? = null,
+    @SerialName("album_id")
+    val albumId: Int? = null,
+    @SerialName("artist_id")
+    val artistId: Int? = null,
+    @SerialName("track_id")
+    val trackId: Int? = null,
+    @SerialName("track_number")
+    val trackNumber: Int? = null,
+    @SerialName("disc_number")
+    val discNumber: Int? = null,
+    @SerialName("duration_ms")
+    val durationMs: Long? = null,
+    val year: Int? = null,
+    @SerialName("image_url")
+    val imageUrl: String? = null,
+)
+
 // ── Customizable Home Layout (1:1 with core/player/home_layout.py) ───────────
 
 @Serializable
@@ -684,9 +738,13 @@ data class ExtraTitle(
     val tmdbId: Int = 0,
     val kind: String = "movie",
     val poster: String? = null,
+    val year: JsonPrimitive? = null,
     @SerialName("library_id")
     val libraryId: Int? = null,
-)
+) {
+    val yearText: String?
+        get() = year?.content?.takeIf { it.isNotBlank() && it != "null" }
+}
 
 @Serializable
 data class TitleExtras(
@@ -703,10 +761,15 @@ data class PersonCredit(
     val tmdbId: Int = 0,
     val title: String = "",
     val role: String? = null,
+    val department: String? = null,
+    val year: JsonPrimitive? = null,
     val poster: String? = null,
     @SerialName("library_id")
     val libraryId: Int? = null,
-)
+) {
+    val yearText: String?
+        get() = year?.content?.takeIf { it.isNotBlank() && it != "null" }
+}
 
 @Serializable
 data class PersonDetail(
