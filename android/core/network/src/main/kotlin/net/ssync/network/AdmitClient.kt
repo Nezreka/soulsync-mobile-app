@@ -90,7 +90,7 @@ private data class RedeemRequestBody(
     val code: String,
     val name: String,
     val platform: String = "android",
-    val app: String = "music",
+    val app: String = "player",
 )
 
 @Serializable

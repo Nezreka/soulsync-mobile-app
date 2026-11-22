@@ -50,7 +50,7 @@ class AdmitClientTest {
         assertEquals("dev-tok-123", redeem.data.token)
         val redeemReq = server.takeRequest()
         assertEquals("/api/devices/redeem", redeemReq.path)
-        assertTrue(redeemReq.body.readUtf8().contains("\"app\":\"music\""))
+        assertTrue(redeemReq.body.readUtf8().contains("\"app\":\"player\""))
 
         val profiles = client.fetchProfilePickList(redeem.data.token) as AdmitResult.Success
         assertEquals(1, profiles.data.size)
