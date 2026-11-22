@@ -64,53 +64,6 @@ import net.ssync.player.ShowDetail
 import net.ssync.player.TitleExtras
 
 @Composable
-fun MoviesScreen(
-    api: PlayerApiClient,
-    onMovieClick: (Int) -> Unit,
-    onDeviceRevoked: () -> Unit,
-) {
-    var movies by remember { mutableStateOf<List<CatalogMovie>>(emptyList()) }
-    var isLoading by remember { mutableStateOf(true) }
-
-    LaunchedEffect(api) {
-        isLoading = true
-        when (val res = api.fetchVideoCatalog()) {
-            is MusicApiResult.Success -> movies = res.data.movies
-            MusicApiResult.DeviceRevoked -> onDeviceRevoked()
-            is MusicApiResult.Error -> Unit
-        }
-        isLoading = false
-    }
-
-    if (isLoading) {
-        LoadingBox()
-        return
-    }
-    if (movies.isEmpty()) {
-        EmptyBox("No movies in your SoulSync library yet.")
-        return
-    }
-
-    LazyVerticalGrid(
-        columns = GridCells.Adaptive(minSize = 116.dp),
-        contentPadding = PaddingValues(16.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-        modifier = Modifier.fillMaxSize(),
-    ) {
-        items(movies, key = { it.id }) { m ->
-            PosterCard(
-                title = m.title,
-                subtitle = m.year?.toString(),
-                artworkUrl = api.artwork.moviePoster(m.id),
-                badge = m.rating?.let { "%.1f".format(it) },
-                onClick = { onMovieClick(m.id) },
-            )
-        }
-    }
-}
-
-@Composable
 fun MovieDetailScreen(
     movieId: Int,
     api: PlayerApiClient,
@@ -375,53 +328,6 @@ fun PersonDetailScreen(
                     },
                 )
             }
-        }
-    }
-}
-
-@Composable
-fun TvScreen(
-    api: PlayerApiClient,
-    onShowClick: (Int) -> Unit,
-    onDeviceRevoked: () -> Unit,
-) {
-    var shows by remember { mutableStateOf<List<CatalogShow>>(emptyList()) }
-    var isLoading by remember { mutableStateOf(true) }
-
-    LaunchedEffect(api) {
-        isLoading = true
-        when (val res = api.fetchVideoCatalog()) {
-            is MusicApiResult.Success -> shows = res.data.shows
-            MusicApiResult.DeviceRevoked -> onDeviceRevoked()
-            is MusicApiResult.Error -> Unit
-        }
-        isLoading = false
-    }
-
-    if (isLoading) {
-        LoadingBox()
-        return
-    }
-    if (shows.isEmpty()) {
-        EmptyBox("No TV shows in your SoulSync library yet.")
-        return
-    }
-
-    LazyVerticalGrid(
-        columns = GridCells.Adaptive(minSize = 116.dp),
-        contentPadding = PaddingValues(16.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-        modifier = Modifier.fillMaxSize(),
-    ) {
-        items(shows, key = { it.id }) { s ->
-            PosterCard(
-                title = s.title,
-                subtitle = "${s.episodeCount} episodes",
-                artworkUrl = api.artwork.showPoster(s.id),
-                badge = s.rating?.let { "%.1f".format(it) },
-                onClick = { onShowClick(s.id) },
-            )
         }
     }
 }

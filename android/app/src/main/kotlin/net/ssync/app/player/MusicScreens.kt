@@ -39,6 +39,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -47,6 +48,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.launch
 import net.ssync.pairing.theme.SoulSyncColors
 import net.ssync.pairing.ui.dpadFocusable
 import net.ssync.player.DiscoverPlaylistSummary
@@ -75,8 +77,17 @@ fun MusicScreen(
     onNavigate: (PlayerDestination) -> Unit,
     onDeviceRevoked: () -> Unit,
 ) {
+    val scope = rememberCoroutineScope()
     var tab by remember { mutableStateOf(MusicSubTab.ALBUMS) }
     var isLoading by remember { mutableStateOf(true) }
+    var loadingMore by remember { mutableStateOf(false) }
+    var albumsPage by remember { mutableStateOf(1) }
+    var artistsPage by remember { mutableStateOf(1) }
+    var songsPage by remember { mutableStateOf(1) }
+    var hasMoreAlbums by remember { mutableStateOf(true) }
+    var hasMoreArtists by remember { mutableStateOf(true) }
+    var hasMoreSongs by remember { mutableStateOf(true) }
+    var gridView by remember { mutableStateOf(true) }
     var albums by remember { mutableStateOf<List<LibAlbum>>(emptyList()) }
     var artists by remember { mutableStateOf<List<LibArtist>>(emptyList()) }
     var songs by remember { mutableStateOf<List<LibSong>>(emptyList()) }
@@ -86,20 +97,38 @@ fun MusicScreen(
     LaunchedEffect(tab, api) {
         isLoading = true
         when (tab) {
-            MusicSubTab.ALBUMS -> when (val r = api.fetchAlbums()) {
-                is MusicApiResult.Success -> albums = r.data
-                MusicApiResult.DeviceRevoked -> onDeviceRevoked()
-                is MusicApiResult.Error -> Unit
+            MusicSubTab.ALBUMS -> if (albums.isEmpty()) {
+                when (val r = api.fetchAlbums(limit = 80, page = 1)) {
+                    is MusicApiResult.Success -> {
+                        albums = r.data
+                        albumsPage = 1
+                        hasMoreAlbums = r.data.size >= 80
+                    }
+                    MusicApiResult.DeviceRevoked -> onDeviceRevoked()
+                    is MusicApiResult.Error -> Unit
+                }
             }
-            MusicSubTab.ARTISTS -> when (val r = api.fetchArtists()) {
-                is MusicApiResult.Success -> artists = r.data
-                MusicApiResult.DeviceRevoked -> onDeviceRevoked()
-                is MusicApiResult.Error -> Unit
+            MusicSubTab.ARTISTS -> if (artists.isEmpty()) {
+                when (val r = api.fetchArtists(limit = 80, page = 1)) {
+                    is MusicApiResult.Success -> {
+                        artists = r.data
+                        artistsPage = 1
+                        hasMoreArtists = r.data.size >= 80
+                    }
+                    MusicApiResult.DeviceRevoked -> onDeviceRevoked()
+                    is MusicApiResult.Error -> Unit
+                }
             }
-            MusicSubTab.SONGS -> when (val r = api.fetchSongs()) {
-                is MusicApiResult.Success -> songs = r.data
-                MusicApiResult.DeviceRevoked -> onDeviceRevoked()
-                is MusicApiResult.Error -> Unit
+            MusicSubTab.SONGS -> if (songs.isEmpty()) {
+                when (val r = api.fetchSongs(limit = 100, page = 1)) {
+                    is MusicApiResult.Success -> {
+                        songs = r.data
+                        songsPage = 1
+                        hasMoreSongs = r.data.size >= 100
+                    }
+                    MusicApiResult.DeviceRevoked -> onDeviceRevoked()
+                    is MusicApiResult.Error -> Unit
+                }
             }
             MusicSubTab.PLAYLISTS -> when (val r = api.fetchPlaylists()) {
                 is MusicApiResult.Success -> playlists = r.data
@@ -116,23 +145,21 @@ fun MusicScreen(
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            MusicSubTab.entries.forEach { t ->
-                FilterChip(
-                    selected = tab == t,
-                    onClick = { tab = t },
-                    label = { Text(t.label) },
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = SoulSyncColors.Accent,
-                        selectedLabelColor = SoulSyncColors.OnAccent,
-                        containerColor = SoulSyncColors.Card,
-                        labelColor = SoulSyncColors.TextSoft,
-                    ),
-                    modifier = Modifier.dpadFocusable(),
-                )
+        BrowseHeaderAndTabs(
+            title = "Music",
+            tabs = MusicSubTab.entries.map { it to it.label },
+            selected = tab,
+            onSelect = { tab = it },
+        )
+
+        if (tab == MusicSubTab.ALBUMS || tab == MusicSubTab.ARTISTS) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                androidx.compose.material3.TextButton(onClick = { gridView = !gridView }) {
+                    Text(if (gridView) "List view" else "Grid view", color = SoulSyncColors.AccentLight)
+                }
             }
         }
 
@@ -145,7 +172,7 @@ fun MusicScreen(
             MusicSubTab.ALBUMS -> {
                 if (albums.isEmpty()) {
                     EmptyBox("No albums found.")
-                } else {
+                } else if (gridView) {
                     LazyVerticalGrid(
                         columns = GridCells.Adaptive(140.dp),
                         contentPadding = PaddingValues(16.dp),
@@ -160,13 +187,50 @@ fun MusicScreen(
                                 onClick = { onNavigate(PlayerDestination.AlbumDetail(album.id)) },
                             )
                         }
+                        if (hasMoreAlbums) {
+                            item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
+                                androidx.compose.material3.OutlinedButton(
+                                    onClick = {
+                                        if (!loadingMore) {
+                                            loadingMore = true
+                                            scope.launch {
+                                                val next = albumsPage + 1
+                                                (api.fetchAlbums(limit = 80, page = next) as? MusicApiResult.Success)?.let { r ->
+                                                    albums = (albums + r.data).distinctBy { it.id }
+                                                    albumsPage = next
+                                                    hasMoreAlbums = r.data.size >= 80
+                                                }
+                                                loadingMore = false
+                                            }
+                                        }
+                                    },
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                                ) {
+                                    Text(if (loadingMore) "Loading…" else "Show more albums")
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    LazyColumn(
+                        contentPadding = PaddingValues(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        items(albums, key = { it.id }) { album ->
+                            CompactMediaListRow(
+                                title = album.title,
+                                subtitle = listOfNotNull(album.artistName, album.year?.toString()).joinToString(" · "),
+                                artworkUrl = api.artwork.resolve(album.imageUrl) ?: api.artwork.albumArtwork(album.id),
+                                onClick = { onNavigate(PlayerDestination.AlbumDetail(album.id)) },
+                            )
+                        }
                     }
                 }
             }
             MusicSubTab.ARTISTS -> {
                 if (artists.isEmpty()) {
                     EmptyBox("No artists found.")
-                } else {
+                } else if (gridView) {
                     LazyVerticalGrid(
                         columns = GridCells.Adaptive(140.dp),
                         contentPadding = PaddingValues(16.dp),
@@ -179,6 +243,43 @@ fun MusicScreen(
                                 subtitle = "${artist.albumCount} albums",
                                 artworkUrl = api.artwork.resolve(artist.imageUrl ?: artist.remoteImageUrl),
                                 fallbackIcon = Icons.Default.Person,
+                                onClick = { onNavigate(PlayerDestination.ArtistDetail(artist.id)) },
+                            )
+                        }
+                        if (hasMoreArtists) {
+                            item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
+                                androidx.compose.material3.OutlinedButton(
+                                    onClick = {
+                                        if (!loadingMore) {
+                                            loadingMore = true
+                                            scope.launch {
+                                                val next = artistsPage + 1
+                                                (api.fetchArtists(limit = 80, page = next) as? MusicApiResult.Success)?.let { r ->
+                                                    artists = (artists + r.data).distinctBy { it.id }
+                                                    artistsPage = next
+                                                    hasMoreArtists = r.data.size >= 80
+                                                }
+                                                loadingMore = false
+                                            }
+                                        }
+                                    },
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                                ) {
+                                    Text(if (loadingMore) "Loading…" else "Show more artists")
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    LazyColumn(
+                        contentPadding = PaddingValues(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        items(artists, key = { it.id }) { artist ->
+                            CompactMediaListRow(
+                                title = artist.name,
+                                subtitle = "${artist.albumCount} albums",
+                                artworkUrl = api.artwork.resolve(artist.imageUrl ?: artist.remoteImageUrl),
                                 onClick = { onNavigate(PlayerDestination.ArtistDetail(artist.id)) },
                             )
                         }
@@ -212,6 +313,29 @@ fun MusicScreen(
                                     coordinator.playAudio(playables.first(), playables.drop(1))
                                 },
                             )
+                        }
+                        if (hasMoreSongs) {
+                            item {
+                                androidx.compose.material3.OutlinedButton(
+                                    onClick = {
+                                        if (!loadingMore) {
+                                            loadingMore = true
+                                            scope.launch {
+                                                val next = songsPage + 1
+                                                (api.fetchSongs(limit = 100, page = next) as? MusicApiResult.Success)?.let { r ->
+                                                    songs = (songs + r.data).distinctBy { it.id }
+                                                    songsPage = next
+                                                    hasMoreSongs = r.data.size >= 100
+                                                }
+                                                loadingMore = false
+                                            }
+                                        }
+                                    },
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                                ) {
+                                    Text(if (loadingMore) "Loading…" else "Show more songs")
+                                }
+                            }
                         }
                     }
                 }

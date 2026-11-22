@@ -61,9 +61,9 @@ class PlayerApiClient(
 
     // ── Music (Library v2 + Playlists + Lyrics) ──────────────────────────────
 
-    suspend fun fetchArtists(search: String = "", limit: Int = 80): MusicApiResult<List<LibArtist>> {
+    suspend fun fetchArtists(search: String = "", limit: Int = 80, page: Int = 1): MusicApiResult<List<LibArtist>> {
         val url = "$base/api/library/v2/artists".toHttpUrl().newBuilder()
-            .addQueryParameter("page", "1")
+            .addQueryParameter("page", page.toString())
             .addQueryParameter("limit", limit.toString())
             .addQueryParameter("sort", "name")
             .apply { if (search.isNotBlank()) addQueryParameter("search", search.trim()) }
@@ -80,9 +80,9 @@ class PlayerApiClient(
             }
         }
 
-    suspend fun fetchAlbums(search: String = "", limit: Int = 80): MusicApiResult<List<LibAlbum>> {
+    suspend fun fetchAlbums(search: String = "", limit: Int = 80, page: Int = 1): MusicApiResult<List<LibAlbum>> {
         val url = "$base/api/library/v2/albums".toHttpUrl().newBuilder()
-            .addQueryParameter("page", "1")
+            .addQueryParameter("page", page.toString())
             .addQueryParameter("limit", limit.toString())
             .addQueryParameter("sort", "added")
             .apply { if (search.isNotBlank()) addQueryParameter("search", search.trim()) }
@@ -99,9 +99,9 @@ class PlayerApiClient(
             }
         }
 
-    suspend fun fetchSongs(search: String = "", limit: Int = 100): MusicApiResult<List<LibSong>> {
+    suspend fun fetchSongs(search: String = "", limit: Int = 100, page: Int = 1): MusicApiResult<List<LibSong>> {
         val url = "$base/api/library/v2/songs".toHttpUrl().newBuilder()
-            .addQueryParameter("page", "1")
+            .addQueryParameter("page", page.toString())
             .addQueryParameter("limit", limit.toString())
             .addQueryParameter("sort", "title")
             .apply { if (search.isNotBlank()) addQueryParameter("search", search.trim()) }

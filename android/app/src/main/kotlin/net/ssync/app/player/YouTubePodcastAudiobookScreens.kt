@@ -51,6 +51,13 @@ import net.ssync.player.PodcastSub
 import net.ssync.player.YtChannel
 import net.ssync.player.YtVideo
 
+private enum class YtTab(val label: String) {
+    FOR_YOU("For you"),
+    DOWNLOADED("Downloaded"),
+    CHANNELS("Channels"),
+    CATEGORIES("Categories"),
+}
+
 @Composable
 fun YouTubeScreen(
     api: PlayerApiClient,
@@ -61,6 +68,7 @@ fun YouTubeScreen(
     var channels by remember { mutableStateOf<List<YtChannel>>(emptyList()) }
     var videos by remember { mutableStateOf<List<YtVideo>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
+    var tab by remember { mutableStateOf(YtTab.FOR_YOU) }
 
     LaunchedEffect(api) {
         isLoading = true
@@ -84,56 +92,214 @@ fun YouTubeScreen(
         return
     }
 
-    LazyColumn(contentPadding = PaddingValues(bottom = 24.dp)) {
-        if (channels.isNotEmpty()) {
-            item {
-                MediaRail(title = "Channels") {
-                    items(channels, key = { it.id }) { ch ->
-                        SquareMediaCard(
-                            title = ch.title,
-                            subtitle = "${ch.downloadedCount} videos",
-                            artworkUrl = api.artwork.resolve(ch.avatar),
-                            width = 112.dp,
-                            onClick = { onChannelClick(ch.id, ch.title) },
-                        )
+    fun playYt(v: YtVideo) {
+        coordinator.playVideo(
+            ActivePlayable(
+                itemType = "youtube",
+                itemId = v.id,
+                title = v.title,
+                subtitle = v.channelTitle.orEmpty(),
+                artworkUrl = api.artwork.resolve(v.thumbnail),
+                streamUrl = api.streamUrl("youtube", v.id),
+                isVideo = true,
+            ),
+        )
+    }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        BrowseHeaderAndTabs(
+            title = "YouTube",
+            tabs = YtTab.entries.map { it to it.label },
+            selected = tab,
+            onSelect = { tab = it },
+        )
+
+        when (tab) {
+            YtTab.FOR_YOU -> {
+                val lead = videos.firstOrNull()
+                val byChannel = remember(channels, videos) {
+                    channels.take(8).mapNotNull { ch ->
+                        val chVids = videos.filter { it.channelId == ch.id || it.channelTitle == ch.title }
+                        if (chVids.isNotEmpty()) ch to chVids else null
+                    }
+                }
+                LazyColumn(contentPadding = PaddingValues(bottom = 28.dp), modifier = Modifier.fillMaxSize()) {
+                    if (lead != null) {
+                        item(key = "yt-lead") {
+                            HeroSpotlight(
+                                title = lead.title,
+                                subtitle = lead.channelTitle.orEmpty(),
+                                backdropUrl = api.artwork.resolve(lead.thumbnail),
+                                eyebrow = "Latest Video",
+                                onPlay = { playYt(lead) },
+                            )
+                        }
+                    }
+                    if (channels.isNotEmpty()) {
+                        item(key = "yt-ch") {
+                            MediaRail(title = "Followed Channels", actionLabel = "All", onAction = { tab = YtTab.CHANNELS }) {
+                                items(channels, key = { it.id }) { ch ->
+                                    SquareMediaCard(
+                                        title = ch.title,
+                                        subtitle = "${ch.downloadedCount} videos",
+                                        artworkUrl = api.artwork.resolve(ch.avatar),
+                                        width = 112.dp,
+                                        onClick = { onChannelClick(ch.id, ch.title) },
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    if (videos.size > 1) {
+                        item(key = "yt-latest") {
+                            MediaRail(title = "Latest Downloads", actionLabel = "All", onAction = { tab = YtTab.DOWNLOADED }) {
+                                items(videos.take(18), key = { it.id }) { v ->
+                                    WideMediaCard(
+                                        title = v.title,
+                                        subtitle = v.channelTitle,
+                                        artworkUrl = api.artwork.resolve(v.thumbnail),
+                                        onClick = { playYt(v) },
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    byChannel.forEach { (ch, chVids) ->
+                        item(key = "yt-ch-${ch.id}") {
+                            MediaRail(
+                                title = ch.title,
+                                actionLabel = "Channel",
+                                onAction = { onChannelClick(ch.id, ch.title) },
+                            ) {
+                                items(chVids.take(12), key = { it.id }) { v ->
+                                    WideMediaCard(
+                                        title = v.title,
+                                        subtitle = ch.title,
+                                        artworkUrl = api.artwork.resolve(v.thumbnail),
+                                        onClick = { playYt(v) },
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }
-        }
-        if (videos.isNotEmpty()) {
-            item { SectionHeader("Videos") }
-            items(videos, key = { it.id }) { v ->
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 5.dp)
-                        .dpadFocusable(RoundedCornerShape(12.dp))
-                        .clickable {
-                            coordinator.playVideo(
-                                ActivePlayable(
-                                    itemType = "youtube",
-                                    itemId = v.id,
-                                    title = v.title,
-                                    subtitle = v.channelTitle.orEmpty(),
-                                    artworkUrl = api.artwork.resolve(v.thumbnail),
-                                    streamUrl = api.streamUrl("youtube", v.id),
-                                    isVideo = true,
-                                ),
+
+            YtTab.DOWNLOADED -> {
+                if (videos.isEmpty()) {
+                    EmptyBox("No downloaded YouTube videos yet.")
+                } else {
+                    LazyColumn(contentPadding = PaddingValues(bottom = 24.dp), modifier = Modifier.fillMaxSize()) {
+                        items(videos, key = { it.id }) { v ->
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp, vertical = 5.dp)
+                                    .dpadFocusable(RoundedCornerShape(12.dp))
+                                    .clickable { playYt(v) },
+                                colors = CardDefaults.cardColors(containerColor = SoulSyncColors.Card),
+                                border = BorderStroke(1.dp, SoulSyncColors.Line),
+                            ) {
+                                Row(modifier = Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    SoulSyncArtwork(
+                                        url = api.artwork.resolve(v.thumbnail),
+                                        contentDescription = v.title,
+                                        modifier = Modifier.size(width = 118.dp, height = 68.dp).clip(RoundedCornerShape(8.dp)),
+                                    )
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(v.title, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                        Text(v.channelTitle.orEmpty(), style = MaterialTheme.typography.bodyMedium, maxLines = 1)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            YtTab.CHANNELS -> {
+                if (channels.isEmpty()) {
+                    EmptyBox("No YouTube channels followed yet.")
+                } else {
+                    LazyVerticalGrid(
+                        columns = GridCells.Adaptive(minSize = 140.dp),
+                        contentPadding = PaddingValues(16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp),
+                        modifier = Modifier.fillMaxSize(),
+                    ) {
+                        items(channels, key = { it.id }) { ch ->
+                            SquareMediaCard(
+                                title = ch.title,
+                                subtitle = "${ch.downloadedCount} videos",
+                                artworkUrl = api.artwork.resolve(ch.avatar),
+                                onClick = { onChannelClick(ch.id, ch.title) },
                             )
-                        },
-                    colors = CardDefaults.cardColors(containerColor = SoulSyncColors.Card),
-                    border = BorderStroke(1.dp, SoulSyncColors.Line),
-                ) {
-                    Row(modifier = Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                        SoulSyncArtwork(
-                            url = api.artwork.resolve(v.thumbnail),
-                            contentDescription = v.title,
-                            modifier = Modifier.size(width = 112.dp, height = 64.dp).clip(RoundedCornerShape(8.dp)),
-                        )
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(v.title, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                            Text(v.channelTitle.orEmpty(), style = MaterialTheme.typography.bodyMedium, maxLines = 1)
+                        }
+                    }
+                }
+            }
+
+            YtTab.CATEGORIES -> {
+                val quick = remember(videos) { videos.filter { (it.durationSeconds ?: 0) in 1..599 } }
+                val sitDown = remember(videos) { videos.filter { (it.durationSeconds ?: 0) in 600..1799 } }
+                val longVids = remember(videos) { videos.filter { (it.durationSeconds ?: 0) >= 1800 } }
+                LazyColumn(contentPadding = PaddingValues(bottom = 28.dp), modifier = Modifier.fillMaxSize()) {
+                    if (quick.isNotEmpty()) {
+                        item {
+                            MediaRail("Quick watches · under 10 minutes") {
+                                items(quick.take(18), key = { it.id }) { v ->
+                                    WideMediaCard(
+                                        title = v.title,
+                                        subtitle = v.channelTitle,
+                                        artworkUrl = api.artwork.resolve(v.thumbnail),
+                                        onClick = { playYt(v) },
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    if (sitDown.isNotEmpty()) {
+                        item {
+                            MediaRail("Sit-down watches · 10 to 30 minutes") {
+                                items(sitDown.take(18), key = { it.id }) { v ->
+                                    WideMediaCard(
+                                        title = v.title,
+                                        subtitle = v.channelTitle,
+                                        artworkUrl = api.artwork.resolve(v.thumbnail),
+                                        onClick = { playYt(v) },
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    if (longVids.isNotEmpty()) {
+                        item {
+                            MediaRail("Long watches · 30 minutes or more") {
+                                items(longVids.take(18), key = { it.id }) { v ->
+                                    WideMediaCard(
+                                        title = v.title,
+                                        subtitle = v.channelTitle,
+                                        artworkUrl = api.artwork.resolve(v.thumbnail),
+                                        onClick = { playYt(v) },
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    if (quick.isEmpty() && sitDown.isEmpty() && longVids.isEmpty()) {
+                        item {
+                            MediaRail("All Videos") {
+                                items(videos.take(24), key = { it.id }) { v ->
+                                    WideMediaCard(
+                                        title = v.title,
+                                        subtitle = v.channelTitle,
+                                        artworkUrl = api.artwork.resolve(v.thumbnail),
+                                        onClick = { playYt(v) },
+                                    )
+                                }
+                            }
                         }
                     }
                 }

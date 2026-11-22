@@ -356,18 +356,41 @@ fun HomeScreen(
                                     artworkUrl = resolvedArt,
                                     progress = item.progressFraction,
                                     onClick = {
-                                        val isVideo = item.itemType in setOf("movie", "episode", "youtube")
-                                        val playable = ActivePlayable(
-                                            itemType = item.itemType,
-                                            itemId = item.itemId,
-                                            title = item.meta?.title ?: item.itemId,
-                                            subtitle = item.meta?.subtitle.orEmpty(),
-                                            artworkUrl = resolvedArt,
-                                            streamUrl = api.streamUrl(item.itemType, item.itemId),
-                                            isVideo = isVideo,
-                                            resumePositionMs = (item.positionSeconds * 1000.0).toLong(),
-                                        )
-                                        if (isVideo) coordinator.playVideo(playable) else coordinator.playAudio(playable)
+                                        val idInt = item.itemId.toIntOrNull()
+                                        val parentInt = item.meta?.parentId?.toIntOrNull()
+                                        when (item.itemType) {
+                                            "movie" -> if (idInt != null) onNavigate(PlayerDestination.MovieDetail(idInt))
+                                            "show" -> if (idInt != null) onNavigate(PlayerDestination.ShowDetail(idInt))
+                                            "episode" -> if (parentInt != null) {
+                                                onNavigate(PlayerDestination.ShowDetail(parentInt))
+                                            } else {
+                                                coordinator.playVideo(
+                                                    ActivePlayable(
+                                                        itemType = item.itemType,
+                                                        itemId = item.itemId,
+                                                        title = item.meta?.title ?: item.itemId,
+                                                        subtitle = item.meta?.subtitle.orEmpty(),
+                                                        artworkUrl = resolvedArt,
+                                                        streamUrl = api.streamUrl(item.itemType, item.itemId),
+                                                        isVideo = true,
+                                                        resumePositionMs = (item.positionSeconds * 1000.0).toLong(),
+                                                    ),
+                                                )
+                                            }
+                                            "track" -> if (parentInt != null) {
+                                                onNavigate(PlayerDestination.AlbumDetail(parentInt))
+                                            } else {
+                                                onNavigate(PlayerDestination.Music)
+                                            }
+                                            "audiobook" -> {
+                                                val book = books.firstOrNull { it.asin == item.itemId }
+                                                if (book != null) onNavigate(PlayerDestination.AudiobookDetail(book))
+                                                else onNavigate(PlayerDestination.Audiobooks)
+                                            }
+                                            "podcast" -> onNavigate(PlayerDestination.Podcasts)
+                                            "youtube" -> onNavigate(PlayerDestination.YouTube)
+                                            else -> Unit
+                                        }
                                     },
                                 )
                             }
@@ -411,19 +434,7 @@ fun HomeScreen(
                                     subtitle = "S${ep.seasonNumber} E${ep.episodeNumber}" +
                                         (ep.title?.let { " · $it" } ?: ""),
                                     artworkUrl = art,
-                                    onClick = {
-                                        coordinator.playVideo(
-                                            ActivePlayable(
-                                                itemType = "episode",
-                                                itemId = ep.id.toString(),
-                                                title = ep.title ?: "${ep.showTitle} S${ep.seasonNumber}E${ep.episodeNumber}",
-                                                subtitle = ep.showTitle,
-                                                artworkUrl = art,
-                                                streamUrl = api.streamUrl("episode", ep.id.toString()),
-                                                isVideo = true,
-                                            ),
-                                        )
-                                    },
+                                    onClick = { onNavigate(PlayerDestination.ShowDetail(ep.showId)) },
                                 )
                             }
                         }

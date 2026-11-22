@@ -75,6 +75,9 @@ data class CatalogMovie(
     val studio: String? = null,
     @SerialName("tmdb_id")
     val tmdbId: Int? = null,
+    @SerialName("collection_id")
+    val collectionId: Int? = null,
+    val collection: String? = null,
 )
 
 @Serializable
@@ -880,6 +883,8 @@ internal object VideoCatalogDecoder {
                     hasBackdrop = item.col("has_backdrop").boolOrNull() ?: false,
                     studio = item.col("studio").strOrNull(),
                     tmdbId = item.col("tmdb_id").intOrNullSafe(),
+                    collectionId = item.col("collection_id").intOrNullSafe(),
+                    collection = item.col("collection").strOrNull(),
                 )
                 is JsonObject -> CatalogMovie(
                     id = item["id"].intOrNullSafe() ?: return@mapNotNull null,
@@ -894,6 +899,8 @@ internal object VideoCatalogDecoder {
                     hasBackdrop = item["has_backdrop"].boolOrNull() ?: false,
                     studio = item["studio"].strOrNull(),
                     tmdbId = item["tmdb_id"].intOrNullSafe(),
+                    collectionId = item["collection_id"].intOrNullSafe(),
+                    collection = item["collection"].strOrNull(),
                 )
                 else -> null
             }

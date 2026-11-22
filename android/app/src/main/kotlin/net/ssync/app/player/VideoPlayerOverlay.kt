@@ -3,50 +3,88 @@ package net.ssync.app.player
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import androidx.annotation.OptIn
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AspectRatio
+import androidx.compose.material.icons.filled.Brightness6
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Forward10
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Replay10
+import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material.icons.filled.Subtitles
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackParameters
+import androidx.media3.common.Player
+import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import kotlinx.coroutines.delay
 import net.ssync.pairing.theme.SoulSyncColors
 import net.ssync.pairing.ui.dpadFocusable
 import okhttp3.OkHttpClient
+import kotlin.math.roundToInt
 
+private val VIDEO_SPEEDS = listOf(0.75f, 1.0f, 1.25f, 1.5f, 2.0f)
+
+@kotlin.OptIn(ExperimentalMaterial3Api::class)
 @OptIn(UnstableApi::class)
 @Composable
 fun VideoPlayerOverlay(
@@ -84,8 +122,31 @@ fun VideoPlayerOverlay(
             }
     }
 
+    var isPlaying by remember { mutableStateOf(true) }
+    var isBuffering by remember { mutableStateOf(true) }
+    var positionMs by remember { mutableLongStateOf(item.resumePositionMs) }
+    var durationMs by remember { mutableLongStateOf(0L) }
+    var scrubbing by remember { mutableStateOf(false) }
+    var scrubValue by remember { mutableFloatStateOf(0f) }
+    var showHud by remember { mutableStateOf(true) }
+    var hudPoke by remember { mutableStateOf(0) }
+    var speedIndex by remember { mutableStateOf(1) }
+    var showTracksSheet by remember { mutableStateOf(false) }
+
     DisposableEffect(exoPlayer) {
+        val listener = object : Player.Listener {
+            override fun onIsPlayingChanged(playing: Boolean) {
+                isPlaying = playing
+            }
+
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                isBuffering = playbackState == Player.STATE_BUFFERING
+                if (exoPlayer.duration > 0L) durationMs = exoPlayer.duration
+            }
+        }
+        exoPlayer.addListener(listener)
         onDispose {
+            exoPlayer.removeListener(listener)
             val pos = exoPlayer.currentPosition.coerceAtLeast(0L)
             val dur = exoPlayer.duration.coerceAtLeast(0L)
             exoPlayer.release()
@@ -93,16 +154,41 @@ fun VideoPlayerOverlay(
         }
     }
 
+    LaunchedEffect(exoPlayer) {
+        while (true) {
+            if (!scrubbing) {
+                positionMs = exoPlayer.currentPosition.coerceAtLeast(0L)
+                if (exoPlayer.duration > 0L) durationMs = exoPlayer.duration
+            }
+            delay(400L)
+        }
+    }
+
+    // Auto-hide cinema HUD after 3.5s while playing
+    LaunchedEffect(showHud, isPlaying, hudPoke, showTracksSheet) {
+        if (showHud && isPlaying && !showTracksSheet) {
+            delay(3500L)
+            showHud = false
+        }
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black),
+            .background(Color.Black)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+            ) {
+                showHud = !showHud
+                hudPoke++
+            },
     ) {
         AndroidView(
             factory = { ctx ->
                 PlayerView(ctx).apply {
                     player = exoPlayer
-                    useController = true
+                    useController = false
                     this.resizeMode = resizeMode
                     layoutParams = FrameLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
@@ -124,60 +210,348 @@ fun VideoPlayerOverlay(
             )
         }
 
-        // Top overlay header with title, ±10s quick skip, and close
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .align(Alignment.TopCenter)
-                .background(
-                    Brush.verticalGradient(
-                        listOf(Color.Black.copy(alpha = 0.85f), Color.Transparent),
-                    ),
-                )
-                .padding(horizontal = 12.dp, vertical = 14.dp),
-            verticalAlignment = Alignment.CenterVertically,
+        if (isBuffering) {
+            CircularProgressIndicator(
+                color = SoulSyncColors.AccentLight,
+                modifier = Modifier.align(Alignment.Center),
+            )
+        }
+
+        // Custom Best-in-Class Cinema HUD
+        AnimatedVisibility(
+            visible = showHud,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier.fillMaxSize(),
         ) {
-            IconButton(
-                onClick = {
-                    val pos = exoPlayer.currentPosition.coerceAtLeast(0L)
-                    val dur = exoPlayer.duration.coerceAtLeast(0L)
-                    onClose(pos, dur)
-                },
-                modifier = Modifier.dpadFocusable(),
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.36f)),
             ) {
-                Icon(Icons.Default.Close, contentDescription = "Close video", tint = Color.White)
-            }
-            Spacer(modifier = Modifier.width(8.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = item.title,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = Color.White,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                if (item.subtitle.isNotBlank()) {
-                    Text(
-                        text = item.subtitle,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = SoulSyncColors.TextSoft,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
+                // Top Bar: Close + Title + Quick Cinema Pills
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .align(Alignment.TopCenter)
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(Color.Black.copy(alpha = 0.85f), Color.Transparent),
+                            ),
+                        )
+                        .statusBarsPadding()
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    IconButton(
+                        onClick = {
+                            val pos = exoPlayer.currentPosition.coerceAtLeast(0L)
+                            val dur = exoPlayer.duration.coerceAtLeast(0L)
+                            onClose(pos, dur)
+                        },
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(CircleShape)
+                            .background(Color.White.copy(alpha = 0.12f))
+                            .dpadFocusable(CircleShape),
+                    ) {
+                        Icon(Icons.Default.Close, contentDescription = "Close video", tint = Color.White)
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = item.title,
+                            color = Color.White,
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        if (item.subtitle.isNotBlank()) {
+                            Text(
+                                text = item.subtitle,
+                                color = SoulSyncColors.TextSoft,
+                                fontSize = 12.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+
+                    // Picture Fit cycle pill
+                    CinemaPill(
+                        icon = Icons.Default.AspectRatio,
+                        label = displayPrefs.pictureFit.replaceFirstChar { it.uppercase() },
+                        onClick = {
+                            val order = listOf("fit", "fill", "stretch")
+                            val next = order[(order.indexOf(displayPrefs.pictureFit) + 1) % order.size]
+                            PlayerDevicePrefs.update { it.copy(pictureFit = next) }
+                            hudPoke++
+                        },
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    // Brightness quick-dim pill
+                    CinemaPill(
+                        icon = Icons.Default.Brightness6,
+                        label = "${(displayPrefs.brightness * 100).roundToInt()}%",
+                        onClick = {
+                            val steps = listOf(1.0f, 0.80f, 0.60f, 0.45f, 0.30f)
+                            val curIdx = steps.indexOfFirst { kotlin.math.abs(it - displayPrefs.brightness) < 0.08f }
+                            val next = steps[(curIdx + 1) % steps.size]
+                            PlayerDevicePrefs.update { it.copy(brightness = next) }
+                            hudPoke++
+                        },
                     )
                 }
+
+                // Center Cinema Transport: -10s / Play-Pause / +10s
+                Row(
+                    modifier = Modifier.align(Alignment.Center),
+                    horizontalArrangement = Arrangement.spacedBy(28.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    IconButton(
+                        onClick = {
+                            exoPlayer.seekTo((exoPlayer.currentPosition - 10_000L).coerceAtLeast(0L))
+                            hudPoke++
+                        },
+                        modifier = Modifier
+                            .size(54.dp)
+                            .clip(CircleShape)
+                            .background(Color.Black.copy(alpha = 0.55f))
+                            .border(1.dp, Color.White.copy(alpha = 0.18f), CircleShape)
+                            .dpadFocusable(CircleShape),
+                    ) {
+                        Icon(Icons.Default.Replay10, contentDescription = "Back 10s", tint = Color.White, modifier = Modifier.size(30.dp))
+                    }
+
+                    IconButton(
+                        onClick = {
+                            if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
+                            hudPoke++
+                        },
+                        modifier = Modifier
+                            .size(72.dp)
+                            .clip(CircleShape)
+                            .background(Color.White)
+                            .dpadFocusable(CircleShape),
+                    ) {
+                        Icon(
+                            imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                            contentDescription = if (isPlaying) "Pause" else "Play",
+                            tint = Color.Black,
+                            modifier = Modifier.size(40.dp),
+                        )
+                    }
+
+                    IconButton(
+                        onClick = {
+                            val target = exoPlayer.currentPosition + 10_000L
+                            exoPlayer.seekTo(if (durationMs > 0L) target.coerceAtMost(durationMs) else target)
+                            hudPoke++
+                        },
+                        modifier = Modifier
+                            .size(54.dp)
+                            .clip(CircleShape)
+                            .background(Color.Black.copy(alpha = 0.55f))
+                            .border(1.dp, Color.White.copy(alpha = 0.18f), CircleShape)
+                            .dpadFocusable(CircleShape),
+                    ) {
+                        Icon(Icons.Default.Forward10, contentDescription = "Forward 10s", tint = Color.White, modifier = Modifier.size(30.dp))
+                    }
+                }
+
+                // Bottom Bar: Seek Scrubber + Timestamps + Speed + Subtitles/Audio Tracks
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .align(Alignment.BottomCenter)
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(Color.Transparent, Color.Black.copy(alpha = 0.9f)),
+                            ),
+                        )
+                        .navigationBarsPadding()
+                        .padding(horizontal = 18.dp, vertical = 14.dp),
+                ) {
+                    val fraction = if (scrubbing) scrubValue
+                    else if (durationMs > 0L) (positionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
+                    else 0f
+
+                    Slider(
+                        value = fraction,
+                        onValueChange = { v ->
+                            scrubbing = true
+                            scrubValue = v
+                            hudPoke++
+                        },
+                        onValueChangeFinished = {
+                            if (durationMs > 0L) {
+                                exoPlayer.seekTo((scrubValue * durationMs).toLong())
+                            }
+                            scrubbing = false
+                            hudPoke++
+                        },
+                        colors = SliderDefaults.colors(
+                            thumbColor = SoulSyncColors.AccentLight,
+                            activeTrackColor = SoulSyncColors.Accent,
+                            inactiveTrackColor = Color.White.copy(alpha = 0.25f),
+                        ),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        val shownPos = if (scrubbing && durationMs > 0L) (scrubValue * durationMs).toLong() else positionMs
+                        val remaining = (durationMs - shownPos).coerceAtLeast(0L)
+                        Text(
+                            text = "${formatVideoTime(shownPos)}  /  -${formatVideoTime(remaining)}",
+                            color = Color.White,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            CinemaPill(
+                                icon = Icons.Default.Speed,
+                                label = "${VIDEO_SPEEDS[speedIndex]}x",
+                                onClick = {
+                                    speedIndex = (speedIndex + 1) % VIDEO_SPEEDS.size
+                                    exoPlayer.playbackParameters = PlaybackParameters(VIDEO_SPEEDS[speedIndex])
+                                    hudPoke++
+                                },
+                            )
+                            CinemaPill(
+                                icon = Icons.Default.Subtitles,
+                                label = "Audio & Subs",
+                                onClick = {
+                                    showTracksSheet = true
+                                    hudPoke++
+                                },
+                            )
+                        }
+                    }
+                }
             }
-            IconButton(
-                onClick = { exoPlayer.seekTo((exoPlayer.currentPosition - 10_000L).coerceAtLeast(0L)) },
-                modifier = Modifier.dpadFocusable(),
+        }
+
+        if (showTracksSheet) {
+            ModalBottomSheet(
+                onDismissRequest = { showTracksSheet = false },
+                containerColor = SoulSyncColors.Surface,
+                contentColor = Color.White,
             ) {
-                Icon(Icons.Default.Replay10, contentDescription = "Back 10s", tint = Color.White)
-            }
-            IconButton(
-                onClick = { exoPlayer.seekTo(exoPlayer.currentPosition + 10_000L) },
-                modifier = Modifier.dpadFocusable(),
-            ) {
-                Icon(Icons.Default.Forward10, contentDescription = "Forward 10s", tint = Color.White)
+                val tracks = exoPlayer.currentTracks
+                val audioGroups = tracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }
+                val textGroups = tracks.groups.filter { it.type == C.TRACK_TYPE_TEXT }
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp)
+                        .padding(bottom = 28.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Text("Audio & Subtitles", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color.White)
+
+                    Text("AUDIO TRACKS", color = SoulSyncColors.TextSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    if (audioGroups.isEmpty()) {
+                        Text("Default audio stream", color = SoulSyncColors.TextSoft, fontSize = 13.sp)
+                    } else {
+                        audioGroups.forEachIndexed { gIdx, group ->
+                            val fmt = group.getTrackFormat(0)
+                            val label = listOfNotNull(fmt.label, fmt.language?.uppercase()).joinToString(" · ")
+                                .ifBlank { "Audio Track ${gIdx + 1}" }
+                            val selected = group.isSelected
+                            TrackOptionRow(label = label, selected = selected) {
+                                exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters
+                                    .buildUpon()
+                                    .setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup, 0))
+                                    .build()
+                                showTracksSheet = false
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text("SUBTITLES", color = SoulSyncColors.TextSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    TrackOptionRow(
+                        label = "Off",
+                        selected = textGroups.none { it.isSelected },
+                    ) {
+                        exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters
+                            .buildUpon()
+                            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+                            .build()
+                        showTracksSheet = false
+                    }
+                    textGroups.forEachIndexed { gIdx, group ->
+                        val fmt = group.getTrackFormat(0)
+                        val label = listOfNotNull(fmt.label, fmt.language?.uppercase()).joinToString(" · ")
+                            .ifBlank { "Subtitle ${gIdx + 1}" }
+                        TrackOptionRow(label = label, selected = group.isSelected) {
+                            exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters
+                                .buildUpon()
+                                .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+                                .setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup, 0))
+                                .build()
+                            showTracksSheet = false
+                        }
+                    }
+                }
             }
         }
     }
+}
+
+@Composable
+private fun CinemaPill(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .clip(CircleShape)
+            .background(Color.Black.copy(alpha = 0.55f))
+            .border(1.dp, Color.White.copy(alpha = 0.18f), CircleShape)
+            .dpadFocusable(CircleShape)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
+    ) {
+        Icon(icon, contentDescription = label, tint = Color.White, modifier = Modifier.size(15.dp))
+        Text(text = label, color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+@Composable
+private fun TrackOptionRow(label: String, selected: Boolean, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(if (selected) SoulSyncColors.Accent.copy(alpha = 0.18f) else Color.White.copy(alpha = 0.04f))
+            .border(1.dp, if (selected) SoulSyncColors.Accent.copy(alpha = 0.55f) else SoulSyncColors.Line, RoundedCornerShape(10.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 11.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = label,
+            color = if (selected) Color.White else SoulSyncColors.TextSoft,
+            fontSize = 14.sp,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+        )
+    }
+}
+
+private fun formatVideoTime(ms: Long): String {
+    val totalSec = (ms / 1000L).coerceAtLeast(0L)
+    val hrs = totalSec / 3600L
+    val mins = (totalSec % 3600L) / 60L
+    val secs = totalSec % 60L
+    return if (hrs > 0) "%d:%02d:%02d".format(hrs, mins, secs) else "%d:%02d".format(mins, secs)
 }
