@@ -184,6 +184,24 @@ class PlaybackCoordinator(
         controllerProvider()?.seekToPreviousMediaItem()
     }
 
+    fun stopPlayback() {
+        controllerProvider()?.run {
+            stop()
+            clearMediaItems()
+        }
+        showAudioSheet = false
+        showVideoOverlay = false
+        isPlaying = false
+        activeItem = null
+        queue = emptyList()
+        positionMs = 0L
+        durationMs = 0L
+        lyricsText = null
+        scope.launch {
+            api.clearPresence()
+        }
+    }
+
     fun seekTo(ms: Long) {
         controllerProvider()?.seekTo(ms.coerceAtLeast(0L))
         positionMs = ms.coerceAtLeast(0L)

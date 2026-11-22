@@ -100,6 +100,15 @@ data class CatalogShow(
     val episodeCount: Int = 0,
     @SerialName("tmdb_id")
     val tmdbId: Int? = null,
+    val episodes: List<kotlinx.serialization.json.JsonArray> = emptyList(),
+)
+
+data class CatalogShowEpisode(
+    val id: Int,
+    val season: Int,
+    val episode: Int,
+    val seconds: Int,
+    val title: String?,
 )
 
 @Serializable
@@ -567,13 +576,65 @@ data class GuideChannel(
 )
 
 @Serializable
+data class ChannelSpecPerson(
+    val id: Int,
+    val name: String = "",
+)
+
+@Serializable
+data class GuideChannelSpec(
+    val name: String = "",
+    val kinds: List<String> = listOf("movies", "tv"),
+    val genres: List<String> = emptyList(),
+    val decades: List<Int> = emptyList(),
+    val studios: List<String> = emptyList(),
+    val networks: List<String> = emptyList(),
+    val collection: String? = null,
+    @SerialName("min_score")
+    val minScore: Double? = null,
+    val kids: Boolean = false,
+    @SerialName("added_days")
+    val addedDays: Int? = null,
+    val show: Int? = null,
+    val people: List<ChannelSpecPerson> = emptyList(),
+    val order: String = "shuffle",
+)
+
+@Serializable
+data class SavedGuideChannel(
+    val id: String,
+    val scope: String = "mine", // "server" | "mine"
+    val spec: GuideChannelSpec = GuideChannelSpec(),
+)
+
+@Serializable
+data class GuideLineupEntry(
+    @SerialName("channel_id")
+    val channelId: String,
+    val hidden: Boolean = false,
+    val name: String? = null,
+)
+
+data class MusicChannelTrack(
+    val id: Int,
+    val title: String,
+    val artist: String,
+    val seconds: Int,
+    val albumId: Int?,
+)
+
+@Serializable
 data class MusicChannel(
     val id: String,
     val name: String,
+    val kind: String = "genre", // "genre" | "vibe"
+    val count: Int = 0,
     val description: String? = null,
     @SerialName("track_count")
     val trackCount: Int = 0,
     val tracks: List<Int> = emptyList(),
+    @kotlinx.serialization.Transient
+    val trackItems: List<MusicChannelTrack> = emptyList(),
 )
 
 @Serializable

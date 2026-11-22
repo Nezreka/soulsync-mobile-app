@@ -185,9 +185,79 @@ class PlayerApiClient(
             }
         }
 
+    suspend fun fetchSavedGuideChannels(): MusicApiResult<List<SavedGuideChannel>> =
+        getJson("$base/api/player/guide/channels") { body ->
+            val root = json.parseToJsonElement(body).jsonObject
+            val out = mutableListOf<SavedGuideChannel>()
+            fun parseScope(arrKey: String, defaultScope: String) {
+                val arr = root[arrKey] as? JsonArray ?: return
+                for (el in arr) {
+                    val obj = el as? JsonObject ?: continue
+                    val id = obj["id"]?.jsonPrimitive?.content ?: continue
+                    val scope = obj["scope"]?.jsonPrimitive?.content ?: defaultScope
+                    val specEl = obj["spec"] as? JsonObject ?: continue
+                    val spec = runCatching {
+                        json.decodeFromJsonElement(GuideChannelSpec.serializer(), specEl)
+                    }.getOrNull() ?: continue
+                    out += SavedGuideChannel(id = id, scope = scope, spec = spec)
+                }
+            }
+            parseScope("server", "server")
+            parseScope("mine", "mine")
+            out
+        }
+
+    suspend fun fetchGuideLineup(): MusicApiResult<List<GuideLineupEntry>> =
+        getJson("$base/api/player/guide/lineup") { body ->
+            val root = json.parseToJsonElement(body).jsonObject
+            val arr = root["entries"] as? JsonArray ?: return@getJson emptyList()
+            arr.mapNotNull { el ->
+                runCatching { json.decodeFromJsonElement(GuideLineupEntry.serializer(), el) }.getOrNull()
+            }
+        }
+
     suspend fun fetchMusicChannels(): MusicApiResult<List<MusicChannel>> =
         getJson("$base/api/player/music-channels") { body ->
-            json.decodeFromString<MusicChannelsEnvelope>(body).channels
+            val root = json.parseToJsonElement(body).jsonObject
+            val arr = root["channels"] as? JsonArray ?: return@getJson emptyList()
+            arr.mapNotNull { el ->
+                val obj = el as? JsonObject ?: return@mapNotNull null
+                val id = obj["id"]?.jsonPrimitive?.content ?: return@mapNotNull null
+                val name = obj["name"]?.jsonPrimitive?.content ?: id
+                val kind = obj["kind"]?.jsonPrimitive?.content ?: "genre"
+                val count = obj["count"]?.jsonPrimitive?.intOrNull
+                    ?: obj["track_count"]?.jsonPrimitive?.intOrNull
+                    ?: 0
+                val rawTracks = obj["tracks"] as? JsonArray ?: JsonArray(emptyList())
+                val parsedItems = mutableListOf<MusicChannelTrack>()
+                val parsedIds = mutableListOf<Int>()
+                for (t in rawTracks) {
+                    when (t) {
+                        is JsonArray -> {
+                            val tid = t.getOrNull(0)?.jsonPrimitive?.intOrNull ?: continue
+                            val title = t.getOrNull(1)?.jsonPrimitive?.content ?: "Track"
+                            val artist = t.getOrNull(2)?.jsonPrimitive?.content ?: ""
+                            val secs = t.getOrNull(3)?.jsonPrimitive?.intOrNull ?: 210
+                            val albumId = t.getOrNull(4)?.jsonPrimitive?.intOrNull
+                            parsedIds += tid
+                            parsedItems += MusicChannelTrack(tid, title, artist, secs, albumId)
+                        }
+                        else -> {
+                            t.jsonPrimitive.intOrNull?.let { parsedIds += it }
+                        }
+                    }
+                }
+                MusicChannel(
+                    id = id,
+                    name = name,
+                    kind = kind,
+                    count = if (count > 0) count else parsedIds.size,
+                    description = obj["description"]?.jsonPrimitive?.content,
+                    trackCount = if (count > 0) count else parsedIds.size,
+                    tracks = parsedIds,
+                    trackItems = parsedItems,
+                )
+            }
         }
 
     suspend fun fetchGuideFavorites(): MusicApiResult<Set<String>> =

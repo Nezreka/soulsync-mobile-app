@@ -36,6 +36,7 @@ import androidx.compose.material.icons.filled.CastConnected
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.Home
@@ -369,6 +370,7 @@ fun PlayerShell(
                             onExpand = { coordinator.showAudioSheet = true },
                             onTogglePlayPause = { coordinator.togglePlayPause() },
                             onNext = { coordinator.skipNext() },
+                            onStop = { coordinator.stopPlayback() },
                         )
                     }
                 }
@@ -567,6 +569,7 @@ private fun FloatingTopHeader(
                 ) {
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
                 }
+                Spacer(modifier = Modifier.width(8.dp))
             } else if (showMenuButton) {
                 Row(
                     modifier = Modifier
@@ -588,15 +591,35 @@ private fun FloatingTopHeader(
                         contentDescription = "SoulSync",
                         modifier = Modifier.size(26.dp),
                     )
-                    Spacer(modifier = Modifier.width(7.dp))
-                    Text(
-                        text = "SoulSync",
-                        color = Color.White,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 17.sp,
-                        letterSpacing = (-0.3).sp,
-                    )
                 }
+                Spacer(modifier = Modifier.width(8.dp))
+            }
+
+            // Sleek Search pill right beside the logo mark
+            Row(
+                modifier = Modifier
+                    .height(36.dp)
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(SoulSyncColors.PanelGlass)
+                    .border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(999.dp))
+                    .clickable(onClick = onSearch)
+                    .dpadFocusable(RoundedCornerShape(999.dp))
+                    .padding(horizontal = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Icon(
+                    Icons.Default.Search,
+                    contentDescription = "Search",
+                    tint = SoulSyncColors.TextSoft,
+                    modifier = Modifier.size(17.dp),
+                )
+                Text(
+                    text = "Search",
+                    color = SoulSyncColors.TextSoft,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium,
+                )
             }
 
             Spacer(modifier = Modifier.weight(1f))
@@ -620,20 +643,6 @@ private fun FloatingTopHeader(
                     tint = if (castConnected) SoulSyncColors.AccentLight else Color.White,
                     modifier = Modifier.size(18.dp),
                 )
-            }
-
-            Spacer(modifier = Modifier.width(6.dp))
-
-            IconButton(
-                onClick = onSearch,
-                modifier = Modifier
-                    .size(36.dp)
-                    .clip(CircleShape)
-                    .background(SoulSyncColors.PanelGlass)
-                    .border(1.dp, Color.White.copy(alpha = 0.12f), CircleShape)
-                    .dpadFocusable(CircleShape),
-            ) {
-                Icon(Icons.Default.Search, contentDescription = "Search", tint = Color.White, modifier = Modifier.size(19.dp))
             }
 
             Spacer(modifier = Modifier.width(8.dp))
@@ -1060,7 +1069,13 @@ private fun PlayerContent(
         is PlayerDestination.PersonDetail -> PersonDetailScreen(current.tmdbId, current.name, api, onNavigate, onDeviceRevoked)
         PlayerDestination.Music -> MusicScreen(api, coordinator, onNavigate, onDeviceRevoked)
         is PlayerDestination.ArtistDetail -> ArtistDetailScreen(current.artistId, api, { onNavigate(PlayerDestination.AlbumDetail(it)) }, onDeviceRevoked)
-        is PlayerDestination.AlbumDetail -> AlbumDetailScreen(current.albumId, api, coordinator, onDeviceRevoked)
+        is PlayerDestination.AlbumDetail -> AlbumDetailScreen(
+            albumId = current.albumId,
+            api = api,
+            coordinator = coordinator,
+            onDeviceRevoked = onDeviceRevoked,
+            onArtistClick = { onNavigate(PlayerDestination.ArtistDetail(it)) },
+        )
         is PlayerDestination.PlaylistDetail -> PlaylistDetailScreen(current.playlistId, api, coordinator, onDeviceRevoked)
         PlayerDestination.YouTube -> YouTubeScreen(api, coordinator, { id, title -> onNavigate(PlayerDestination.YouTubeChannel(id, title)) }, onDeviceRevoked)
         is PlayerDestination.YouTubeChannel -> YouTubeChannelScreen(current.channelId, current.title, api, coordinator, onDeviceRevoked)
@@ -1087,6 +1102,7 @@ private fun MiniTransportBar(
     onExpand: () -> Unit,
     onTogglePlayPause: () -> Unit,
     onNext: () -> Unit,
+    onStop: () -> Unit,
 ) {
     Surface(
         color = SoulSyncColors.PanelSolid,
@@ -1128,6 +1144,9 @@ private fun MiniTransportBar(
             }
             IconButton(onClick = onNext, modifier = Modifier.dpadFocusable()) {
                 Icon(Icons.Default.SkipNext, contentDescription = "Next", tint = Color.White)
+            }
+            IconButton(onClick = onStop, modifier = Modifier.dpadFocusable()) {
+                Icon(Icons.Default.Close, contentDescription = "Stop playback", tint = SoulSyncColors.TextSoft)
             }
         }
     }

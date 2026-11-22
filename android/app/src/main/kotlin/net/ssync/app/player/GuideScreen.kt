@@ -26,13 +26,13 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Radio
 import androidx.compose.material.icons.filled.Star
-import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -62,18 +62,62 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.jsonPrimitive
 import net.ssync.pairing.theme.SoulSyncColors
 import net.ssync.pairing.ui.dpadFocusable
-import net.ssync.player.GuideChannel
+import net.ssync.player.CatalogMovie
+import net.ssync.player.CatalogShow
+import net.ssync.player.CatalogShowEpisode
+import net.ssync.player.CatalogYoutube
+import net.ssync.player.GuideChannelSpec
+import net.ssync.player.GuideLineupEntry
+import net.ssync.player.LibSong
 import net.ssync.player.MusicApiResult
 import net.ssync.player.MusicChannel
+import net.ssync.player.MusicChannelTrack
 import net.ssync.player.PlayerApiClient
+import net.ssync.player.PlaylistDetail
+import net.ssync.player.SavedGuideChannel
 import net.ssync.player.VideoCatalog
+import java.text.Normalizer
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.abs
+
+// ── Desktop-Parity Channel Model & Grouping (mirrors webui/.../channels.ts) ──
+
+private enum class ChannelKind(val groupLabel: String) {
+    TYPE("Everything"),
+    SERVER("Channels for everyone"),
+    RULE("Your channels"),
+    PLAYLIST("Your playlists"),
+    VIBE("Vibes"),
+    MUSIC("Music genres"),
+    PICK("Picks"),
+    KIDS("Kids"),
+    GENRE("Movie and TV genres"),
+    NETWORK("Networks"),
+    STUDIO("Studios"),
+    COLLECTION("Film series"),
+    DECADE("Decades"),
+}
+
+private data class PoolItem(
+    val key: String,
+    val itemType: String, // "movie" | "episode" | "youtube" | "track"
+    val itemId: String,
+    val detailId: Int?,
+    val title: String,
+    val subtitle: String,
+    val seconds: Int,
+    val posterUrl: String?,
+    val backdropUrl: String?,
+)
 
 private data class EpgProgram(
     val itemType: String,
@@ -84,332 +128,708 @@ private data class EpgProgram(
     val artworkUrl: String?,
     val startEpochSec: Long,
     val endEpochSec: Long,
-) {
-    val durationMin: Int get() = ((endEpochSec - startEpochSec) / 60L).toInt().coerceAtLeast(15)
-}
+)
 
 private data class EpgChannel(
     val id: String,
     val number: Int,
     val name: String,
-    val category: String, // "movie" | "tv" | "music"
+    val kind: ChannelKind,
+    val blurb: String,
+    val isMusic: Boolean,
     val mosaicArt: List<String>,
     val programs: List<EpgProgram>,
-    val musicTracks: List<Int> = emptyList(),
+    val musicPool: List<PoolItem> = emptyList(),
+)
+
+private data class ChannelGroupSection(
+    val key: String,
+    val label: String,
+    val channels: List<EpgChannel>,
 )
 
 private enum class GuideViewMode(val label: String) { GRID("Grid"), ON_NOW("On now") }
+
 private enum class GuideFilter(val label: String) {
     ALL("All"),
     FAVORITES("Favorites"),
-    MOVIES("Movies"),
-    TV("TV"),
-    SHOWS("Marathons"),
-    YOUTUBE("YouTube"),
+    VIDEO("Video"),
     MUSIC("Music"),
+    KIDS("Kids"),
 }
 
 private val PX_PER_MIN: Dp = 3.6.dp
-private val CHANNEL_COL_WIDTH: Dp = 122.dp
+private val CHANNEL_COL_WIDTH: Dp = 128.dp
 private val ROW_HEIGHT: Dp = 68.dp
 
-private fun buildEpgSchedule(
+private const val MIN_POOL = 3
+private val KID_RATINGS = setOf("G", "PG", "TV-Y", "TV-Y7", "TV-Y7-FV", "TV-G", "TV-PG")
+private val LITTLE_RATINGS = setOf("TV-Y", "TV-Y7", "TV-Y7-FV", "G")
+
+private fun isKidSafe(rating: String?): Boolean =
+    !rating.isNullOrBlank() && rating.trim().uppercase() in KID_RATINGS
+
+private fun isLittleKidSafe(rating: String?): Boolean =
+    !rating.isNullOrBlank() && rating.trim().uppercase() in LITTLE_RATINGS
+
+private fun decadeOf(year: Int?): Int? =
+    if (year != null && year >= 1900) (year / 10) * 10 else null
+
+private fun decadeLabel(decade: Int): String = "${decade.toString().takeLast(2)}s"
+
+private fun slug(text: String): String {
+    val norm = Normalizer.normalize(text.lowercase(Locale.US), Normalizer.Form.NFKD)
+    return norm.replace(Regex("[^\\w]+"), "-").trim('-')
+}
+
+private fun parseIsoEpochMs(raw: String?): Long? {
+    if (raw.isNullOrBlank()) return null
+    val clean = raw.trim().replace(' ', 'T').substringBefore('.').removeSuffix("Z")
+    return runCatching {
+        val fmt = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US)
+        fmt.timeZone = java.util.TimeZone.getTimeZone("UTC")
+        fmt.parse(clean)?.time
+    }.getOrNull()
+}
+
+private fun parseShowEpisodes(show: CatalogShow): List<CatalogShowEpisode> =
+    show.episodes.mapNotNull { arr ->
+        val id = arr.getOrNull(0)?.jsonPrimitive?.intOrNull ?: return@mapNotNull null
+        val season = arr.getOrNull(1)?.jsonPrimitive?.intOrNull ?: 1
+        val epNum = arr.getOrNull(2)?.jsonPrimitive?.intOrNull ?: 1
+        val secs = arr.getOrNull(3)?.jsonPrimitive?.intOrNull ?: 2700
+        val title = arr.getOrNull(4)?.jsonPrimitive?.content?.takeIf { it.isNotBlank() && it != "null" }
+        CatalogShowEpisode(id, season, epNum, secs, title)
+    }
+
+private fun moviePoolItem(m: CatalogMovie, api: PlayerApiClient): PoolItem = PoolItem(
+    key = "movie:${m.id}",
+    itemType = "movie",
+    itemId = m.id.toString(),
+    detailId = m.id,
+    title = m.title,
+    subtitle = listOfNotNull(m.year?.toString(), m.contentRating).joinToString(" · "),
+    seconds = m.runtimeSeconds ?: 0,
+    posterUrl = if (m.hasPoster) api.artwork.moviePoster(m.id) else null,
+    backdropUrl = if (m.hasBackdrop) api.artwork.movieBackdrop(m.id) else api.artwork.moviePoster(m.id),
+)
+
+private fun showEpisodePoolItems(s: CatalogShow, api: PlayerApiClient): List<PoolItem> {
+    val poster = if (s.hasPoster) api.artwork.showPoster(s.id) else null
+    val backdrop = if (s.hasBackdrop) api.artwork.showBackdrop(s.id) else poster
+    return parseShowEpisodes(s).map { ep ->
+        PoolItem(
+            key = "episode:${ep.id}",
+            itemType = "episode",
+            itemId = ep.id.toString(),
+            detailId = s.id,
+            title = s.title,
+            subtitle = "S${ep.season} E${ep.episode}" + (ep.title?.let { " · $it" } ?: ""),
+            seconds = ep.seconds,
+            posterUrl = poster,
+            backdropUrl = backdrop,
+        )
+    }
+}
+
+private fun youtubePoolItem(v: CatalogYoutube, api: PlayerApiClient): PoolItem = PoolItem(
+    key = "youtube:${v.id}",
+    itemType = "youtube",
+    itemId = v.id,
+    detailId = null,
+    title = v.title,
+    subtitle = v.channelTitle.orEmpty(),
+    seconds = v.durationSeconds ?: 0,
+    posterUrl = api.artwork.resolve(v.thumbnailUrl) ?: api.artwork.forItem("youtube", v.id),
+    backdropUrl = api.artwork.resolve(v.thumbnailUrl) ?: api.artwork.forItem("youtube", v.id),
+)
+
+private fun songPoolItem(s: LibSong, api: PlayerApiClient): PoolItem {
+    val secs = s.duration?.let { if (it > 10_000L) (it / 1000L).toInt() else it.toInt() } ?: 210
+    val art = api.artwork.albumArtwork(s.albumId)
+    return PoolItem(
+        key = "track:${s.id}",
+        itemType = "track",
+        itemId = s.id.toString(),
+        detailId = s.albumId,
+        title = s.title,
+        subtitle = s.artistName ?: "Unknown Artist",
+        seconds = secs,
+        posterUrl = art,
+        backdropUrl = art,
+    )
+}
+
+private fun musicChannelTrackItem(t: MusicChannelTrack, api: PlayerApiClient): PoolItem {
+    val art = api.artwork.albumArtwork(t.albumId)
+    return PoolItem(
+        key = "track:${t.id}",
+        itemType = "track",
+        itemId = t.id.toString(),
+        detailId = t.albumId,
+        title = t.title,
+        subtitle = t.artist,
+        seconds = t.seconds,
+        posterUrl = art,
+        backdropUrl = art,
+    )
+}
+
+private fun hasEnoughPool(pool: List<PoolItem>): Boolean {
+    val seen = HashSet<String>()
+    for (item in pool) {
+        if (item.seconds < 60) continue
+        seen += item.key
+        if (seen.size >= MIN_POOL) return true
+    }
+    return false
+}
+
+private fun deterministicHash(seed: String): Long {
+    var h = 2166136261L
+    for (ch in seed) {
+        h = (h xor ch.code.toLong()) * 16777619L
+    }
+    return abs(h)
+}
+
+private fun scheduleVideoPrograms(
+    channelId: String,
+    pool: List<PoolItem>,
+    ordered: Boolean,
+    windowStartSec: Long,
+    windowEndSec: Long,
+): List<EpgProgram> {
+    if (pool.isEmpty()) return emptyList()
+    val arranged = if (ordered) {
+        pool
+    } else {
+        pool.sortedBy { deterministicHash("$channelId|${it.key}") }
+    }
+    val durations = arranged.map { it.seconds.coerceAtLeast(900).toLong() }
+    val total = durations.sum().coerceAtLeast(1L)
+    val anchor = (windowStartSec + deterministicHash(channelId) % 86400L) % total
+    var cursor = 0L
+    var idx = 0
+    while (idx < arranged.lastIndex && cursor + durations[idx] <= anchor) {
+        cursor += durations[idx]
+        idx++
+    }
+    var t = windowStartSec - (anchor - cursor)
+    val progs = mutableListOf<EpgProgram>()
+    var guard = 0
+    while (t < windowEndSec && guard < 18) {
+        val item = arranged[idx % arranged.size]
+        val dur = durations[idx % arranged.size]
+        progs += EpgProgram(
+            itemType = item.itemType,
+            itemId = item.itemId,
+            detailId = item.detailId,
+            title = item.title,
+            subtitle = item.subtitle,
+            artworkUrl = item.backdropUrl ?: item.posterUrl,
+            startEpochSec = t,
+            endEpochSec = t + dur,
+        )
+        t += dur
+        idx++
+        guard++
+    }
+    return progs
+}
+
+private fun scheduleMusicBlocks(
+    channelId: String,
+    channelName: String,
+    blurb: String,
+    pool: List<PoolItem>,
+    windowStartSec: Long,
+    windowEndSec: Long,
+): List<EpgProgram> {
+    if (pool.isEmpty()) return emptyList()
+    val blockSec = 1800L // 30-min music blocks (matches desktop mergeIntoBlocks)
+    val progs = mutableListOf<EpgProgram>()
+    var t = windowStartSec
+    var i = 0
+    val baseHash = deterministicHash(channelId)
+    while (t < windowEndSec && i < 12) {
+        val lead = pool[((baseHash + i * 7L) % pool.size).toInt()]
+        val next = pool[((baseHash + i * 7L + 1L) % pool.size).toInt()]
+        val sub = listOf(lead.subtitle, next.subtitle)
+            .filter { it.isNotBlank() }
+            .distinct()
+            .joinToString(" · ")
+            .ifBlank { blurb }
+        progs += EpgProgram(
+            itemType = "track",
+            itemId = lead.itemId,
+            detailId = lead.detailId,
+            title = "$channelName — ${lead.title}",
+            subtitle = sub,
+            artworkUrl = lead.posterUrl,
+            startEpochSec = t,
+            endEpochSec = t + blockSec,
+        )
+        t += blockSec
+        i++
+    }
+    return progs
+}
+
+private data class RawChannel(
+    val id: String,
+    val name: String,
+    val kind: ChannelKind,
+    val blurb: String,
+    val pool: List<PoolItem>,
+    val isMusic: Boolean = false,
+    val ordered: Boolean = false,
+)
+
+private fun buildDesktopParityChannels(
     catalog: VideoCatalog,
-    customChannels: List<GuideChannel>,
+    musicPoolSongs: List<LibSong>,
+    playlists: List<PlaylistDetail>,
     musicChannels: List<MusicChannel>,
+    savedChannels: List<SavedGuideChannel>,
+    lineup: List<GuideLineupEntry>,
     api: PlayerApiClient,
     windowStartSec: Long,
     windowEndSec: Long,
 ): List<EpgChannel> {
-    val out = mutableListOf<EpgChannel>()
-    var chNum = 101
+    val raw = mutableListOf<RawChannel>()
+    val nowMs = System.currentTimeMillis()
+    val monthAgoMs = nowMs - 30L * 86_400_000L
 
-    fun addMovieChannel(id: String, number: Int, name: String, movies: List<net.ssync.player.CatalogMovie>) {
-        if (movies.isEmpty()) return
-        val durations = movies.map { (it.runtimeSeconds ?: 6000).coerceAtLeast(1800).toLong() }
-        val total = durations.sum().coerceAtLeast(1L)
-        val anchor = (windowStartSec + number * 7919L) % total
-        var cursorOffset = 0L
-        var idx = 0
-        while (idx < movies.lastIndex && cursorOffset + durations[idx] <= anchor) {
-            cursorOffset += durations[idx]
-            idx++
+    fun addChannel(c: RawChannel) {
+        val playable = c.pool.filter { it.seconds >= 60 }
+        if (hasEnoughPool(playable)) {
+            raw += c.copy(pool = playable)
         }
-        var t = windowStartSec - (anchor - cursorOffset)
-        val progs = mutableListOf<EpgProgram>()
-        var guard = 0
-        while (t < windowEndSec && guard < 12) {
-            val m = movies[idx % movies.size]
-            val dur = durations[idx % movies.size]
-            progs += EpgProgram(
-                itemType = "movie",
-                itemId = m.id.toString(),
-                detailId = m.id,
-                title = m.title,
-                subtitle = listOfNotNull(m.year?.toString(), m.contentRating, m.genres.firstOrNull()).joinToString(" · "),
-                artworkUrl = api.artwork.movieBackdrop(m.id),
-                startEpochSec = t,
-                endEpochSec = t + dur,
-            )
-            t += dur
-            idx++
-            guard++
-        }
-        out += EpgChannel(
-            id = id,
-            number = number,
-            name = name,
-            category = "movie",
-            mosaicArt = movies.take(4).map { api.artwork.moviePoster(it.id) },
-            programs = progs,
-        )
     }
 
-    if (catalog.movies.isNotEmpty()) {
-        addMovieChannel("auto-premiere", chNum++, "Premiere", catalog.movies.sortedByDescending { it.addedAt.orEmpty() }.take(24))
-        addMovieChannel("auto-top-rated", chNum++, "Top Rated", catalog.movies.sortedByDescending { it.rating ?: 0.0 }.take(24))
+    val movies = catalog.movies
+    val shows = catalog.shows
+    val youtube = catalog.youtube
+    val episodesByShow = shows.associate { it.id to showEpisodePoolItems(it, api) }
+
+    // 1. Everything (type): Movies, TV, YouTube, Music
+    addChannel(
+        RawChannel(
+            id = "type-movies",
+            name = "Movies",
+            kind = ChannelKind.TYPE,
+            blurb = "every film you own",
+            pool = movies.map { moviePoolItem(it, api) },
+        ),
+    )
+    addChannel(
+        RawChannel(
+            id = "type-tv",
+            name = "TV",
+            kind = ChannelKind.TYPE,
+            blurb = "episodes from every show",
+            pool = shows.flatMap { episodesByShow[it.id].orEmpty() },
+        ),
+    )
+    addChannel(
+        RawChannel(
+            id = "type-youtube",
+            name = "YouTube",
+            kind = ChannelKind.TYPE,
+            blurb = "your downloaded videos",
+            pool = youtube.map { youtubePoolItem(it, api) },
+        ),
+    )
+    addChannel(
+        RawChannel(
+            id = "type-music",
+            name = "Music",
+            kind = ChannelKind.TYPE,
+            blurb = "songs from your library",
+            pool = musicPoolSongs.map { songPoolItem(it, api) },
+            isMusic = true,
+        ),
+    )
+
+    // 2. Movie & TV Genres (combined, sorted by total count)
+    val genreMap = linkedMapOf<String, Pair<MutableList<CatalogMovie>, MutableList<CatalogShow>>>()
+    for (m in movies) {
+        for (g in m.genres) {
+            genreMap.getOrPut(g) { mutableListOf<CatalogMovie>() to mutableListOf() }.first += m
+        }
     }
-
-    if (catalog.recentEpisodes.isNotEmpty()) {
-        val eps = catalog.recentEpisodes.take(24)
-        val durations = eps.map { (it.runtimeSeconds ?: 2700).coerceAtLeast(1200).toLong() }
-        val total = durations.sum().coerceAtLeast(1L)
-        val anchor = (windowStartSec + chNum * 7919L) % total
-        var cursorOffset = 0L
-        var idx = 0
-        while (idx < eps.lastIndex && cursorOffset + durations[idx] <= anchor) {
-            cursorOffset += durations[idx]
-            idx++
+    for (s in shows) {
+        for (g in s.genres) {
+            genreMap.getOrPut(g) { mutableListOf<CatalogMovie>() to mutableListOf() }.second += s
         }
-        var t = windowStartSec - (anchor - cursorOffset)
-        val progs = mutableListOf<EpgProgram>()
-        var guard = 0
-        while (t < windowEndSec && guard < 16) {
-            val ep = eps[idx % eps.size]
-            val dur = durations[idx % eps.size]
-            progs += EpgProgram(
-                itemType = "episode",
-                itemId = ep.id.toString(),
-                detailId = ep.showId,
-                title = ep.showTitle,
-                subtitle = "S${ep.seasonNumber} E${ep.episodeNumber}" + (ep.title?.let { " · $it" } ?: ""),
-                artworkUrl = if (ep.hasStill) api.artwork.episodeStill(ep.id) else api.artwork.showBackdrop(ep.showId),
-                startEpochSec = t,
-                endEpochSec = t + dur,
-            )
-            t += dur
-            idx++
-            guard++
-        }
-        out += EpgChannel(
-            id = "auto-tv-binge",
-            number = chNum++,
-            name = "SoulSync TV",
-            category = "tv",
-            mosaicArt = eps.map { it.showId }.distinct().take(4).map { api.artwork.showPoster(it) },
-            programs = progs,
-        )
     }
-
-    val topGenres = catalog.movies.flatMap { it.genres }
-        .groupingBy { it }.eachCount()
-        .entries.filter { it.value >= 2 }
-        .sortedByDescending { it.value }
-    topGenres.forEach { (genre, _) ->
-        addMovieChannel("auto-genre-${genre.lowercase()}", chNum++, "$genre Movies", catalog.movies.filter { it.genres.contains(genre) })
-    }
-
-    // Movie decades (2020s, 2010s, 2000s, 1990s, 1980s...)
-    catalog.movies.mapNotNull { m -> m.year?.let { "${(it / 10) * 10}s" to m } }
-        .groupBy({ it.first }, { it.second })
-        .entries.filter { it.value.size >= 3 }
-        .sortedByDescending { it.key }
-        .forEach { (decade, films) ->
-            addMovieChannel("auto-decade-$decade", chNum++, "$decade Movies", films)
-        }
-
-    // Movie collections / film series
-    catalog.movies.filter { !it.collection.isNullOrBlank() }
-        .groupBy { it.collection!! }
-        .entries.filter { it.value.size >= 2 }
-        .sortedByDescending { it.value.size }
-        .forEach { (col, films) ->
-            addMovieChannel("auto-col-${col.lowercase().hashCode()}", chNum++, col, films)
-        }
-
-    // Movie studios (A24, Warner Bros, Pixar, etc.)
-    catalog.movies.filter { !it.studio.isNullOrBlank() }
-        .groupBy { it.studio!! }
-        .entries.filter { it.value.size >= 3 }
-        .sortedByDescending { it.value.size }
-        .forEach { (studio, films) ->
-            addMovieChannel("auto-studio-${studio.lowercase().hashCode()}", chNum++, studio, films)
-        }
-
-    // Helper for TV show pool channels (networks, TV genres, individual show marathons)
-    fun addShowChannel(id: String, number: Int, name: String, category: String, shows: List<net.ssync.player.CatalogShow>) {
-        if (shows.isEmpty()) return
-        val dur = 2700L
-        val total = (shows.size * dur).coerceAtLeast(1L)
-        val anchor = (windowStartSec + number * 7919L) % total
-        var idx = (anchor / dur).toInt()
-        var t = windowStartSec - (anchor % dur)
-        val progs = mutableListOf<EpgProgram>()
-        var guard = 0
-        while (t < windowEndSec && guard < 10) {
-            val s = shows[idx % shows.size]
-            progs += EpgProgram(
-                itemType = "show",
-                itemId = s.id.toString(),
-                detailId = s.id,
-                title = s.title,
-                subtitle = listOfNotNull(s.network, "${s.episodeCount} eps").joinToString(" · "),
-                artworkUrl = api.artwork.showBackdrop(s.id),
-                startEpochSec = t,
-                endEpochSec = t + dur,
-            )
-            t += dur
-            idx++
-            guard++
-        }
-        out += EpgChannel(
-            id = id,
-            number = number,
-            name = name,
-            category = category,
-            mosaicArt = shows.take(4).map { api.artwork.showPoster(it.id) },
-            programs = progs,
-        )
-    }
-
-    // TV Genres
-    catalog.shows.flatMap { it.genres }
-        .groupingBy { it }.eachCount()
-        .entries.filter { it.value >= 2 }
-        .sortedByDescending { it.value }
-        .forEach { (genre, _) ->
-            addShowChannel("auto-tv-genre-${genre.lowercase()}", chNum++, "$genre TV", "tv", catalog.shows.filter { it.genres.contains(genre) })
-        }
-
-    // TV Networks (HBO, FX, Netflix, AMC, etc.)
-    catalog.shows.filter { !it.network.isNullOrBlank() }
-        .groupBy { it.network!! }
-        .entries.filter { it.value.size >= 2 }
-        .sortedByDescending { it.value.size }
-        .forEach { (net, list) ->
-            addShowChannel("auto-net-${net.lowercase().hashCode()}", chNum++, net, "tv", list)
-        }
-
-    // Individual TV Show Marathon Channels (every show with >= 3 episodes, 1:1 with desktop!)
-    catalog.shows.filter { it.episodeCount >= 3 }
-        .sortedBy { it.title.lowercase() }
-        .forEach { s ->
-            addShowChannel("auto-marathon-${s.id}", chNum++, s.title, "show", listOf(s))
-        }
-
-    // YouTube Creator Channels
-    catalog.youtube.filter { !it.channelTitle.isNullOrBlank() }
-        .groupBy { it.channelTitle!! }
-        .entries.filter { it.value.size >= 2 }
-        .sortedByDescending { it.value.size }
-        .forEach { (creator, vids) ->
-            val dur = 1200L
-            val total = (vids.size * dur).coerceAtLeast(1L)
-            val anchor = (windowStartSec + chNum * 7919L) % total
-            var idx = (anchor / dur).toInt()
-            var t = windowStartSec - (anchor % dur)
-            val progs = mutableListOf<EpgProgram>()
-            var guard = 0
-            while (t < windowEndSec && guard < 12) {
-                val v = vids[idx % vids.size]
-                val vDur = (v.durationSeconds ?: 1200).coerceAtLeast(300).toLong()
-                progs += EpgProgram(
-                    itemType = "youtube",
-                    itemId = v.id,
-                    detailId = null,
-                    title = v.title,
-                    subtitle = creator,
-                    artworkUrl = api.artwork.resolve(v.thumbnailUrl) ?: api.artwork.forItem("youtube", v.id),
-                    startEpochSec = t,
-                    endEpochSec = t + vDur,
-                )
-                t += vDur
-                idx++
-                guard++
-            }
-            out += EpgChannel(
-                id = "auto-yt-${creator.lowercase().hashCode()}",
-                number = chNum++,
-                name = creator,
-                category = "youtube",
-                mosaicArt = vids.take(4).mapNotNull { api.artwork.resolve(it.thumbnailUrl) ?: api.artwork.forItem("youtube", it.id) },
-                programs = progs,
-            )
-        }
-
-    customChannels.forEach { ch ->
-        if (out.none { it.id == ch.id }) {
-            val type = ch.currentItemType ?: "movie"
-            val id = ch.currentItemId ?: ch.id
-            out += EpgChannel(
-                id = ch.id,
-                number = ch.number ?: chNum++,
-                name = ch.name,
-                category = if (ch.kind == "music") "music" else "movie",
-                mosaicArt = listOfNotNull(api.artwork.forItem(type, id, preferBackdrop = false)),
-                programs = listOf(
-                    EpgProgram(
-                        itemType = type,
-                        itemId = id,
-                        detailId = id.toIntOrNull(),
-                        title = ch.currentTitle ?: ch.name,
-                        subtitle = ch.description ?: "Custom Channel",
-                        artworkUrl = api.artwork.forItem(type, id, preferBackdrop = true),
-                        startEpochSec = windowStartSec,
-                        endEpochSec = windowStartSec + 5400L,
-                    ),
-                    EpgProgram(
-                        itemType = type,
-                        itemId = id,
-                        detailId = id.toIntOrNull(),
-                        title = ch.nextTitle ?: "Up Next",
-                        subtitle = ch.name,
-                        artworkUrl = api.artwork.forItem(type, id, preferBackdrop = true),
-                        startEpochSec = windowStartSec + 5400L,
-                        endEpochSec = windowEndSec,
-                    ),
+    genreMap.entries
+        .sortedWith(compareByDescending<Map.Entry<String, Pair<MutableList<CatalogMovie>, MutableList<CatalogShow>>>> {
+            it.value.first.size + it.value.second.size
+        }.thenBy { it.key })
+        .forEach { (genreName, pair) ->
+            val (gm, gs) = pair
+            val blurb = listOfNotNull(
+                if (gm.isNotEmpty()) "${gm.size} films" else null,
+                if (gs.isNotEmpty()) "${gs.size} shows" else null,
+            ).joinToString(" · ")
+            addChannel(
+                RawChannel(
+                    id = "genre-${slug(genreName)}",
+                    name = genreName,
+                    kind = ChannelKind.GENRE,
+                    blurb = blurb,
+                    pool = gm.map { moviePoolItem(it, api) } + gs.flatMap { episodesByShow[it.id].orEmpty() },
                 ),
             )
         }
-    }
 
-    musicChannels.forEach { mc ->
-        val blocks = (0 until 8).map { i ->
-            val st = windowStartSec + i * 1800L
-            EpgProgram(
-                itemType = "track",
-                itemId = mc.tracks.getOrNull(i % mc.tracks.size.coerceAtLeast(1))?.toString() ?: mc.id,
-                detailId = null,
-                title = mc.name,
-                subtitle = mc.description ?: "${mc.trackCount} tracks · 30 min block",
-                artworkUrl = null,
-                startEpochSec = st,
-                endEpochSec = st + 1800L,
+    // 3. Networks (>= 2 shows)
+    shows.filter { !it.network.isNullOrBlank() }
+        .groupBy { it.network!! }
+        .entries
+        .filter { it.value.size >= 2 }
+        .sortedWith(compareByDescending<Map.Entry<String, List<CatalogShow>>> { it.value.size }.thenBy { it.key })
+        .forEach { (net, list) ->
+            addChannel(
+                RawChannel(
+                    id = "network-${slug(net)}",
+                    name = net,
+                    kind = ChannelKind.NETWORK,
+                    blurb = "${list.size} shows",
+                    pool = list.flatMap { episodesByShow[it.id].orEmpty() },
+                ),
             )
         }
-        out += EpgChannel(
-            id = "music-${mc.id}",
-            number = chNum++,
-            name = mc.name,
-            category = "music",
-            mosaicArt = emptyList(),
-            programs = blocks,
-            musicTracks = mc.tracks,
+
+    // 4. Decades (ascending oldest first, matching desktop)
+    movies.mapNotNull { m -> decadeOf(m.year)?.let { it to m } }
+        .groupBy({ it.first }, { it.second })
+        .entries
+        .sortedBy { it.key }
+        .forEach { (dec, list) ->
+            addChannel(
+                RawChannel(
+                    id = "decade-$dec",
+                    name = "${decadeLabel(dec)} movies",
+                    kind = ChannelKind.DECADE,
+                    blurb = "${list.size} films from the ${dec}s",
+                    pool = list.map { moviePoolItem(it, api) },
+                ),
+            )
+        }
+
+    // 5. Picks: Top rated, New arrivals, Classics, Comfort TV, Late night
+    addChannel(
+        RawChannel(
+            id = "pick-top",
+            name = "Top rated",
+            kind = ChannelKind.PICK,
+            blurb = "films and shows scored 8 or better",
+            pool = movies.filter { (it.rating ?: 0.0) >= 8.0 }.map { moviePoolItem(it, api) } +
+                shows.filter { (it.rating ?: 0.0) >= 8.0 }.flatMap { episodesByShow[it.id].orEmpty() },
+        ),
+    )
+    addChannel(
+        RawChannel(
+            id = "pick-new",
+            name = "New arrivals",
+            kind = ChannelKind.PICK,
+            blurb = "added in the last month",
+            pool = movies.filter { (parseIsoEpochMs(it.addedAt) ?: 0L) >= monthAgoMs }.map { moviePoolItem(it, api) } +
+                shows.filter { (parseIsoEpochMs(it.addedAt) ?: 0L) >= monthAgoMs }.flatMap { episodesByShow[it.id].orEmpty() },
+        ),
+    )
+    addChannel(
+        RawChannel(
+            id = "pick-classics",
+            name = "Classics",
+            kind = ChannelKind.PICK,
+            blurb = "films before 1980, scored 7 or better",
+            pool = movies.filter { (it.year ?: 9999) < 1980 && (it.rating ?: 0.0) >= 7.0 }.map { moviePoolItem(it, api) },
+        ),
+    )
+    addChannel(
+        RawChannel(
+            id = "pick-comfort",
+            name = "Comfort TV",
+            kind = ChannelKind.PICK,
+            blurb = "sitcoms, back to back",
+            pool = shows.filter { s -> s.genres.any { it.equals("comedy", ignoreCase = true) } }
+                .flatMap { episodesByShow[it.id].orEmpty() },
+        ),
+    )
+    addChannel(
+        RawChannel(
+            id = "pick-late",
+            name = "Late night",
+            kind = ChannelKind.PICK,
+            blurb = "horror and thrillers",
+            pool = movies.filter { m ->
+                m.genres.any { it.equals("horror", ignoreCase = true) || it.equals("thriller", ignoreCase = true) }
+            }.map { moviePoolItem(it, api) },
+        ),
+    )
+
+    // 6. Kids section (Kids, Little ones, Cartoons, Kids TV, Family movies)
+    val kidMovies = movies.filter { isKidSafe(it.contentRating) }
+    val kidShows = shows.filter { isKidSafe(it.contentRating) }
+    addChannel(
+        RawChannel(
+            id = "kids",
+            name = "Kids",
+            kind = ChannelKind.KIDS,
+            blurb = "rated G, PG, TV-Y to TV-PG",
+            pool = kidMovies.map { moviePoolItem(it, api) } + kidShows.flatMap { episodesByShow[it.id].orEmpty() },
+        ),
+    )
+    addChannel(
+        RawChannel(
+            id = "kids-little",
+            name = "Little ones",
+            kind = ChannelKind.KIDS,
+            blurb = "rated TV-Y, TV-Y7 and G",
+            pool = movies.filter { isLittleKidSafe(it.contentRating) }.map { moviePoolItem(it, api) } +
+                shows.filter { isLittleKidSafe(it.contentRating) }.flatMap { episodesByShow[it.id].orEmpty() },
+        ),
+    )
+    addChannel(
+        RawChannel(
+            id = "kids-cartoons",
+            name = "Cartoons",
+            kind = ChannelKind.KIDS,
+            blurb = "animation for kids",
+            pool = kidMovies.filter { m -> m.genres.any { it.equals("animation", ignoreCase = true) } }.map { moviePoolItem(it, api) } +
+                kidShows.filter { s -> s.genres.any { it.equals("animation", ignoreCase = true) } }.flatMap { episodesByShow[it.id].orEmpty() },
+        ),
+    )
+    addChannel(
+        RawChannel(
+            id = "kids-tv",
+            name = "Kids TV",
+            kind = ChannelKind.KIDS,
+            blurb = "shows for kids, back to back",
+            pool = kidShows.flatMap { episodesByShow[it.id].orEmpty() },
+        ),
+    )
+    addChannel(
+        RawChannel(
+            id = "kids-family",
+            name = "Family movies",
+            kind = ChannelKind.KIDS,
+            blurb = "G and PG films for everyone",
+            pool = kidMovies.map { moviePoolItem(it, api) },
+        ),
+    )
+
+    // 7. Studios (>= 6 films) & Film Series (>= 3 films, ordered by year)
+    movies.filter { !it.studio.isNullOrBlank() }
+        .groupBy { it.studio!! }
+        .entries
+        .filter { it.value.size >= 6 }
+        .sortedWith(compareByDescending<Map.Entry<String, List<CatalogMovie>>> { it.value.size }.thenBy { it.key })
+        .forEach { (studio, list) ->
+            addChannel(
+                RawChannel(
+                    id = "studio-${slug(studio)}",
+                    name = studio,
+                    kind = ChannelKind.STUDIO,
+                    blurb = "${list.size} films",
+                    pool = list.map { moviePoolItem(it, api) },
+                ),
+            )
+        }
+    movies.filter { !it.collection.isNullOrBlank() }
+        .groupBy { it.collection!! }
+        .entries
+        .filter { it.value.size >= 3 }
+        .sortedWith(compareByDescending<Map.Entry<String, List<CatalogMovie>>> { it.value.size }.thenBy { it.key })
+        .forEach { (col, list) ->
+            val inOrder = list.sortedBy { it.year ?: 0 }
+            addChannel(
+                RawChannel(
+                    id = "collection-${slug(col)}",
+                    name = col.replace(Regex("\\s+collection$", RegexOption.IGNORE_CASE), ""),
+                    kind = ChannelKind.COLLECTION,
+                    blurb = "${list.size} films, in order",
+                    pool = inOrder.map { moviePoolItem(it, api) },
+                    ordered = true,
+                ),
+            )
+        }
+
+    // 8. Your playlists (up to 8)
+    playlists.forEach { pl ->
+        val playable = pl.tracks.filter { it.trackId != null }.map { t ->
+            val art = api.artwork.albumArtwork(t.albumId)
+            PoolItem(
+                key = "track:${t.trackId}",
+                itemType = "track",
+                itemId = t.trackId.toString(),
+                detailId = t.albumId,
+                title = t.title,
+                subtitle = t.artist,
+                seconds = ((t.durationMs ?: 210_000L) / 1000L).toInt(),
+                posterUrl = art,
+                backdropUrl = art,
+            )
+        }
+        addChannel(
+            RawChannel(
+                id = "playlist-${pl.id}",
+                name = pl.name,
+                kind = ChannelKind.PLAYLIST,
+                blurb = "your playlist · ${playable.size} songs",
+                pool = playable,
+                isMusic = true,
+            ),
         )
     }
 
+    // 9. Server Music Channels (Vibes & Music Genres)
+    musicChannels.forEach { mc ->
+        val pool = mc.trackItems.map { musicChannelTrackItem(it, api) }
+        val isVibe = mc.kind.equals("vibe", ignoreCase = true)
+        addChannel(
+            RawChannel(
+                id = mc.id,
+                name = mc.name,
+                kind = if (isVibe) ChannelKind.VIBE else ChannelKind.MUSIC,
+                blurb = "${mc.count} songs" + if (isVibe) " · by mood" else "",
+                pool = pool,
+                isMusic = true,
+            ),
+        )
+    }
+
+    // 10. Server & Personal Saved Channels (`made-<id>`)
+    savedChannels.forEach { saved ->
+        val spec = saved.spec
+        val pool = buildSpecPool(spec, catalog, episodesByShow, nowMs, api)
+        val blurb = buildSpecBlurb(spec, shows.firstOrNull { it.id == spec.show }?.title)
+        addChannel(
+            RawChannel(
+                id = "made-${saved.id}",
+                name = spec.name.ifBlank { "Custom Channel" },
+                kind = if (saved.scope == "server") ChannelKind.SERVER else ChannelKind.RULE,
+                blurb = blurb,
+                pool = pool,
+                ordered = spec.order == "in_order" || spec.show != null,
+            ),
+        )
+    }
+
+    // 11. Apply Profile Lineup (order, renames, hidden) + Desktop GROUP order + Channel numbering from 101
+    val lineupPos = lineup.withIndex().associate { it.value.channelId to it.index }
+    val lineupById = lineup.associateBy { it.channelId }
+
+    val lined = raw.withIndex()
+        .sortedWith { a, b ->
+            val pa = lineupPos[a.value.id]
+            val pb = lineupPos[b.value.id]
+            when {
+                pa != null && pb != null -> pa - pb
+                pa != null -> -1
+                pb != null -> 1
+                else -> a.index - b.index
+            }
+        }
+        .mapNotNull { (_, c) ->
+            val entry = lineupById[c.id]
+            if (entry?.hidden == true) return@mapNotNull null
+            c.copy(name = entry?.name?.takeIf { it.isNotBlank() } ?: c.name)
+        }
+
+    val numbered = lined.withIndex()
+        .sortedWith(compareBy<IndexedValue<RawChannel>> { it.value.kind.ordinal }.thenBy { it.index })
+        .mapIndexed { idx, (_, c) ->
+            val num = 101 + idx
+            val mosaic = c.pool.mapNotNull { it.posterUrl }.distinct().take(4)
+            val progs = if (c.isMusic) {
+                scheduleMusicBlocks(c.id, c.name, c.blurb, c.pool, windowStartSec, windowEndSec)
+            } else {
+                scheduleVideoPrograms(c.id, c.pool, c.ordered, windowStartSec, windowEndSec)
+            }
+            EpgChannel(
+                id = c.id,
+                number = num,
+                name = c.name,
+                kind = c.kind,
+                blurb = c.blurb,
+                isMusic = c.isMusic,
+                mosaicArt = mosaic,
+                programs = progs,
+                musicPool = if (c.isMusic) c.pool else emptyList(),
+            )
+        }
+
+    return numbered
+}
+
+private fun sameWord(list: List<String>, value: String?): Boolean {
+    if (list.isEmpty()) return true
+    if (value.isNullOrBlank()) return false
+    return list.any { it.equals(value, ignoreCase = true) }
+}
+
+private fun buildSpecPool(
+    spec: GuideChannelSpec,
+    catalog: VideoCatalog,
+    episodesByShow: Map<Int, List<PoolItem>>,
+    nowMs: Long,
+    api: PlayerApiClient,
+): List<PoolItem> {
+    if (spec.show != null) {
+        return episodesByShow[spec.show].orEmpty()
+    }
+    val out = mutableListOf<PoolItem>()
+    val addedCutoff = spec.addedDays?.let { nowMs - it.toLong() * 86_400_000L }
+    val minScore = spec.minScore
+
+    if ("movies" in spec.kinds) {
+        out += catalog.movies.filter { m ->
+            (spec.genres.isEmpty() || m.genres.any { sameWord(spec.genres, it) }) &&
+                (spec.decades.isEmpty() || decadeOf(m.year) in spec.decades) &&
+                (!spec.kids || isKidSafe(m.contentRating)) &&
+                (minScore == null || (m.rating ?: 0.0) >= minScore) &&
+                (addedCutoff == null || (parseIsoEpochMs(m.addedAt) ?: 0L) >= addedCutoff) &&
+                !(spec.networks.isNotEmpty() && spec.studios.isEmpty()) &&
+                sameWord(spec.studios, m.studio) &&
+                (spec.collection == null || m.collection == spec.collection)
+        }.map { moviePoolItem(it, api) }
+    }
+    if ("tv" in spec.kinds) {
+        out += catalog.shows.filter { s ->
+            (spec.genres.isEmpty() || s.genres.any { sameWord(spec.genres, it) }) &&
+                (spec.decades.isEmpty() || decadeOf(s.year) in spec.decades) &&
+                (!spec.kids || isKidSafe(s.contentRating)) &&
+                (minScore == null || (s.rating ?: 0.0) >= minScore) &&
+                (addedCutoff == null || (parseIsoEpochMs(s.addedAt) ?: 0L) >= addedCutoff) &&
+                !(spec.studios.isNotEmpty() && spec.networks.isEmpty()) &&
+                sameWord(spec.networks, s.network) &&
+                spec.collection == null
+        }.flatMap { episodesByShow[it.id].orEmpty() }
+    }
     return out
 }
+
+private fun buildSpecBlurb(spec: GuideChannelSpec, showTitle: String?): String {
+    if (spec.show != null) return "${showTitle ?: "one show"}, start to finish"
+    return listOfNotNull(
+        spec.people.takeIf { it.isNotEmpty() }?.joinToString(", ") { it.name },
+        spec.kinds.joinToString(" + ") { if (it == "tv") "TV" else "movies" },
+        spec.genres.take(2).takeIf { it.isNotEmpty() }?.joinToString(", "),
+        spec.decades.takeIf { it.isNotEmpty() }?.joinToString(", ") { "${it}s" },
+        (spec.studios + spec.networks).take(2).takeIf { it.isNotEmpty() }?.joinToString(", "),
+        spec.collection,
+        spec.minScore?.let { "★ $it+" },
+        spec.addedDays?.let { "added in $it days" },
+        if (spec.kids) "kids" else null,
+    ).filter { it.isNotBlank() }.joinToString(" · ")
+}
+
+// ── Guide Screen Composable ──────────────────────────────────────────────────
 
 @Composable
 fun GuideScreen(
@@ -419,9 +839,12 @@ fun GuideScreen(
     onNavigate: (PlayerDestination) -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
-    var customChannels by remember { mutableStateOf<List<GuideChannel>>(emptyList()) }
     var catalog by remember { mutableStateOf(VideoCatalog()) }
+    var musicPoolSongs by remember { mutableStateOf<List<LibSong>>(emptyList()) }
+    var playlistDetails by remember { mutableStateOf<List<PlaylistDetail>>(emptyList()) }
     var musicChannels by remember { mutableStateOf<List<MusicChannel>>(emptyList()) }
+    var savedChannels by remember { mutableStateOf<List<SavedGuideChannel>>(emptyList()) }
+    var lineup by remember { mutableStateOf<List<GuideLineupEntry>>(emptyList()) }
     var favorites by remember { mutableStateOf<Set<String>>(emptySet()) }
     var viewMode by remember { mutableStateOf(GuideViewMode.GRID) }
     var filter by remember { mutableStateOf(GuideFilter.ALL) }
@@ -433,21 +856,44 @@ fun GuideScreen(
         isLoading = true
         coroutineScope {
             val vDef = async { api.fetchVideoCatalog() }
-            val gDef = async { api.fetchGuideChannels() }
+            val sDef = async { api.fetchSavedGuideChannels() }
+            val lDef = async { api.fetchGuideLineup() }
             val mDef = async { api.fetchMusicChannels() }
             val fDef = async { api.fetchGuideFavorites() }
+            val songsDef = async { api.fetchSongs(limit = 150, page = 1) }
+            val plDef = async { api.fetchPlaylists() }
+
             val v = vDef.await()
-            val g = gDef.await()
+            val s = sDef.await()
+            val l = lDef.await()
             val m = mDef.await()
             val f = fDef.await()
-            if (v is MusicApiResult.DeviceRevoked || g is MusicApiResult.DeviceRevoked || m is MusicApiResult.DeviceRevoked) {
+            val songs = songsDef.await()
+            val pls = plDef.await()
+
+            if (v is MusicApiResult.DeviceRevoked || s is MusicApiResult.DeviceRevoked) {
                 onDeviceRevoked()
                 return@coroutineScope
             }
             (v as? MusicApiResult.Success)?.let { catalog = it.data }
-            (g as? MusicApiResult.Success)?.let { customChannels = it.data }
+            (s as? MusicApiResult.Success)?.let { savedChannels = it.data }
+            (l as? MusicApiResult.Success)?.let { lineup = it.data }
             (m as? MusicApiResult.Success)?.let { musicChannels = it.data }
             (f as? MusicApiResult.Success)?.let { favorites = it.data }
+            (songs as? MusicApiResult.Success)?.let { musicPoolSongs = it.data }
+
+            // Fetch up to 8 user playlists (trackCount > 2) in parallel, matching desktop
+            val candidatePlaylists = (pls as? MusicApiResult.Success)?.data
+                ?.filter { it.kind == "yours" && it.trackCount > 2 }
+                ?.take(8)
+                .orEmpty()
+            if (candidatePlaylists.isNotEmpty()) {
+                playlistDetails = candidatePlaylists.mapNotNull { p ->
+                    p.idString.toIntOrNull()?.let { pid ->
+                        async { (api.fetchPlaylistDetail(pid) as? MusicApiResult.Success)?.data }
+                    }
+                }.awaitAll().filterNotNull()
+            }
         }
         isLoading = false
     }
@@ -458,53 +904,81 @@ fun GuideScreen(
     }
 
     val nowSec = remember { System.currentTimeMillis() / 1000L }
-    // Snap window start to the current 30-minute mark, covering 4 hours ahead
-    val windowStartSec = remember(nowSec) { (nowSec / 1800L) * 1800L }
+    val windowStartSec = remember(nowSec) { ((nowSec - 1800L) / 1800L) * 1800L }
     val windowMinutes = 240
     val windowEndSec = windowStartSec + windowMinutes * 60L
     val nowOffsetMin = ((nowSec - windowStartSec).coerceAtLeast(0L) / 60f)
 
-    val allChannels = remember(catalog, customChannels, musicChannels, windowStartSec) {
-        buildEpgSchedule(catalog, customChannels, musicChannels, api, windowStartSec, windowEndSec)
+    val allChannels = remember(catalog, musicPoolSongs, playlistDetails, musicChannels, savedChannels, lineup, windowStartSec) {
+        buildDesktopParityChannels(
+            catalog = catalog,
+            musicPoolSongs = musicPoolSongs,
+            playlists = playlistDetails,
+            musicChannels = musicChannels,
+            savedChannels = savedChannels,
+            lineup = lineup,
+            api = api,
+            windowStartSec = windowStartSec,
+            windowEndSec = windowEndSec,
+        )
     }
 
-    val shownChannels = remember(allChannels, filter, favorites, channelQuery) {
-        val byFilter = when (filter) {
-            GuideFilter.ALL -> allChannels
-            GuideFilter.FAVORITES -> allChannels.filter { it.id in favorites }
-            GuideFilter.MOVIES -> allChannels.filter { it.category == "movie" }
-            GuideFilter.TV -> allChannels.filter { it.category == "tv" }
-            GuideFilter.SHOWS -> allChannels.filter { it.category == "show" }
-            GuideFilter.YOUTUBE -> allChannels.filter { it.category == "youtube" }
-            GuideFilter.MUSIC -> allChannels.filter { it.category == "music" }
-        }
+    val groupedSections = remember(allChannels, filter, favorites, channelQuery) {
         val q = channelQuery.trim().lowercase()
-        if (q.isEmpty()) byFilter
-        else byFilter.filter { ch ->
-            ch.name.lowercase().contains(q) ||
-                ch.number.toString().contains(q) ||
+        fun matchesQuery(ch: EpgChannel): Boolean {
+            if (q.isEmpty()) return true
+            if (q.all { it.isDigit() }) return ch.number.toString().startsWith(q)
+            return ch.name.lowercase().contains(q) ||
+                ch.blurb.lowercase().contains(q) ||
                 ch.programs.any { it.title.lowercase().contains(q) }
         }
+        fun matchesFilter(ch: EpgChannel): Boolean = when (filter) {
+            GuideFilter.ALL -> true
+            GuideFilter.FAVORITES -> ch.id in favorites
+            GuideFilter.VIDEO -> !ch.isMusic
+            GuideFilter.MUSIC -> ch.isMusic
+            GuideFilter.KIDS -> ch.kind == ChannelKind.KIDS || (ch.kind == ChannelKind.RULE && ch.blurb.contains("kids", ignoreCase = true))
+        }
+
+        val shown = allChannels.filter { matchesFilter(it) && matchesQuery(it) }
+        val sections = mutableListOf<ChannelGroupSection>()
+
+        if (filter == GuideFilter.ALL && favorites.isNotEmpty()) {
+            val favChs = allChannels.filter { it.id in favorites && matchesQuery(it) }
+            if (favChs.isNotEmpty()) {
+                sections += ChannelGroupSection("favorites", "Favorites", favChs)
+            }
+        }
+        for (kind in ChannelKind.entries) {
+            val chs = shown.filter { it.kind == kind }
+            if (chs.isNotEmpty()) {
+                sections += ChannelGroupSection(kind.name, kind.groupLabel, chs)
+            }
+        }
+        sections
+    }
+
+    val shownCount = remember(groupedSections) {
+        groupedSections.filterNot { it.key == "favorites" }.sumOf { it.channels.size }
     }
 
     fun tuneInChannel(ch: EpgChannel, prog: EpgProgram? = null) {
         val active = prog ?: ch.programs.firstOrNull { nowSec in it.startEpochSec until it.endEpochSec }
             ?: ch.programs.firstOrNull() ?: return
-        if (active.itemType == "show" && active.detailId != null) {
-            onNavigate(PlayerDestination.ShowDetail(active.detailId))
-            return
-        }
-        if (ch.category == "music" && ch.musicTracks.isNotEmpty()) {
-            val queue = ch.musicTracks.map { tid ->
+        if (ch.isMusic && ch.musicPool.isNotEmpty()) {
+            val startIdx = ch.musicPool.indexOfFirst { it.itemId == active.itemId }.coerceAtLeast(0)
+            val ordered = ch.musicPool.drop(startIdx) + ch.musicPool.take(startIdx)
+            val queue = ordered.take(60).map { t ->
                 ActivePlayable(
                     itemType = "track",
-                    itemId = tid.toString(),
-                    title = ch.name,
-                    subtitle = "CH ${ch.number} · Music Channel",
-                    streamUrl = api.streamUrl("track", tid.toString()),
+                    itemId = t.itemId,
+                    title = t.title,
+                    subtitle = "${t.subtitle} · CH ${ch.number} ${ch.name}",
+                    artworkUrl = t.posterUrl,
+                    streamUrl = api.streamUrl("track", t.itemId),
                 )
             }
-            coordinator.playAudio(queue.first(), queue.drop(1))
+            if (queue.isNotEmpty()) coordinator.playAudio(queue.first(), queue.drop(1))
         } else {
             val offsetMs = if (nowSec in active.startEpochSec until active.endEpochSec) {
                 (nowSec - active.startEpochSec) * 1000L
@@ -530,7 +1004,7 @@ fun GuideScreen(
     val timeFmt = remember { SimpleDateFormat("h:mm a", Locale.getDefault()) }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        // Header + Grid / On now switcher + filter pills (1:1 with desktop /player/guide)
+        // Header + Grid / On now switcher + Desktop-parity filter pills
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -544,7 +1018,7 @@ fun GuideScreen(
             ) {
                 Column {
                     Text("Guide", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.ExtraBold)
-                    Text("${shownChannels.size} of ${allChannels.size} channels", color = SoulSyncColors.TextSecondary, fontSize = 11.sp)
+                    Text("$shownCount of ${allChannels.size} channels", color = SoulSyncColors.TextSecondary, fontSize = 11.sp)
                 }
                 Row(
                     modifier = Modifier
@@ -608,7 +1082,7 @@ fun GuideScreen(
             )
         }
 
-        // Top Picked-Program Preview Panel (exact desktop /player/guide detail panel!)
+        // Top Picked-Program Preview Panel
         val selected = picked
         if (selected != null) {
             val (ch, prog) = selected
@@ -684,11 +1158,14 @@ fun GuideScreen(
                             Spacer(modifier = Modifier.width(4.dp))
                             Text(if (isLive) "Tune in" else "Play now", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
-                        if (prog.detailId != null && (prog.itemType == "movie" || prog.itemType == "episode")) {
+                        if (prog.detailId != null && (prog.itemType == "movie" || prog.itemType == "episode" || prog.itemType == "track")) {
                             OutlinedButton(
                                 onClick = {
-                                    if (prog.itemType == "movie") onNavigate(PlayerDestination.MovieDetail(prog.detailId))
-                                    else onNavigate(PlayerDestination.ShowDetail(prog.detailId))
+                                    when (prog.itemType) {
+                                        "movie" -> onNavigate(PlayerDestination.MovieDetail(prog.detailId))
+                                        "episode" -> onNavigate(PlayerDestination.ShowDetail(prog.detailId))
+                                        "track" -> onNavigate(PlayerDestination.AlbumDetail(prog.detailId))
+                                    }
                                 },
                                 shape = CircleShape,
                                 border = BorderStroke(1.dp, SoulSyncColors.LineStrong),
@@ -705,13 +1182,12 @@ fun GuideScreen(
             }
         }
 
-        if (shownChannels.isEmpty()) {
+        if (groupedSections.isEmpty()) {
             EmptyBox("No channels match this filter.")
             return
         }
 
         if (viewMode == GuideViewMode.GRID) {
-            // ── Authentic Desktop-Parity EPG Time Grid ──
             val totalGridWidth = PX_PER_MIN * windowMinutes
             val nowNeedleX = PX_PER_MIN * nowOffsetMin
 
@@ -751,206 +1227,232 @@ fun GuideScreen(
                         ) {
                             Text(
                                 text = timeFmt.format(Date(slotTime * 1000L)),
-                                color = if (i == 0) SoulSyncColors.AccentLight else SoulSyncColors.TextSecondary,
+                                color = if (i == 1) SoulSyncColors.AccentLight else SoulSyncColors.TextSecondary,
                                 fontSize = 11.sp,
-                                fontWeight = if (i == 0) FontWeight.Bold else FontWeight.Medium,
+                                fontWeight = if (i == 1) FontWeight.Bold else FontWeight.Medium,
                             )
                         }
                     }
                 }
             }
 
-            // Channel Rows with Sticky Left Channel Column + Synchronized Horizontal Time Grid + Live NOW Needle
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(bottom = 28.dp),
             ) {
-                items(shownChannels, key = { it.id }) { ch ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(ROW_HEIGHT),
-                    ) {
-                        // Sticky Left Channel Cell (4-tile mosaic + number + name + star)
-                        Row(
-                            modifier = Modifier
-                                .width(CHANNEL_COL_WIDTH)
-                                .fillMaxHeight()
-                                .background(SoulSyncColors.PanelSolid)
-                                .clickable { tuneInChannel(ch) }
-                                .padding(horizontal = 8.dp, vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(7.dp),
-                        ) {
-                            ChannelMosaicLogo(urls = ch.mosaicArt, isMusic = ch.category == "music")
-                            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.Center) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(
-                                        text = ch.number.toString(),
-                                        color = SoulSyncColors.AccentLight,
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.ExtraBold,
-                                        modifier = Modifier.weight(1f),
-                                    )
-                                    val isFav = ch.id in favorites
-                                    Icon(
-                                        imageVector = Icons.Default.Star,
-                                        contentDescription = "Favorite",
-                                        tint = if (isFav) SoulSyncColors.Warning else SoulSyncColors.TextSecondary.copy(alpha = 0.35f),
-                                        modifier = Modifier
-                                            .size(13.dp)
-                                            .clickable {
-                                                val updated = if (isFav) favorites - ch.id else favorites + ch.id
-                                                favorites = updated
-                                                scope.launch { api.saveGuideFavorites(updated.toList()) }
-                                            },
-                                    )
-                                }
-                                Text(
-                                    text = ch.name,
-                                    color = Color.White,
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    maxLines = 2,
-                                    lineHeight = 13.sp,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                            }
-                        }
-
-                        // Synchronized Horizontal Program Timeline Row
+                groupedSections.forEach { section ->
+                    item(key = "hdr-${section.key}") {
                         Box(
                             modifier = Modifier
-                                .weight(1f)
-                                .fillMaxHeight()
-                                .horizontalScroll(hScroll),
+                                .fillMaxWidth()
+                                .background(SoulSyncColors.CardRaised.copy(alpha = 0.65f))
+                                .padding(horizontal = 12.dp, vertical = 6.dp),
                         ) {
-                            Box(modifier = Modifier.width(totalGridWidth).fillMaxHeight()) {
-                                ch.programs.forEach { prog ->
-                                    val visStart = prog.startEpochSec.coerceAtLeast(windowStartSec)
-                                    val visEnd = prog.endEpochSec.coerceAtMost(windowEndSec)
-                                    if (visEnd > visStart) {
-                                        val startX = PX_PER_MIN * ((visStart - windowStartSec) / 60f)
-                                        val blockW = (PX_PER_MIN * ((visEnd - visStart) / 60f)).coerceAtLeast(48.dp)
-                                        val isNow = nowSec in prog.startEpochSec until prog.endEpochSec
-                                        val isPicked = picked?.second == prog && picked?.first?.id == ch.id
-                                        Box(
+                            Text(
+                                text = section.label.uppercase(),
+                                color = SoulSyncColors.TextSecondary,
+                                fontSize = 10.5.sp,
+                                fontWeight = FontWeight.Bold,
+                                letterSpacing = 0.9.sp,
+                            )
+                        }
+                    }
+                    items(section.channels, key = { "${section.key}:${it.id}" }) { ch ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(ROW_HEIGHT),
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .width(CHANNEL_COL_WIDTH)
+                                    .fillMaxHeight()
+                                    .background(SoulSyncColors.PanelSolid)
+                                    .clickable { tuneInChannel(ch) }
+                                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(7.dp),
+                            ) {
+                                ChannelMosaicLogo(urls = ch.mosaicArt, isMusic = ch.isMusic)
+                                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.Center) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(
+                                            text = ch.number.toString(),
+                                            color = SoulSyncColors.AccentLight,
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            modifier = Modifier.weight(1f),
+                                        )
+                                        val isFav = ch.id in favorites
+                                        Icon(
+                                            imageVector = Icons.Default.Star,
+                                            contentDescription = "Favorite",
+                                            tint = if (isFav) SoulSyncColors.Warning else SoulSyncColors.TextSecondary.copy(alpha = 0.35f),
                                             modifier = Modifier
-                                                .offset(x = startX)
-                                                .width(blockW)
-                                                .fillMaxHeight()
-                                                .padding(horizontal = 2.dp, vertical = 4.dp)
-                                                .clip(RoundedCornerShape(8.dp))
-                                                .background(
-                                                    when {
-                                                        isPicked -> SoulSyncColors.Accent.copy(alpha = 0.28f)
-                                                        isNow -> Color.White.copy(alpha = 0.08f)
-                                                        else -> Color.White.copy(alpha = 0.03f)
-                                                    },
-                                                )
-                                                .border(
-                                                    1.dp,
-                                                    when {
-                                                        isPicked -> SoulSyncColors.AccentLight
-                                                        isNow -> SoulSyncColors.Accent.copy(alpha = 0.45f)
-                                                        else -> SoulSyncColors.Line
-                                                    },
-                                                    RoundedCornerShape(8.dp),
-                                                )
-                                                .clickable { picked = ch to prog }
-                                                .padding(horizontal = 8.dp, vertical = 6.dp),
-                                        ) {
-                                            Column(
-                                                modifier = Modifier.fillMaxSize(),
-                                                verticalArrangement = Arrangement.Center,
+                                                .size(13.dp)
+                                                .clickable {
+                                                    val updated = if (isFav) favorites - ch.id else favorites + ch.id
+                                                    favorites = updated
+                                                    scope.launch { api.saveGuideFavorites(updated.toList()) }
+                                                },
+                                        )
+                                    }
+                                    Text(
+                                        text = ch.name,
+                                        color = Color.White,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 2,
+                                        lineHeight = 13.sp,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                            }
+
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .fillMaxHeight()
+                                    .horizontalScroll(hScroll),
+                            ) {
+                                Box(modifier = Modifier.width(totalGridWidth).fillMaxHeight()) {
+                                    ch.programs.forEach { prog ->
+                                        val visStart = prog.startEpochSec.coerceAtLeast(windowStartSec)
+                                        val visEnd = prog.endEpochSec.coerceAtMost(windowEndSec)
+                                        if (visEnd > visStart) {
+                                            val startX = PX_PER_MIN * ((visStart - windowStartSec) / 60f)
+                                            val blockW = (PX_PER_MIN * ((visEnd - visStart) / 60f)).coerceAtLeast(48.dp)
+                                            val isNow = nowSec in prog.startEpochSec until prog.endEpochSec
+                                            val isPicked = picked?.second == prog && picked?.first?.id == ch.id
+                                            Box(
+                                                modifier = Modifier
+                                                    .offset(x = startX)
+                                                    .width(blockW)
+                                                    .fillMaxHeight()
+                                                    .padding(horizontal = 2.dp, vertical = 4.dp)
+                                                    .clip(RoundedCornerShape(8.dp))
+                                                    .background(
+                                                        when {
+                                                            isPicked -> SoulSyncColors.Accent.copy(alpha = 0.28f)
+                                                            isNow -> Color.White.copy(alpha = 0.08f)
+                                                            else -> Color.White.copy(alpha = 0.03f)
+                                                        },
+                                                    )
+                                                    .border(
+                                                        1.dp,
+                                                        when {
+                                                            isPicked -> SoulSyncColors.AccentLight
+                                                            isNow -> SoulSyncColors.Accent.copy(alpha = 0.45f)
+                                                            else -> SoulSyncColors.Line
+                                                        },
+                                                        RoundedCornerShape(8.dp),
+                                                    )
+                                                    .clickable { picked = ch to prog }
+                                                    .padding(horizontal = 8.dp, vertical = 6.dp),
                                             ) {
-                                                Text(
-                                                    text = prog.title,
-                                                    color = if (isNow || isPicked) Color.White else SoulSyncColors.TextSoft,
-                                                    fontSize = 12.sp,
-                                                    fontWeight = if (isNow || isPicked) FontWeight.Bold else FontWeight.Medium,
-                                                    maxLines = 1,
-                                                    overflow = TextOverflow.Ellipsis,
-                                                )
-                                                if (prog.subtitle.isNotBlank()) {
+                                                Column(
+                                                    modifier = Modifier.fillMaxSize(),
+                                                    verticalArrangement = Arrangement.Center,
+                                                ) {
                                                     Text(
-                                                        text = prog.subtitle,
-                                                        color = SoulSyncColors.TextSecondary,
-                                                        fontSize = 10.sp,
+                                                        text = prog.title,
+                                                        color = if (isNow || isPicked) Color.White else SoulSyncColors.TextSoft,
+                                                        fontSize = 12.sp,
+                                                        fontWeight = if (isNow || isPicked) FontWeight.Bold else FontWeight.Medium,
                                                         maxLines = 1,
                                                         overflow = TextOverflow.Ellipsis,
                                                     )
+                                                    if (prog.subtitle.isNotBlank()) {
+                                                        Text(
+                                                            text = prog.subtitle,
+                                                            color = SoulSyncColors.TextSecondary,
+                                                            fontSize = 10.sp,
+                                                            maxLines = 1,
+                                                            overflow = TextOverflow.Ellipsis,
+                                                        )
+                                                    }
                                                 }
                                             }
                                         }
                                     }
-                                }
 
-                                // Live vertical NOW needle
-                                Box(
-                                    modifier = Modifier
-                                        .offset(x = nowNeedleX)
-                                        .width(2.dp)
-                                        .fillMaxHeight()
-                                        .background(SoulSyncColors.AccentLight),
-                                )
+                                    Box(
+                                        modifier = Modifier
+                                            .offset(x = nowNeedleX)
+                                            .width(2.dp)
+                                            .fillMaxHeight()
+                                            .background(SoulSyncColors.AccentLight),
+                                    )
+                                }
                             }
                         }
+                        HorizontalDivider(color = SoulSyncColors.Line, thickness = 1.dp)
                     }
-                    HorizontalDivider(color = SoulSyncColors.Line, thickness = 1.dp)
                 }
             }
         } else {
-            // ── "On now" Compact View (1:1 with desktop /player/guide On now tab) ──
+            // "On now" Compact View grouped by desktop sections
             LazyColumn(
-                contentPadding = PaddingValues(16.dp),
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 28.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
                 modifier = Modifier.fillMaxSize(),
             ) {
-                items(shownChannels, key = { it.id }) { ch ->
-                    val cur = ch.programs.firstOrNull { nowSec in it.startEpochSec until it.endEpochSec }
-                        ?: ch.programs.firstOrNull()
-                    val next = cur?.let { c -> ch.programs.firstOrNull { it.startEpochSec >= c.endEpochSec } }
-                    if (cur != null) {
-                        val progFrac = ((nowSec - cur.startEpochSec).toFloat() / (cur.endEpochSec - cur.startEpochSec).coerceAtLeast(1L).toFloat()).coerceIn(0f, 1f)
-                        Card(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .dpadFocusable(RoundedCornerShape(12.dp))
-                                .clickable { picked = ch to cur },
-                            shape = RoundedCornerShape(12.dp),
-                            colors = CardDefaults.cardColors(containerColor = SoulSyncColors.Card),
-                            border = BorderStroke(1.dp, SoulSyncColors.Line),
-                        ) {
-                            Column {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth().padding(12.dp),
-                                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    ChannelMosaicLogo(urls = ch.mosaicArt, isMusic = ch.category == "music")
-                                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                        Text(
-                                            text = "CH ${ch.number} · ${ch.name}",
-                                            color = SoulSyncColors.AccentLight,
-                                            fontSize = 10.sp,
-                                            fontWeight = FontWeight.ExtraBold,
-                                        )
-                                        Text(cur.title, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                        if (next != null) {
-                                            Text("Next: ${next.title}", color = SoulSyncColors.TextSecondary, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                groupedSections.forEach { section ->
+                    item(key = "now-hdr-${section.key}") {
+                        Text(
+                            text = section.label.uppercase(),
+                            color = SoulSyncColors.TextSecondary,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 0.9.sp,
+                            modifier = Modifier.padding(top = 6.dp, bottom = 2.dp),
+                        )
+                    }
+                    items(section.channels, key = { "now:${section.key}:${it.id}" }) { ch ->
+                        val cur = ch.programs.firstOrNull { nowSec in it.startEpochSec until it.endEpochSec }
+                            ?: ch.programs.firstOrNull()
+                        val next = cur?.let { c -> ch.programs.firstOrNull { it.startEpochSec >= c.endEpochSec } }
+                        if (cur != null) {
+                            val progFrac = ((nowSec - cur.startEpochSec).toFloat() / (cur.endEpochSec - cur.startEpochSec).coerceAtLeast(1L).toFloat()).coerceIn(0f, 1f)
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .dpadFocusable(RoundedCornerShape(12.dp))
+                                    .clickable { picked = ch to cur },
+                                shape = RoundedCornerShape(12.dp),
+                                colors = CardDefaults.cardColors(containerColor = SoulSyncColors.Card),
+                                border = BorderStroke(1.dp, SoulSyncColors.Line),
+                            ) {
+                                Column {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth().padding(12.dp),
+                                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        ChannelMosaicLogo(urls = ch.mosaicArt, isMusic = ch.isMusic)
+                                        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                            Text(
+                                                text = "CH ${ch.number} · ${ch.name}",
+                                                color = SoulSyncColors.AccentLight,
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.ExtraBold,
+                                            )
+                                            Text(cur.title, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                            if (next != null) {
+                                                Text("Next: ${next.title}", color = SoulSyncColors.TextSecondary, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                            }
+                                        }
+                                        IconButton(onClick = { tuneInChannel(ch, cur) }) {
+                                            Icon(Icons.Default.PlayArrow, contentDescription = "Tune in", tint = SoulSyncColors.AccentLight)
                                         }
                                     }
-                                    IconButton(onClick = { tuneInChannel(ch, cur) }) {
-                                        Icon(Icons.Default.PlayArrow, contentDescription = "Tune in", tint = SoulSyncColors.AccentLight)
-                                    }
+                                    LinearProgressIndicator(
+                                        progress = { progFrac },
+                                        color = SoulSyncColors.Accent,
+                                        trackColor = Color.White.copy(alpha = 0.08f),
+                                        modifier = Modifier.fillMaxWidth().height(2.5.dp),
+                                    )
                                 }
-                                LinearProgressIndicator(
-                                    progress = { progFrac },
-                                    color = SoulSyncColors.Accent,
-                                    trackColor = Color.White.copy(alpha = 0.08f),
-                                    modifier = Modifier.fillMaxWidth().height(2.5.dp),
-                                )
                             }
                         }
                     }
