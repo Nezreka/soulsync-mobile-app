@@ -42,6 +42,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -98,7 +99,15 @@ private data class EpgChannel(
 )
 
 private enum class GuideViewMode(val label: String) { GRID("Grid"), ON_NOW("On now") }
-private enum class GuideFilter(val label: String) { ALL("All"), FAVORITES("Favorites"), MOVIES("Movies"), TV("TV"), MUSIC("Music") }
+private enum class GuideFilter(val label: String) {
+    ALL("All"),
+    FAVORITES("Favorites"),
+    MOVIES("Movies"),
+    TV("TV"),
+    SHOWS("Marathons"),
+    YOUTUBE("YouTube"),
+    MUSIC("Music"),
+}
 
 private val PX_PER_MIN: Dp = 3.6.dp
 private val CHANNEL_COL_WIDTH: Dp = 122.dp
@@ -206,10 +215,137 @@ private fun buildEpgSchedule(
         .groupingBy { it }.eachCount()
         .entries.filter { it.value >= 2 }
         .sortedByDescending { it.value }
-        .take(10)
     topGenres.forEach { (genre, _) ->
-        addMovieChannel("auto-genre-${genre.lowercase()}", chNum++, genre, catalog.movies.filter { it.genres.contains(genre) })
+        addMovieChannel("auto-genre-${genre.lowercase()}", chNum++, "$genre Movies", catalog.movies.filter { it.genres.contains(genre) })
     }
+
+    // Movie decades (2020s, 2010s, 2000s, 1990s, 1980s...)
+    catalog.movies.mapNotNull { m -> m.year?.let { "${(it / 10) * 10}s" to m } }
+        .groupBy({ it.first }, { it.second })
+        .entries.filter { it.value.size >= 3 }
+        .sortedByDescending { it.key }
+        .forEach { (decade, films) ->
+            addMovieChannel("auto-decade-$decade", chNum++, "$decade Movies", films)
+        }
+
+    // Movie collections / film series
+    catalog.movies.filter { !it.collection.isNullOrBlank() }
+        .groupBy { it.collection!! }
+        .entries.filter { it.value.size >= 2 }
+        .sortedByDescending { it.value.size }
+        .forEach { (col, films) ->
+            addMovieChannel("auto-col-${col.lowercase().hashCode()}", chNum++, col, films)
+        }
+
+    // Movie studios (A24, Warner Bros, Pixar, etc.)
+    catalog.movies.filter { !it.studio.isNullOrBlank() }
+        .groupBy { it.studio!! }
+        .entries.filter { it.value.size >= 3 }
+        .sortedByDescending { it.value.size }
+        .forEach { (studio, films) ->
+            addMovieChannel("auto-studio-${studio.lowercase().hashCode()}", chNum++, studio, films)
+        }
+
+    // Helper for TV show pool channels (networks, TV genres, individual show marathons)
+    fun addShowChannel(id: String, number: Int, name: String, category: String, shows: List<net.ssync.player.CatalogShow>) {
+        if (shows.isEmpty()) return
+        val dur = 2700L
+        val total = (shows.size * dur).coerceAtLeast(1L)
+        val anchor = (windowStartSec + number * 7919L) % total
+        var idx = (anchor / dur).toInt()
+        var t = windowStartSec - (anchor % dur)
+        val progs = mutableListOf<EpgProgram>()
+        var guard = 0
+        while (t < windowEndSec && guard < 10) {
+            val s = shows[idx % shows.size]
+            progs += EpgProgram(
+                itemType = "show",
+                itemId = s.id.toString(),
+                detailId = s.id,
+                title = s.title,
+                subtitle = listOfNotNull(s.network, "${s.episodeCount} eps").joinToString(" · "),
+                artworkUrl = api.artwork.showBackdrop(s.id),
+                startEpochSec = t,
+                endEpochSec = t + dur,
+            )
+            t += dur
+            idx++
+            guard++
+        }
+        out += EpgChannel(
+            id = id,
+            number = number,
+            name = name,
+            category = category,
+            mosaicArt = shows.take(4).map { api.artwork.showPoster(it.id) },
+            programs = progs,
+        )
+    }
+
+    // TV Genres
+    catalog.shows.flatMap { it.genres }
+        .groupingBy { it }.eachCount()
+        .entries.filter { it.value >= 2 }
+        .sortedByDescending { it.value }
+        .forEach { (genre, _) ->
+            addShowChannel("auto-tv-genre-${genre.lowercase()}", chNum++, "$genre TV", "tv", catalog.shows.filter { it.genres.contains(genre) })
+        }
+
+    // TV Networks (HBO, FX, Netflix, AMC, etc.)
+    catalog.shows.filter { !it.network.isNullOrBlank() }
+        .groupBy { it.network!! }
+        .entries.filter { it.value.size >= 2 }
+        .sortedByDescending { it.value.size }
+        .forEach { (net, list) ->
+            addShowChannel("auto-net-${net.lowercase().hashCode()}", chNum++, net, "tv", list)
+        }
+
+    // Individual TV Show Marathon Channels (every show with >= 3 episodes, 1:1 with desktop!)
+    catalog.shows.filter { it.episodeCount >= 3 }
+        .sortedBy { it.title.lowercase() }
+        .forEach { s ->
+            addShowChannel("auto-marathon-${s.id}", chNum++, s.title, "show", listOf(s))
+        }
+
+    // YouTube Creator Channels
+    catalog.youtube.filter { !it.channelTitle.isNullOrBlank() }
+        .groupBy { it.channelTitle!! }
+        .entries.filter { it.value.size >= 2 }
+        .sortedByDescending { it.value.size }
+        .forEach { (creator, vids) ->
+            val dur = 1200L
+            val total = (vids.size * dur).coerceAtLeast(1L)
+            val anchor = (windowStartSec + chNum * 7919L) % total
+            var idx = (anchor / dur).toInt()
+            var t = windowStartSec - (anchor % dur)
+            val progs = mutableListOf<EpgProgram>()
+            var guard = 0
+            while (t < windowEndSec && guard < 12) {
+                val v = vids[idx % vids.size]
+                val vDur = (v.durationSeconds ?: 1200).coerceAtLeast(300).toLong()
+                progs += EpgProgram(
+                    itemType = "youtube",
+                    itemId = v.id,
+                    detailId = null,
+                    title = v.title,
+                    subtitle = creator,
+                    artworkUrl = api.artwork.resolve(v.thumbnailUrl) ?: api.artwork.forItem("youtube", v.id),
+                    startEpochSec = t,
+                    endEpochSec = t + vDur,
+                )
+                t += vDur
+                idx++
+                guard++
+            }
+            out += EpgChannel(
+                id = "auto-yt-${creator.lowercase().hashCode()}",
+                number = chNum++,
+                name = creator,
+                category = "youtube",
+                mosaicArt = vids.take(4).mapNotNull { api.artwork.resolve(it.thumbnailUrl) ?: api.artwork.forItem("youtube", it.id) },
+                programs = progs,
+            )
+        }
 
     customChannels.forEach { ch ->
         if (out.none { it.id == ch.id }) {
@@ -289,6 +425,7 @@ fun GuideScreen(
     var favorites by remember { mutableStateOf<Set<String>>(emptySet()) }
     var viewMode by remember { mutableStateOf(GuideViewMode.GRID) }
     var filter by remember { mutableStateOf(GuideFilter.ALL) }
+    var channelQuery by remember { mutableStateOf("") }
     var picked by remember { mutableStateOf<Pair<EpgChannel, EpgProgram>?>(null) }
     var isLoading by remember { mutableStateOf(true) }
 
@@ -331,19 +468,32 @@ fun GuideScreen(
         buildEpgSchedule(catalog, customChannels, musicChannels, api, windowStartSec, windowEndSec)
     }
 
-    val shownChannels = remember(allChannels, filter, favorites) {
-        when (filter) {
+    val shownChannels = remember(allChannels, filter, favorites, channelQuery) {
+        val byFilter = when (filter) {
             GuideFilter.ALL -> allChannels
             GuideFilter.FAVORITES -> allChannels.filter { it.id in favorites }
             GuideFilter.MOVIES -> allChannels.filter { it.category == "movie" }
             GuideFilter.TV -> allChannels.filter { it.category == "tv" }
+            GuideFilter.SHOWS -> allChannels.filter { it.category == "show" }
+            GuideFilter.YOUTUBE -> allChannels.filter { it.category == "youtube" }
             GuideFilter.MUSIC -> allChannels.filter { it.category == "music" }
+        }
+        val q = channelQuery.trim().lowercase()
+        if (q.isEmpty()) byFilter
+        else byFilter.filter { ch ->
+            ch.name.lowercase().contains(q) ||
+                ch.number.toString().contains(q) ||
+                ch.programs.any { it.title.lowercase().contains(q) }
         }
     }
 
     fun tuneInChannel(ch: EpgChannel, prog: EpgProgram? = null) {
         val active = prog ?: ch.programs.firstOrNull { nowSec in it.startEpochSec until it.endEpochSec }
             ?: ch.programs.firstOrNull() ?: return
+        if (active.itemType == "show" && active.detailId != null) {
+            onNavigate(PlayerDestination.ShowDetail(active.detailId))
+            return
+        }
         if (ch.category == "music" && ch.musicTracks.isNotEmpty()) {
             val queue = ch.musicTracks.map { tid ->
                 ActivePlayable(
@@ -392,7 +542,10 @@ fun GuideScreen(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                Text("Guide", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.ExtraBold)
+                Column {
+                    Text("Guide", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.ExtraBold)
+                    Text("${shownChannels.size} of ${allChannels.size} channels", color = SoulSyncColors.TextSecondary, fontSize = 11.sp)
+                }
                 Row(
                     modifier = Modifier
                         .clip(CircleShape)
@@ -444,6 +597,15 @@ fun GuideScreen(
                     }
                 }
             }
+
+            OutlinedTextField(
+                value = channelQuery,
+                onValueChange = { channelQuery = it },
+                placeholder = { Text("Filter ${allChannels.size} channels or shows…", fontSize = 13.sp) },
+                singleLine = true,
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth().height(50.dp),
+            )
         }
 
         // Top Picked-Program Preview Panel (exact desktop /player/guide detail panel!)
