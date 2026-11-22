@@ -38,6 +38,7 @@ class PlaybackCoordinator(
     private val api: PlayerApiClient,
     private val scope: CoroutineScope,
     private val controllerProvider: () -> MediaController?,
+    private val castHandler: (suspend (ActivePlayable) -> Boolean)? = null,
 ) {
     var activeItem by mutableStateOf<ActivePlayable?>(null)
         private set
@@ -59,6 +60,24 @@ class PlaybackCoordinator(
         queue = listOf(item) + upcoming
         lyricsText = null
 
+        val caster = castHandler
+        if (caster != null) {
+            scope.launch {
+                val handledByCast = caster(item)
+                if (handledByCast) {
+                    controllerProvider()?.pause()
+                    isPlaying = true
+                    reportPresence(item, paused = false)
+                    return@launch
+                }
+                startLocalAudio(item)
+            }
+            return
+        }
+        startLocalAudio(item)
+    }
+
+    private fun startLocalAudio(item: ActivePlayable) {
         val controller = controllerProvider()
         if (controller != null) {
             val mediaItems = queue.map { toMediaItem(it) }
@@ -84,10 +103,27 @@ class PlaybackCoordinator(
         // Pause background audio when starting video
         controllerProvider()?.pause()
         showAudioSheet = false
-        activeItem = item.copy(isVideo = true)
+        val videoItem = item.copy(isVideo = true)
+        activeItem = videoItem
+        val caster = castHandler
+        if (caster != null) {
+            scope.launch {
+                val handledByCast = caster(videoItem)
+                if (handledByCast) {
+                    showVideoOverlay = false
+                    isPlaying = true
+                    reportPresence(videoItem, paused = false)
+                    return@launch
+                }
+                showVideoOverlay = true
+                isPlaying = true
+                reportPresence(videoItem, paused = false)
+            }
+            return
+        }
         showVideoOverlay = true
         isPlaying = true
-        reportPresence(item, paused = false)
+        reportPresence(videoItem, paused = false)
     }
 
     private fun buildProgressMeta(item: ActivePlayable): net.ssync.player.ProgressMeta {

@@ -200,20 +200,30 @@ fun PlayerShell(
     val imageLoader = remember(context, activeBaseUrl, pinnedClient) {
         createPinnedImageLoader(context.applicationContext, activeBaseUrl, pinnedClient)
     }
+    var showCastSheet by remember { mutableStateOf(false) }
+    val castController = rememberCastController()
     val latestMediaController by rememberUpdatedState(mediaController)
-    val coordinator = remember(api) {
+    val latestBaseUrl by rememberUpdatedState(activeBaseUrl)
+    val coordinator = remember(api, castController) {
         PlaybackCoordinator(
             api = api,
             scope = scope,
             controllerProvider = { latestMediaController },
+            castHandler = { item ->
+                if (castController.isConnected) {
+                    val ok = castController.castItem(api, latestBaseUrl, item, item.resumePositionMs)
+                    if (ok) showCastSheet = true
+                    ok
+                } else {
+                    false
+                }
+            },
         )
     }
 
     var backStack by remember { mutableStateOf<List<PlayerDestination>>(listOf(PlayerDestination.Home)) }
     val current = backStack.last()
     var showProfileSheet by remember { mutableStateOf(false) }
-    var showCastSheet by remember { mutableStateOf(false) }
-    val castController = rememberCastController()
     var openHomeEditor by remember { mutableStateOf(false) }
     var sidebarCollapsed by remember { mutableStateOf(false) }
     var headerScrolled by remember { mutableStateOf(false) }
@@ -628,37 +638,21 @@ private fun FloatingTopHeader(
 
             Spacer(modifier = Modifier.width(8.dp))
 
-            // Profile chip -> opens Profile & Household Switcher Sheet
-            Row(
+            // Clean circular Profile avatar button -> opens Profile & Household Switcher Sheet
+            Box(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(999.dp))
-                    .background(SoulSyncColors.PanelGlass)
-                    .border(1.dp, SoulSyncColors.LineStrong, RoundedCornerShape(999.dp))
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .border(1.5.dp, SoulSyncColors.LineStrong, CircleShape)
                     .clickable(onClick = onProfileClick)
-                    .dpadFocusable(RoundedCornerShape(999.dp))
-                    .padding(start = 6.dp, end = 8.dp, top = 5.dp, bottom = 5.dp),
-                verticalAlignment = Alignment.CenterVertically,
+                    .dpadFocusable(CircleShape),
+                contentAlignment = Alignment.Center,
             ) {
                 ProfileAvatarCircle(
                     avatarUrl = avatarUrl,
                     name = record.profileName,
-                    size = 24.dp,
-                    fontSize = 11.sp,
-                )
-                Spacer(modifier = Modifier.width(6.dp))
-                Text(
-                    text = record.profileName,
-                    color = Color.White,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Icon(
-                    imageVector = Icons.Default.KeyboardArrowDown,
-                    contentDescription = "Switch profile",
-                    tint = SoulSyncColors.TextSoft,
-                    modifier = Modifier.size(16.dp),
+                    size = 34.dp,
+                    fontSize = 14.sp,
                 )
             }
         }
