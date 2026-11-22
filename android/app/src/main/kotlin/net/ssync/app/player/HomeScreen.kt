@@ -400,7 +400,27 @@ fun HomeScreen(
                                                 else onNavigate(PlayerDestination.Audiobooks)
                                             }
                                             "podcast" -> onNavigate(PlayerDestination.Podcasts)
-                                            "youtube" -> onNavigate(PlayerDestination.YouTube)
+                                            "youtube" -> {
+                                                val ytMatch = catalog.youtube.firstOrNull {
+                                                    it.id == item.itemId || it.youtubeId == item.itemId
+                                                }
+                                                val chId = item.meta?.parentId ?: ytMatch?.channelId
+                                                val chTitle = item.meta?.subtitle?.takeIf { it.isNotBlank() }
+                                                    ?: ytMatch?.channelTitle.orEmpty()
+                                                coordinator.playVideo(
+                                                    ActivePlayable(
+                                                        itemType = "youtube",
+                                                        itemId = item.itemId,
+                                                        title = displayTitle,
+                                                        subtitle = chTitle,
+                                                        artworkUrl = resolvedArt,
+                                                        streamUrl = api.streamUrl("youtube", item.itemId),
+                                                        isVideo = true,
+                                                        resumePositionMs = (item.positionSeconds * 1000.0).toLong(),
+                                                        parentId = chId,
+                                                    ),
+                                                )
+                                            }
                                             else -> coordinator.playVideo(
                                                 ActivePlayable(
                                                     itemType = item.itemType,

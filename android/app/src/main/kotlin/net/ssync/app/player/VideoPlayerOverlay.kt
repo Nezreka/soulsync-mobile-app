@@ -1,7 +1,13 @@
 package net.ssync.app.player
 
+import android.app.Activity
+import android.content.Intent
+import android.provider.Settings
 import android.view.ViewGroup
 import android.widget.FrameLayout
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.annotation.OptIn
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -32,6 +38,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AspectRatio
 import androidx.compose.material.icons.filled.Brightness6
+import androidx.compose.material.icons.filled.Cast
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Forward10
@@ -186,6 +193,17 @@ fun VideoPlayerOverlay(
                 if (exoPlayer.duration > 0L) durationMs = exoPlayer.duration
             }
             delay(400L)
+        }
+    }
+
+    // True immersive fullscreen while video player is open (auto-restores system bars on close)
+    DisposableEffect(context) {
+        val window = (context as? Activity)?.window
+        val controller = window?.let { WindowCompat.getInsetsController(it, it.decorView) }
+        controller?.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        controller?.hide(WindowInsetsCompat.Type.systemBars())
+        onDispose {
+            controller?.show(WindowInsetsCompat.Type.systemBars())
         }
     }
 
@@ -354,6 +372,19 @@ fun VideoPlayerOverlay(
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                     }
+
+                    // Cast button (opens Android Cast / Wireless Display picker)
+                    CinemaPill(
+                        icon = Icons.Default.Cast,
+                        label = "Cast",
+                        onClick = {
+                            runCatching {
+                                context.startActivity(Intent(Settings.ACTION_CAST_SETTINGS))
+                            }
+                            hudPoke++
+                        },
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
 
                     // Picture Fit cycle pill
                     CinemaPill(
