@@ -126,46 +126,113 @@ fun GuideScreen(
         }
 
         if (shownChannels.isNotEmpty()) {
-            items(shownChannels, key = { it.id }) { ch ->
-                Card(
+            item {
+                // Premier EPG Broadcast Time Header
+                Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .dpadFocusable(RoundedCornerShape(12.dp))
-                        .clickable {
-                            val type = ch.currentItemType ?: "movie"
-                            val id = ch.currentItemId ?: ch.id
-                            coordinator.playVideo(
-                                ActivePlayable(
-                                    itemType = type,
-                                    itemId = id,
-                                    title = ch.currentTitle ?: ch.name,
-                                    subtitle = "CH ${ch.number ?: ""} • ${ch.name}".trim(),
-                                    streamUrl = api.streamUrl(type, id),
-                                    isVideo = true,
-                                ),
-                            )
-                        },
-                    colors = CardDefaults.cardColors(containerColor = SoulSyncColors.Card),
-                    border = BorderStroke(1.dp, SoulSyncColors.Line),
+                        .padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Row(modifier = Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.LiveTv, contentDescription = null, tint = SoulSyncColors.Accent)
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Column(modifier = Modifier.weight(1f)) {
+                    Text("CH", color = SoulSyncColors.TextSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.width(68.dp))
+                    Text("ON NOW", color = SoulSyncColors.AccentLight, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1.4f))
+                    Text("UP NEXT", color = SoulSyncColors.TextSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                }
+            }
+            items(shownChannels, key = { it.id }) { ch ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    // Left Channel Pill
+                    Card(
+                        modifier = Modifier.width(64.dp).height(76.dp),
+                        colors = CardDefaults.cardColors(containerColor = SoulSyncColors.PanelSolid),
+                        border = BorderStroke(1.dp, SoulSyncColors.Line),
+                    ) {
+                        Column(
+                            modifier = Modifier.fillMaxSize().padding(6.dp),
+                            verticalArrangement = Arrangement.Center,
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
                             Text(
-                                text = listOfNotNull(ch.number?.toString(), ch.name).joinToString(" • "),
-                                style = MaterialTheme.typography.titleMedium,
-                            )
-                            Text(
-                                text = ch.currentTitle ?: ch.description ?: "Live virtual channel",
-                                style = MaterialTheme.typography.bodyMedium,
+                                text = ch.number?.toString() ?: "TV",
                                 color = SoulSyncColors.AccentLight,
+                                fontWeight = FontWeight.ExtraBold,
+                                fontSize = 15.sp,
                             )
-                            if (!ch.nextTitle.isNullOrBlank()) {
-                                Text("Next: ${ch.nextTitle}", fontSize = 11.sp, color = SoulSyncColors.TextSecondary)
-                            }
+                            Text(
+                                text = ch.name.take(8),
+                                color = SoulSyncColors.TextSecondary,
+                                fontSize = 9.sp,
+                                maxLines = 1,
+                            )
                         }
-                        Icon(Icons.Default.PlayArrow, contentDescription = "Tune", tint = SoulSyncColors.TextPrimary)
+                    }
+
+                    // Active ON AIR Program Block
+                    Card(
+                        modifier = Modifier
+                            .weight(1.4f)
+                            .height(76.dp)
+                            .dpadFocusable(RoundedCornerShape(10.dp))
+                            .clickable {
+                                val type = ch.currentItemType ?: "movie"
+                                val id = ch.currentItemId ?: ch.id
+                                coordinator.playVideo(
+                                    ActivePlayable(
+                                        itemType = type,
+                                        itemId = id,
+                                        title = ch.currentTitle ?: ch.name,
+                                        subtitle = "CH ${ch.number ?: ""} • ${ch.name}".trim(),
+                                        streamUrl = api.streamUrl(type, id),
+                                        isVideo = true,
+                                    ),
+                                )
+                            },
+                        colors = CardDefaults.cardColors(containerColor = SoulSyncColors.CardRaised),
+                        border = BorderStroke(1.dp, SoulSyncColors.Accent.copy(alpha = 0.45f)),
+                    ) {
+                        Column(
+                            modifier = Modifier.fillMaxSize().padding(horizontal = 10.dp, vertical = 8.dp),
+                            verticalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Text(
+                                text = "● LIVE  ${ch.name}",
+                                color = SoulSyncColors.AccentLight,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                            )
+                            Text(
+                                text = ch.currentTitle ?: ch.description ?: "Live stream",
+                                color = SoulSyncColors.TextPrimary,
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 13.sp,
+                                maxLines = 1,
+                            )
+                        }
+                    }
+
+                    // Next Up Program Block
+                    Card(
+                        modifier = Modifier.weight(1f).height(76.dp),
+                        colors = CardDefaults.cardColors(containerColor = SoulSyncColors.Card),
+                        border = BorderStroke(1.dp, SoulSyncColors.Line),
+                    ) {
+                        Column(
+                            modifier = Modifier.fillMaxSize().padding(horizontal = 10.dp, vertical = 8.dp),
+                            verticalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Text("NEXT", color = SoulSyncColors.TextSecondary, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                            Text(
+                                text = ch.nextTitle ?: "Scheduled",
+                                color = SoulSyncColors.TextSoft,
+                                fontSize = 12.sp,
+                                maxLines = 2,
+                            )
+                        }
                     }
                 }
             }

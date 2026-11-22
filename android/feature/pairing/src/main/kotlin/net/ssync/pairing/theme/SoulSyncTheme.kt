@@ -22,11 +22,13 @@ object SoulSyncColors {
     val AccentNeon = Color(0xFF22FF6B)    // --accent-neon-rgb: 34, 255, 107
     val OnAccent = Color(0xFF04140A)      // --help-on-accent: #04140a
 
-    val BgPrimary = Color(0xFF0B0B0F)     // --bg-primary: #0b0b0f
+    val BgPrimary = Color(0xFF07070A)     // --pl-ink-rgb: 7, 7, 10 (premier /player canvas)
     val Panel = Color(0xFF101017)         // --sa-panel: #101017
+    val PanelGlass = Color(0xB816161E)    // --pl-panel: rgba(22, 22, 30, 0.72)
+    val PanelSolid = Color(0xFF16161E)    // --pl-panel-solid: #16161e
     val Surface = Color(0xFF121212)       // --bg-surface: #121212
-    val Card = Color(0xFF15151D)          // --sa-card: #15151d
-    val CardRaised = Color(0xFF191922)    // --sa-card-raised: #191922
+    val Card = Color(0xFF14141C)          // --sa-card
+    val CardRaised = Color(0xFF1A1A24)    // --sa-card-raised
     val BgSecondary = Color(0xFF1E1E2E)   // --bg-secondary: #1e1e2e
     val BgRaised2 = Color(0xFF2A2A2A)     // --bg-raised-2: #2a2a2a
 

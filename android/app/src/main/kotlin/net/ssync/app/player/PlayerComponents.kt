@@ -2,6 +2,7 @@ package net.ssync.app.player
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -60,17 +61,25 @@ fun SectionHeader(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 6.dp),
+            .padding(horizontal = 18.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
             text = title,
-            style = MaterialTheme.typography.titleLarge,
+            color = SoulSyncColors.TextPrimary,
+            fontWeight = FontWeight.Bold,
+            fontSize = 18.sp,
+            letterSpacing = (-0.2).sp,
             modifier = Modifier.weight(1f),
         )
         if (actionLabel != null && onAction != null) {
             TextButton(onClick = onAction, modifier = Modifier.dpadFocusable()) {
-                Text(text = actionLabel, color = SoulSyncColors.AccentLight)
+                Text(
+                    text = actionLabel,
+                    color = SoulSyncColors.AccentLight,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
             }
         }
     }
@@ -83,16 +92,21 @@ fun MediaRail(
     onAction: (() -> Unit)? = null,
     content: LazyListScope.() -> Unit,
 ) {
-    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
         SectionHeader(title = title, actionLabel = actionLabel, onAction = onAction)
         LazyRow(
-            contentPadding = PaddingValues(horizontal = 16.dp),
+            contentPadding = PaddingValues(horizontal = 18.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             content = content,
         )
     }
 }
 
+/**
+ * Full-bleed cinematic Hero matching SoulSync `/player`'s premier hero banner:
+ * bleeds edge-to-edge underneath the floating translucent header with multi-stop
+ * ink vignettes, frosted metadata pills, and high-contrast pill CTAs.
+ */
 @Composable
 fun HeroSpotlight(
     title: String,
@@ -102,71 +116,95 @@ fun HeroSpotlight(
     onPlay: () -> Unit,
     onToggleWatchlist: (() -> Unit)? = null,
 ) {
+    val chips = subtitle.split("•").map { it.trim() }.filter { it.isNotEmpty() }
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(250.dp)
-            .padding(horizontal = 16.dp, vertical = 8.dp)
-            .clip(RoundedCornerShape(16.dp))
-            .background(SoulSyncColors.Card),
+            .height(370.dp)
+            .background(SoulSyncColors.BgPrimary),
     ) {
         SoulSyncArtwork(
             url = backdropUrl,
             contentDescription = title,
             modifier = Modifier.fillMaxSize(),
         )
+        // Top vignette for transparent header legibility + bottom ink fade into canvas
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .background(
                     Brush.verticalGradient(
-                        colors = listOf(
-                            Color.Transparent,
-                            SoulSyncColors.BgPrimary.copy(alpha = 0.65f),
-                            SoulSyncColors.BgPrimary.copy(alpha = 0.96f),
-                        ),
+                        0.0f to SoulSyncColors.BgPrimary.copy(alpha = 0.72f),
+                        0.28f to Color.Transparent,
+                        0.58f to SoulSyncColors.BgPrimary.copy(alpha = 0.55f),
+                        0.85f to SoulSyncColors.BgPrimary.copy(alpha = 0.92f),
+                        1.0f to SoulSyncColors.BgPrimary,
                     ),
                 ),
         )
         Column(
             modifier = Modifier
                 .align(Alignment.BottomStart)
-                .padding(16.dp),
+                .fillMaxWidth()
+                .padding(horizontal = 18.dp, vertical = 18.dp),
         ) {
             Text(
                 text = title,
-                style = MaterialTheme.typography.headlineMedium,
+                color = Color.White,
+                fontWeight = FontWeight.ExtraBold,
+                fontSize = 30.sp,
+                lineHeight = 34.sp,
+                letterSpacing = (-0.5).sp,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
-            if (subtitle.isNotBlank()) {
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = subtitle,
-                    style = MaterialTheme.typography.bodyMedium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+            if (chips.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(10.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    chips.take(4).forEach { chip ->
+                        Box(
+                            modifier = Modifier
+                                .background(SoulSyncColors.PanelGlass, RoundedCornerShape(999.dp))
+                                .border(1.dp, SoulSyncColors.LineStrong, RoundedCornerShape(999.dp))
+                                .padding(horizontal = 10.dp, vertical = 4.dp),
+                        ) {
+                            Text(
+                                text = chip,
+                                color = SoulSyncColors.TextPrimary,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium,
+                            )
+                        }
+                    }
+                }
             }
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(16.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Button(
                     onClick = onPlay,
+                    shape = RoundedCornerShape(999.dp),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = SoulSyncColors.Accent,
                         contentColor = SoulSyncColors.OnAccent,
                     ),
-                    modifier = Modifier.dpadFocusable(),
+                    contentPadding = PaddingValues(horizontal = 22.dp, vertical = 12.dp),
+                    modifier = Modifier.dpadFocusable(RoundedCornerShape(999.dp)),
                 ) {
-                    Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(20.dp))
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text("Play")
+                    Text("Play", fontWeight = FontWeight.Bold, fontSize = 15.sp)
                 }
                 if (onToggleWatchlist != null) {
                     OutlinedButton(
                         onClick = onToggleWatchlist,
+                        shape = RoundedCornerShape(999.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            containerColor = SoulSyncColors.PanelGlass,
+                            contentColor = SoulSyncColors.TextPrimary,
+                        ),
                         border = BorderStroke(1.dp, SoulSyncColors.LineStrong),
-                        modifier = Modifier.dpadFocusable(),
+                        contentPadding = PaddingValues(horizontal = 18.dp, vertical = 12.dp),
+                        modifier = Modifier.dpadFocusable(RoundedCornerShape(999.dp)),
                     ) {
                         Icon(
                             imageVector = if (inWatchlist) Icons.Default.BookmarkAdded else Icons.Default.BookmarkAdd,
@@ -176,8 +214,9 @@ fun HeroSpotlight(
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = if (inWatchlist) "Saved" else "Watchlist",
-                            color = SoulSyncColors.TextPrimary,
+                            text = if (inWatchlist) "In Watchlist" else "Watchlist",
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 14.sp,
                         )
                     }
                 }
@@ -193,18 +232,18 @@ fun PosterCard(
     artworkUrl: String?,
     badge: String? = null,
     progress: Float? = null,
-    width: Dp = 128.dp,
+    width: Dp = 122.dp,
     onClick: () -> Unit,
 ) {
     Column(
         modifier = Modifier
             .width(width)
-            .dpadFocusable(RoundedCornerShape(12.dp))
+            .dpadFocusable(RoundedCornerShape(10.dp))
             .clickable(onClick = onClick),
     ) {
         Card(
-            shape = RoundedCornerShape(12.dp),
-            colors = CardDefaults.cardColors(containerColor = SoulSyncColors.Card),
+            shape = RoundedCornerShape(10.dp),
+            colors = CardDefaults.cardColors(containerColor = SoulSyncColors.PanelSolid),
             border = BorderStroke(1.dp, SoulSyncColors.Line),
             modifier = Modifier.fillMaxWidth().aspectRatio(2f / 3f),
         ) {
@@ -220,27 +259,28 @@ fun PosterCard(
                         modifier = Modifier
                             .align(Alignment.TopEnd)
                             .padding(6.dp)
-                            .background(SoulSyncColors.BgPrimary.copy(alpha = 0.85f), RoundedCornerShape(6.dp))
+                            .background(SoulSyncColors.BgPrimary.copy(alpha = 0.84f), RoundedCornerShape(6.dp))
+                            .border(1.dp, SoulSyncColors.Line, RoundedCornerShape(6.dp))
                             .padding(horizontal = 6.dp, vertical = 2.dp),
                     ) {
-                        Text(text = badge, color = SoulSyncColors.Warning, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        Text(text = "★ $badge", color = SoulSyncColors.Warning, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                     }
                 }
                 if (progress != null && progress > 0f) {
                     LinearProgressIndicator(
                         progress = { progress },
-                        color = SoulSyncColors.Accent,
-                        trackColor = Color.Black.copy(alpha = 0.6f),
-                        modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(4.dp),
+                        color = SoulSyncColors.AccentLight,
+                        trackColor = Color.Black.copy(alpha = 0.7f),
+                        modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(3.dp),
                     )
                 }
             }
         }
-        Spacer(modifier = Modifier.height(6.dp))
+        Spacer(modifier = Modifier.height(7.dp))
         Text(
             text = title,
             color = SoulSyncColors.TextPrimary,
-            fontWeight = FontWeight.Medium,
+            fontWeight = FontWeight.SemiBold,
             fontSize = 13.sp,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
@@ -269,12 +309,12 @@ fun SquareMediaCard(
     Column(
         modifier = Modifier
             .width(width)
-            .dpadFocusable(RoundedCornerShape(12.dp))
+            .dpadFocusable(RoundedCornerShape(10.dp))
             .clickable(onClick = onClick),
     ) {
         Card(
-            shape = RoundedCornerShape(12.dp),
-            colors = CardDefaults.cardColors(containerColor = SoulSyncColors.Card),
+            shape = RoundedCornerShape(10.dp),
+            colors = CardDefaults.cardColors(containerColor = SoulSyncColors.PanelSolid),
             border = BorderStroke(1.dp, SoulSyncColors.Line),
             modifier = Modifier.fillMaxWidth().aspectRatio(1f),
         ) {
@@ -285,11 +325,11 @@ fun SquareMediaCard(
                 modifier = Modifier.fillMaxSize(),
             )
         }
-        Spacer(modifier = Modifier.height(6.dp))
+        Spacer(modifier = Modifier.height(7.dp))
         Text(
             text = title,
             color = SoulSyncColors.TextPrimary,
-            fontWeight = FontWeight.Medium,
+            fontWeight = FontWeight.SemiBold,
             fontSize = 13.sp,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
@@ -312,18 +352,18 @@ fun WideMediaCard(
     subtitle: String? = null,
     artworkUrl: String?,
     progress: Float? = null,
-    width: Dp = 220.dp,
+    width: Dp = 228.dp,
     onClick: () -> Unit,
 ) {
     Column(
         modifier = Modifier
             .width(width)
-            .dpadFocusable(RoundedCornerShape(12.dp))
+            .dpadFocusable(RoundedCornerShape(10.dp))
             .clickable(onClick = onClick),
     ) {
         Card(
-            shape = RoundedCornerShape(12.dp),
-            colors = CardDefaults.cardColors(containerColor = SoulSyncColors.Card),
+            shape = RoundedCornerShape(10.dp),
+            colors = CardDefaults.cardColors(containerColor = SoulSyncColors.PanelSolid),
             border = BorderStroke(1.dp, SoulSyncColors.Line),
             modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f),
         ) {
@@ -333,21 +373,31 @@ fun WideMediaCard(
                     contentDescription = title,
                     modifier = Modifier.fillMaxSize(),
                 )
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            Brush.verticalGradient(
+                                0.5f to Color.Transparent,
+                                1.0f to SoulSyncColors.BgPrimary.copy(alpha = 0.7f),
+                            ),
+                        ),
+                )
                 if (progress != null && progress > 0f) {
                     LinearProgressIndicator(
                         progress = { progress },
-                        color = SoulSyncColors.Accent,
-                        trackColor = Color.Black.copy(alpha = 0.6f),
-                        modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(4.dp),
+                        color = SoulSyncColors.AccentLight,
+                        trackColor = Color.Black.copy(alpha = 0.7f),
+                        modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(3.dp),
                     )
                 }
             }
         }
-        Spacer(modifier = Modifier.height(6.dp))
+        Spacer(modifier = Modifier.height(7.dp))
         Text(
             text = title,
             color = SoulSyncColors.TextPrimary,
-            fontWeight = FontWeight.Medium,
+            fontWeight = FontWeight.SemiBold,
             fontSize = 13.sp,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,

@@ -3,6 +3,7 @@ package net.ssync.app.player
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -64,13 +65,36 @@ fun AudioNowPlayingSheet(
     val item = coordinator.activeItem ?: return
     var panel by remember { mutableStateOf(NowPlayingPanel.ARTWORK) }
 
-    Column(
+    Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(SoulSyncColors.BgPrimary)
-            .padding(20.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
+            .background(SoulSyncColors.BgPrimary),
     ) {
+        // Atmospheric full-bleed blurred-style artwork backdrop
+        SoulSyncArtwork(
+            url = item.artworkUrl,
+            contentDescription = null,
+            modifier = Modifier.fillMaxSize(),
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    androidx.compose.ui.graphics.Brush.verticalGradient(
+                        listOf(
+                            SoulSyncColors.BgPrimary.copy(alpha = 0.78f),
+                            SoulSyncColors.BgPrimary.copy(alpha = 0.94f),
+                            SoulSyncColors.BgPrimary,
+                        ),
+                    ),
+                ),
+        )
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -258,6 +282,7 @@ fun AudioNowPlayingSheet(
                     tint = if (panel == NowPlayingPanel.QUEUE) SoulSyncColors.AccentLight else SoulSyncColors.TextSoft,
                 )
             }
+        }
         }
     }
 }
