@@ -59,18 +59,23 @@ private fun SoulSyncRoot() {
     }
 
     var controller by remember { mutableStateOf<MediaController?>(null) }
-    DisposableEffect(context) {
-        val token = SessionToken(context, ComponentName(context, SoulSyncPlaybackService::class.java))
-        val future: ListenableFuture<MediaController> = MediaController.Builder(context, token).buildAsync()
-        future.addListener(
-            {
-                runCatching { controller = future.get() }
-            },
-            ContextCompat.getMainExecutor(context),
-        )
-        onDispose {
-            MediaController.releaseFuture(future)
+    DisposableEffect(context, pairedRecord) {
+        if (pairedRecord == null) {
             controller = null
+            onDispose { }
+        } else {
+            val token = SessionToken(context, ComponentName(context, SoulSyncPlaybackService::class.java))
+            val future: ListenableFuture<MediaController> = MediaController.Builder(context, token).buildAsync()
+            future.addListener(
+                {
+                    runCatching { controller = future.get() }
+                },
+                ContextCompat.getMainExecutor(context),
+            )
+            onDispose {
+                MediaController.releaseFuture(future)
+                controller = null
+            }
         }
     }
 

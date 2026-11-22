@@ -84,13 +84,9 @@ fun PairingScreen(
             Image(
                 painter = painterResource(id = R.drawable.soulsync_logo),
                 contentDescription = "SoulSync Logo",
-                modifier = Modifier.size(72.dp),
+                modifier = Modifier.size(112.dp),
             )
-            Spacer(modifier = Modifier.height(12.dp))
-            Text(
-                text = "SoulSync",
-                style = MaterialTheme.typography.headlineMedium,
-            )
+            Spacer(modifier = Modifier.height(8.dp))
             Text(
                 text = "Direct, private music streaming from your server",
                 style = MaterialTheme.typography.bodyMedium,
