@@ -22,8 +22,23 @@ android {
         }
     }
 
+    flavorDimensions += "environment"
+    productFlavors {
+        create("staging") {
+            dimension = "environment"
+            applicationIdSuffix = ".staging"
+            versionNameSuffix = "-staging"
+            buildConfigField("String", "CONNECT_BASE_URL", "\"https://soulsync-connect-staging.fly.dev\"")
+        }
+        create("prod") {
+            dimension = "environment"
+            buildConfigField("String", "CONNECT_BASE_URL", "\"https://connect.ssync.net\"")
+        }
+    }
+
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     compileOptions {

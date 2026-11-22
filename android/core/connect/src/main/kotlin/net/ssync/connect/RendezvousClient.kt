@@ -38,8 +38,10 @@ sealed interface LookupOutcome {
 private data class LookupRequestBody(
     @SerialName("code_hash")
     val codeHash: String,
+    @SerialName("reply_key")
+    val replyKey: String,
     @SerialName("ephemeral_public_key")
-    val ephemeralPublicKey: String,
+    val ephemeralPublicKey: String = replyKey,
 )
 
 @Serializable
@@ -83,13 +85,15 @@ class RendezvousClient(
 
     suspend fun lookup(pairingCode: PairingCode): LookupOutcome = withContext(Dispatchers.IO) {
         val ephemeral = keyPairFactory()
+        val pubKeyB64 = CryptoUtils.base64UrlEncodeNoPadding(ephemeral.publicKey)
         val requestPayload = LookupRequestBody(
             codeHash = pairingCode.codeHash,
-            ephemeralPublicKey = CryptoUtils.base64UrlEncodeNoPadding(ephemeral.publicKey),
+            replyKey = pubKeyB64,
+            ephemeralPublicKey = pubKeyB64,
         )
         val requestJson = json.encodeToString(LookupRequestBody.serializer(), requestPayload)
         val request = Request.Builder()
-            .url("${baseUrl.trimEnd('/')}/v1/rendezvous/lookup")
+            .url("${baseUrl.trimEnd('/')}/v1/lookup")
             .post(requestJson.toRequestBody(JSON_MEDIA_TYPE))
             .build()
 
@@ -144,7 +148,7 @@ class RendezvousClient(
 
     companion object {
         const val PROD_BASE_URL = "https://connect.ssync.net"
-        const val STAGING_BASE_URL = "https://staging.connect.ssync.net"
+        const val STAGING_BASE_URL = "https://soulsync-connect-staging.fly.dev"
         private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
     }
 }

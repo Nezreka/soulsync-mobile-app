@@ -24,6 +24,7 @@ import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.ListenableFuture
 import kotlinx.coroutines.launch
+import net.ssync.connect.RendezvousClient
 import net.ssync.pairing.PairingScreen
 import net.ssync.pairing.PairingViewModel
 import net.ssync.pairing.theme.SoulSyncColors
@@ -91,7 +92,12 @@ private fun SoulSyncRoot() {
 
     val activeRecord = pairedRecord
     if (activeRecord == null) {
-        val pairingViewModel = remember(vault, revokedNotice) { PairingViewModel(vault = vault) }
+        val pairingViewModel = remember(vault, revokedNotice) {
+            PairingViewModel(
+                vault = vault,
+                rendezvousClient = RendezvousClient(baseUrl = BuildConfig.CONNECT_BASE_URL),
+            )
+        }
         PairingScreen(
             viewModel = pairingViewModel,
             noticeBanner = revokedNotice,

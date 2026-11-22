@@ -31,11 +31,11 @@ jobs:
           chmod +x gradlew
           ./gradlew :core:connect:test
 
-      - name: Run all Android unit tests & assemble debug APK
-        run: ./gradlew testDebugUnitTest assembleDebug
+      - name: Run all Android unit tests & assemble staging debug APK
+        run: ./gradlew :core:network:testDebugUnitTest :core:player:testDebugUnitTest :app:assembleStagingDebug
 
-      - name: Upload debug APK artifact
+      - name: Upload staging debug APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: soulsync-android-debug-apk
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          name: soulsync-android-staging-debug-apk
+          path: android/app/build/outputs/apk/staging/debug/app-staging-debug.apk

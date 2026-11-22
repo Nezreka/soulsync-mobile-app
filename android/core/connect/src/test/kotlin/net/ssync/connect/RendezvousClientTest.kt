@@ -43,10 +43,11 @@ class RendezvousClientTest {
         )
 
         val recorded = server.takeRequest()
+        assertEquals("/v1/lookup", recorded.path)
         val body = recorded.body.readUtf8()
         assertFalse(body.contains("K7M9P2X4Q8RTW3ZA"), "Raw pairing code must NEVER be sent to connect.ssync.net")
         assertTrue(body.contains(code.codeHash), "Expected code_hash in lookup request")
-        assertTrue(body.contains("ephemeral_public_key"))
+        assertTrue(body.contains("reply_key"))
     }
 
     @Test
