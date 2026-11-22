@@ -139,8 +139,8 @@ fun PlayerShell(
             }
         }
     }
-    val imageLoader = remember(context, pinnedClient) {
-        createPinnedImageLoader(context.applicationContext, pinnedClient)
+    val imageLoader = remember(context, activeBaseUrl, pinnedClient) {
+        createPinnedImageLoader(context.applicationContext, activeBaseUrl, pinnedClient)
     }
     val coordinator = remember(api) {
         PlaybackCoordinator(
@@ -365,6 +365,7 @@ fun PlayerShell(
             if (coordinator.showVideoOverlay && videoItem != null) {
                 VideoPlayerOverlay(
                     item = videoItem,
+                    api = api,
                     pinnedHttpClient = pinnedClient,
                     onClose = { pos, dur -> coordinator.closeVideo(pos, dur) },
                 )

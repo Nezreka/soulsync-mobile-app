@@ -16,17 +16,47 @@ import androidx.compose.ui.layout.ContentScale
 import coil.ImageLoader
 import coil.compose.SubcomposeAsyncImage
 import net.ssync.pairing.theme.SoulSyncColors
+import okhttp3.Call
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
+import java.util.concurrent.TimeUnit
 
 val LocalSoulSyncImageLoader = staticCompositionLocalOf<ImageLoader> {
     error("LocalSoulSyncImageLoader not provided")
 }
 
-fun createPinnedImageLoader(context: Context, pinnedClient: OkHttpClient): ImageLoader =
-    ImageLoader.Builder(context)
-        .okHttpClient(pinnedClient)
+/**
+ * Host-aware Coil ImageLoader:
+ * - Requests targeting the paired SoulSync server use `pinnedClient` (leaf cert pin + Bearer token).
+ * - Requests targeting external public image CDNs (YouTube `i.ytimg.com`, TMDB `image.tmdb.org`,
+ *   podcast RSS artwork hosts) use a clean system-CA OkHttpClient with zero Bearer token leakage.
+ */
+fun createPinnedImageLoader(
+    context: Context,
+    serverBaseUrl: String,
+    pinnedClient: OkHttpClient,
+): ImageLoader {
+    val serverHost = serverBaseUrl.toHttpUrlOrNull()?.host?.lowercase()
+    val externalClient = OkHttpClient.Builder()
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(20, TimeUnit.SECONDS)
+        .followRedirects(true)
+        .build()
+
+    val routingFactory = Call.Factory { request ->
+        val reqHost = request.url.host.lowercase()
+        if (serverHost != null && reqHost == serverHost) {
+            pinnedClient.newCall(request)
+        } else {
+            externalClient.newCall(request)
+        }
+    }
+
+    return ImageLoader.Builder(context)
+        .callFactory(routingFactory)
         .crossfade(true)
         .build()
+}
 
 @Composable
 fun SoulSyncArtwork(
@@ -58,14 +88,7 @@ fun SoulSyncArtwork(
             loading = {
                 Box(
                     modifier = Modifier.fillMaxSize().background(SoulSyncColors.CardRaised),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        imageVector = fallbackIcon,
-                        contentDescription = null,
-                        tint = SoulSyncColors.TextSecondary.copy(alpha = 0.4f),
-                    )
-                }
+                )
             },
             error = {
                 Box(

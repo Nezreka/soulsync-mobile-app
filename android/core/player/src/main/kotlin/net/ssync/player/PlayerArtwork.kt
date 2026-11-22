@@ -55,8 +55,18 @@ class PlayerArtwork(baseUrl: String) {
 
     fun resolve(url: String?): String? {
         if (url.isNullOrBlank()) return null
-        if (url.startsWith("http://") || url.startsWith("https://")) return url
-        val normalized = if (url.startsWith("/")) url else "/$url"
+        val trimmed = url.trim()
+        if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) return trimmed
+        if (trimmed.startsWith("//")) return "https:$trimmed"
+        val normalized = if (trimmed.startsWith("/")) trimmed else "/$trimmed"
+        // TMDB bare image paths (e.g. "/abc123.jpg") from cast or similar titles
+        if (!normalized.startsWith("/api/") && !normalized.startsWith("/static/") &&
+            (normalized.endsWith(".jpg", ignoreCase = true) ||
+                normalized.endsWith(".png", ignoreCase = true) ||
+                normalized.endsWith(".webp", ignoreCase = true))
+        ) {
+            return "https://image.tmdb.org/t/p/w342$normalized"
+        }
         return if (normalized.startsWith("/api/library/v2/artwork/") && !normalized.contains("size=")) {
             val join = if (normalized.contains("?")) "&" else "?"
             "$base$normalized${join}size=thumb"

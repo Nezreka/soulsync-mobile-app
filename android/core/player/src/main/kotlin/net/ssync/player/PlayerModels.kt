@@ -585,6 +585,37 @@ data class DeviceProfileInfo(
     val isAdmin: Boolean = false,
 )
 
+@Serializable
+data class SubtitleCandidate(
+    @SerialName("candidate_id")
+    val candidateId: String = "",
+    val provider: String = "",
+    val title: String = "",
+    val score: Double = 0.0,
+    @SerialName("hash_match")
+    val hashMatch: Boolean = false,
+    @SerialName("download_count")
+    val downloadCount: Int = 0,
+    val language: String = "en",
+    val hi: Boolean = false,
+    val forced: Boolean = false,
+)
+
+@Serializable
+internal data class SubtitleSearchEnvelope(
+    val candidates: List<SubtitleCandidate> = emptyList(),
+)
+
+@Serializable
+internal data class SubtitleDownloadRequest(
+    val kind: String,
+    @SerialName("item_id")
+    val itemId: Int,
+    val lang: String,
+    @SerialName("candidate_id")
+    val candidateId: String,
+)
+
 // ── Customizable Home Layout (1:1 with core/player/home_layout.py) ───────────
 
 @Serializable

@@ -433,6 +433,34 @@ class PlayerApiClient(
             execute(req) { }
         }
 
+    suspend fun searchSubtitles(kind: String, itemId: Int, lang: String = "en"): MusicApiResult<List<SubtitleCandidate>> {
+        val url = "$base/api/video/subtitles/search/$kind/$itemId".toHttpUrl().newBuilder()
+            .addQueryParameter("lang", lang)
+            .build()
+        return getJson(url.toString()) { body ->
+            json.decodeFromString<SubtitleSearchEnvelope>(body).candidates
+        }
+    }
+
+    suspend fun downloadSubtitle(
+        kind: String,
+        itemId: Int,
+        lang: String,
+        candidateId: String,
+    ): MusicApiResult<Unit> = withContext(Dispatchers.IO) {
+        val payload = SubtitleDownloadRequest(
+            kind = kind,
+            itemId = itemId,
+            lang = lang,
+            candidateId = candidateId,
+        )
+        val req = Request.Builder()
+            .url("$base/api/video/subtitles/manual-download")
+            .post(json.encodeToString(SubtitleDownloadRequest.serializer(), payload).toRequestBody(JSON_MEDIA_TYPE))
+            .build()
+        execute(req) { }
+    }
+
     private suspend fun <T> getJson(url: String, parser: (String) -> T): MusicApiResult<T> =
         withContext(Dispatchers.IO) {
             execute(Request.Builder().url(url).get().build(), parser)

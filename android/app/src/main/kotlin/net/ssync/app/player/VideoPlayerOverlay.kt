@@ -18,17 +18,22 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AspectRatio
 import androidx.compose.material.icons.filled.Brightness6
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Forward10
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -52,6 +57,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -77,22 +83,29 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import net.ssync.pairing.theme.SoulSyncColors
 import net.ssync.pairing.ui.dpadFocusable
+import net.ssync.player.MusicApiResult
+import net.ssync.player.PlayerApiClient
+import net.ssync.player.SubtitleCandidate
 import okhttp3.OkHttpClient
 import kotlin.math.roundToInt
 
 private val VIDEO_SPEEDS = listOf(0.75f, 1.0f, 1.25f, 1.5f, 2.0f)
+private val SUB_LANGS = listOf("en", "es", "fr", "de", "it", "pt", "ja", "ko", "zh", "nl", "pl", "ru")
 
 @kotlin.OptIn(ExperimentalMaterial3Api::class)
 @OptIn(UnstableApi::class)
 @Composable
 fun VideoPlayerOverlay(
     item: ActivePlayable,
+    api: PlayerApiClient,
     pinnedHttpClient: OkHttpClient,
     onClose: (positionMs: Long, durationMs: Long) -> Unit,
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     LaunchedEffect(context) { PlayerDevicePrefs.init(context) }
     val displayPrefs by PlayerDevicePrefs.state.collectAsState()
     val resizeMode = when (displayPrefs.pictureFit) {
@@ -446,57 +459,210 @@ fun VideoPlayerOverlay(
                 val tracks = exoPlayer.currentTracks
                 val audioGroups = tracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }
                 val textGroups = tracks.groups.filter { it.type == C.TRACK_TYPE_TEXT }
+                val canSearchSubs = (item.itemType == "movie" || item.itemType == "episode") && item.itemId.toIntOrNull() != null
+                var sheetTab by remember { mutableStateOf("tracks") } // "tracks" | "search"
+                var subLang by remember { mutableStateOf("en") }
+                var subCandidates by remember { mutableStateOf<List<SubtitleCandidate>>(emptyList()) }
+                var searchingSubs by remember { mutableStateOf(false) }
+                var subStatus by remember { mutableStateOf<String?>(null) }
+
+                LaunchedEffect(sheetTab, subLang) {
+                    if (sheetTab == "search" && canSearchSubs) {
+                        searchingSubs = true
+                        subStatus = null
+                        val idInt = item.itemId.toInt()
+                        when (val res = api.searchSubtitles(item.itemType, idInt, subLang)) {
+                            is MusicApiResult.Success -> subCandidates = res.data
+                            is MusicApiResult.Error -> subStatus = res.message
+                            MusicApiResult.DeviceRevoked -> Unit
+                        }
+                        searchingSubs = false
+                    }
+                }
+
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 20.dp)
                         .padding(bottom = 28.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    Text("Audio & Subtitles", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Text("Audio & Subtitles", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                        if (canSearchSubs) {
+                            Row(
+                                modifier = Modifier
+                                    .clip(CircleShape)
+                                    .background(Color.Black.copy(alpha = 0.4f))
+                                    .border(1.dp, SoulSyncColors.Line, CircleShape)
+                                    .padding(3.dp),
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                listOf("tracks" to "Tracks", "search" to "Find Subtitles").forEach { (key, label) ->
+                                    val on = sheetTab == key
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(CircleShape)
+                                            .background(if (on) SoulSyncColors.Accent.copy(alpha = 0.25f) else Color.Transparent)
+                                            .clickable { sheetTab = key }
+                                            .padding(horizontal = 10.dp, vertical = 5.dp),
+                                    ) {
+                                        Text(
+                                            text = label,
+                                            color = if (on) Color.White else SoulSyncColors.TextSecondary,
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
 
-                    Text("AUDIO TRACKS", color = SoulSyncColors.TextSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                    if (audioGroups.isEmpty()) {
-                        Text("Default audio stream", color = SoulSyncColors.TextSoft, fontSize = 13.sp)
-                    } else {
-                        audioGroups.forEachIndexed { gIdx, group ->
+                    if (sheetTab == "tracks") {
+                        Text("AUDIO TRACKS", color = SoulSyncColors.TextSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        if (audioGroups.isEmpty()) {
+                            Text("Default audio stream", color = SoulSyncColors.TextSoft, fontSize = 13.sp)
+                        } else {
+                            audioGroups.forEachIndexed { gIdx, group ->
+                                val fmt = group.getTrackFormat(0)
+                                val label = listOfNotNull(fmt.label, fmt.language?.uppercase()).joinToString(" · ")
+                                    .ifBlank { "Audio Track ${gIdx + 1}" }
+                                TrackOptionRow(label = label, selected = group.isSelected) {
+                                    exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters
+                                        .buildUpon()
+                                        .setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup, 0))
+                                        .build()
+                                    showTracksSheet = false
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text("SUBTITLES", color = SoulSyncColors.TextSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        TrackOptionRow(
+                            label = "Off",
+                            selected = textGroups.none { it.isSelected },
+                        ) {
+                            exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters
+                                .buildUpon()
+                                .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+                                .build()
+                            showTracksSheet = false
+                        }
+                        textGroups.forEachIndexed { gIdx, group ->
                             val fmt = group.getTrackFormat(0)
                             val label = listOfNotNull(fmt.label, fmt.language?.uppercase()).joinToString(" · ")
-                                .ifBlank { "Audio Track ${gIdx + 1}" }
-                            val selected = group.isSelected
-                            TrackOptionRow(label = label, selected = selected) {
+                                .ifBlank { "Subtitle ${gIdx + 1}" }
+                            TrackOptionRow(label = label, selected = group.isSelected) {
                                 exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters
                                     .buildUpon()
+                                    .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
                                     .setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup, 0))
                                     .build()
                                 showTracksSheet = false
                             }
                         }
-                    }
-
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text("SUBTITLES", color = SoulSyncColors.TextSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                    TrackOptionRow(
-                        label = "Off",
-                        selected = textGroups.none { it.isSelected },
-                    ) {
-                        exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters
-                            .buildUpon()
-                            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
-                            .build()
-                        showTracksSheet = false
-                    }
-                    textGroups.forEachIndexed { gIdx, group ->
-                        val fmt = group.getTrackFormat(0)
-                        val label = listOfNotNull(fmt.label, fmt.language?.uppercase()).joinToString(" · ")
-                            .ifBlank { "Subtitle ${gIdx + 1}" }
-                        TrackOptionRow(label = label, selected = group.isSelected) {
-                            exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters
-                                .buildUpon()
-                                .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
-                                .setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup, 0))
-                                .build()
-                            showTracksSheet = false
+                    } else {
+                        // Find Subtitles via SoulSync's subtitle providers
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            items(SUB_LANGS, key = { it }) { code ->
+                                val on = subLang == code
+                                Box(
+                                    modifier = Modifier
+                                        .clip(CircleShape)
+                                        .background(if (on) SoulSyncColors.Accent.copy(alpha = 0.22f) else Color.White.copy(alpha = 0.05f))
+                                        .border(1.dp, if (on) SoulSyncColors.Accent.copy(alpha = 0.6f) else SoulSyncColors.Line, CircleShape)
+                                        .clickable { subLang = code }
+                                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                                ) {
+                                    Text(code.uppercase(), color = if (on) Color.White else SoulSyncColors.TextSoft, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                        if (subStatus != null) {
+                            Text(subStatus!!, color = SoulSyncColors.AccentLight, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                        if (searchingSubs) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 20.dp),
+                                horizontalArrangement = Arrangement.Center,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                CircularProgressIndicator(color = SoulSyncColors.AccentLight, modifier = Modifier.size(22.dp))
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Text("Searching subtitle providers…", color = SoulSyncColors.TextSoft, fontSize = 13.sp)
+                            }
+                        } else if (subCandidates.isEmpty()) {
+                            Text("No subtitle matches found for ${subLang.uppercase()}.", color = SoulSyncColors.TextSecondary, fontSize = 13.sp)
+                        } else {
+                            LazyColumn(
+                                modifier = Modifier.fillMaxWidth().heightIn(max = 320.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                items(subCandidates, key = { it.candidateId }) { cand ->
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(10.dp))
+                                            .background(Color.White.copy(alpha = 0.04f))
+                                            .border(
+                                                1.dp,
+                                                if (cand.hashMatch) SoulSyncColors.Accent.copy(alpha = 0.5f) else SoulSyncColors.Line,
+                                                RoundedCornerShape(10.dp),
+                                            )
+                                            .clickable {
+                                                val idInt = item.itemId.toIntOrNull() ?: return@clickable
+                                                subStatus = "Downloading subtitle…"
+                                                scope.launch {
+                                                    when (val r = api.downloadSubtitle(item.itemType, idInt, subLang, cand.candidateId)) {
+                                                        is MusicApiResult.Success -> {
+                                                            subStatus = "Subtitle saved! Reloading stream…"
+                                                            val resumeAt = exoPlayer.currentPosition.coerceAtLeast(0L)
+                                                            exoPlayer.setMediaItem(MediaItem.fromUri(item.streamUrl))
+                                                            exoPlayer.seekTo(resumeAt)
+                                                            exoPlayer.prepare()
+                                                            exoPlayer.playWhenReady = true
+                                                            showTracksSheet = false
+                                                        }
+                                                        is MusicApiResult.Error -> subStatus = r.message
+                                                        MusicApiResult.DeviceRevoked -> Unit
+                                                    }
+                                                }
+                                            }
+                                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                            Text(
+                                                text = cand.title.ifBlank { "${cand.provider} (${cand.language})" },
+                                                color = Color.White,
+                                                fontSize = 13.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                maxLines = 2,
+                                                overflow = TextOverflow.Ellipsis,
+                                            )
+                                            Text(
+                                                text = buildString {
+                                                    append(cand.provider)
+                                                    if (cand.hashMatch) append(" · HASH MATCH")
+                                                    if (cand.hi) append(" · HI")
+                                                    if (cand.forced) append(" · Forced")
+                                                    if (cand.score > 0) append(" · ${cand.score.roundToInt()}%")
+                                                },
+                                                color = if (cand.hashMatch) SoulSyncColors.AccentLight else SoulSyncColors.TextSecondary,
+                                                fontSize = 11.sp,
+                                            )
+                                        }
+                                        Icon(Icons.Default.Download, contentDescription = "Download subtitle", tint = SoulSyncColors.AccentLight, modifier = Modifier.size(18.dp))
+                                    }
+                                }
+                            }
                         }
                     }
                 }
