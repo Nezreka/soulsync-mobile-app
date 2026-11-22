@@ -89,6 +89,24 @@ class PlaybackCoordinator(
         reportPresence(item, paused = false)
     }
 
+    private fun buildProgressMeta(item: ActivePlayable): net.ssync.player.ProgressMeta {
+        val href = when (item.itemType) {
+            "movie" -> "/player/movies/${item.itemId}"
+            "show" -> "/player/tv/${item.itemId}"
+            "youtube" -> "/player/youtube"
+            "audiobook" -> "/player/audiobooks/${item.itemId}"
+            "podcast" -> "/player/podcasts"
+            else -> "/player/music"
+        }
+        return net.ssync.player.ProgressMeta(
+            title = item.title.takeIf { it.isNotBlank() },
+            subtitle = item.subtitle.takeIf { it.isNotBlank() },
+            artwork = item.artworkUrl,
+            backdrop = item.artworkUrl,
+            href = href,
+        )
+    }
+
     fun closeVideo(lastPositionMs: Long, totalDurationMs: Long) {
         val current = activeItem
         showVideoOverlay = false
@@ -101,6 +119,7 @@ class PlaybackCoordinator(
                     positionSeconds = lastPositionMs / 1000.0,
                     durationSeconds = totalDurationMs.takeIf { it > 0 }?.let { it / 1000.0 },
                     finished = totalDurationMs > 0 && lastPositionMs >= (totalDurationMs * 0.92),
+                    meta = buildProgressMeta(current),
                 )
                 api.clearPresence()
             }
@@ -159,6 +178,7 @@ class PlaybackCoordinator(
                     itemId = item.itemId,
                     positionSeconds = positionMs / 1000.0,
                     durationSeconds = durationMs.takeIf { it > 0 }?.let { it / 1000.0 },
+                    meta = buildProgressMeta(item),
                 )
             }
         }

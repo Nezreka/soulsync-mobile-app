@@ -271,6 +271,7 @@ class PlayerApiClient(
         positionSeconds: Double,
         durationSeconds: Double? = null,
         finished: Boolean = false,
+        meta: ProgressMeta? = null,
     ): MusicApiResult<Unit> = withContext(Dispatchers.IO) {
         val payload = PlaybackProgressRequest(
             itemType = itemType,
@@ -278,6 +279,7 @@ class PlayerApiClient(
             positionSeconds = positionSeconds,
             durationSeconds = durationSeconds,
             finished = finished,
+            meta = meta,
         )
         val req = Request.Builder()
             .url("$base/api/player/progress")

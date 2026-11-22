@@ -821,7 +821,7 @@ private fun PlayerContent(
             openEditorInitially = openHomeEditor,
             onEditorConsumed = onConsumeHomeEditor,
         )
-        PlayerDestination.Guide -> GuideScreen(api, coordinator, onDeviceRevoked)
+        PlayerDestination.Guide -> GuideScreen(api, coordinator, onDeviceRevoked, onNavigate)
         PlayerDestination.Movies -> MoviesScreen(api, { onNavigate(PlayerDestination.MovieDetail(it)) }, onDeviceRevoked)
         is PlayerDestination.MovieDetail -> MovieDetailScreen(current.movieId, api, coordinator, onNavigate, onDeviceRevoked)
         PlayerDestination.Tv -> TvScreen(api, { onNavigate(PlayerDestination.ShowDetail(it)) }, onDeviceRevoked)

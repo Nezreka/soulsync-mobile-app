@@ -343,6 +343,20 @@ fun HomeScreen(
                     item(key = "row-continue") {
                         MediaRail(title = "Continue Watching") {
                             items(continueItems, key = { "${it.itemType}:${it.itemId}" }) { item ->
+                                val idInt = item.itemId.toIntOrNull()
+                                val parentInt = item.meta?.parentId?.toIntOrNull()
+                                val catalogTitle = when (item.itemType) {
+                                    "movie" -> idInt?.let { moviesById[it]?.title }
+                                    "show" -> idInt?.let { showsById[it]?.title }
+                                    "episode" -> parentInt?.let { showsById[it]?.title }
+                                    "youtube" -> catalog.youtube.firstOrNull { it.id == item.itemId || it.youtubeId == item.itemId }?.title
+                                    "audiobook" -> books.firstOrNull { it.asin == item.itemId }?.title
+                                    else -> null
+                                }
+                                val displayTitle = item.meta?.title
+                                    ?.takeIf { it.isNotBlank() && !it.equals("Untitled", ignoreCase = true) }
+                                    ?: catalogTitle
+                                    ?: item.itemId
                                 val resolvedArt = api.artwork.resolve(item.meta?.backdrop ?: item.meta?.artwork)
                                     ?: api.artwork.forItem(
                                         itemType = item.itemType,
@@ -351,13 +365,11 @@ fun HomeScreen(
                                         parentId = item.meta?.parentId,
                                     )
                                 WideMediaCard(
-                                    title = item.meta?.title ?: item.itemId,
+                                    title = displayTitle,
                                     subtitle = item.meta?.subtitle ?: item.itemType.replaceFirstChar { it.uppercase() },
                                     artworkUrl = resolvedArt,
                                     progress = item.progressFraction,
                                     onClick = {
-                                        val idInt = item.itemId.toIntOrNull()
-                                        val parentInt = item.meta?.parentId?.toIntOrNull()
                                         when (item.itemType) {
                                             "movie" -> if (idInt != null) onNavigate(PlayerDestination.MovieDetail(idInt))
                                             "show" -> if (idInt != null) onNavigate(PlayerDestination.ShowDetail(idInt))
@@ -368,7 +380,7 @@ fun HomeScreen(
                                                     ActivePlayable(
                                                         itemType = item.itemType,
                                                         itemId = item.itemId,
-                                                        title = item.meta?.title ?: item.itemId,
+                                                        title = displayTitle,
                                                         subtitle = item.meta?.subtitle.orEmpty(),
                                                         artworkUrl = resolvedArt,
                                                         streamUrl = api.streamUrl(item.itemType, item.itemId),
@@ -389,7 +401,18 @@ fun HomeScreen(
                                             }
                                             "podcast" -> onNavigate(PlayerDestination.Podcasts)
                                             "youtube" -> onNavigate(PlayerDestination.YouTube)
-                                            else -> Unit
+                                            else -> coordinator.playVideo(
+                                                ActivePlayable(
+                                                    itemType = item.itemType,
+                                                    itemId = item.itemId,
+                                                    title = displayTitle,
+                                                    subtitle = item.meta?.subtitle.orEmpty(),
+                                                    artworkUrl = resolvedArt,
+                                                    streamUrl = api.streamUrl(item.itemType, item.itemId),
+                                                    isVideo = true,
+                                                    resumePositionMs = (item.positionSeconds * 1000.0).toLong(),
+                                                ),
+                                            )
                                         }
                                     },
                                 )

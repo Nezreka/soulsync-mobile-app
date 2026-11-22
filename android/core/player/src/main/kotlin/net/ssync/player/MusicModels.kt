@@ -108,6 +108,7 @@ internal data class PlaybackProgressRequest(
     @SerialName("duration_seconds")
     val durationSeconds: Double? = null,
     val finished: Boolean,
+    val meta: ProgressMeta? = null,
 )
 
 sealed interface MusicApiResult<out T> {

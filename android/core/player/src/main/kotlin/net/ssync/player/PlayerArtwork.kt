@@ -49,6 +49,7 @@ class PlayerArtwork(baseUrl: String) {
                 ?: parentId?.toIntOrNull()?.let { if (preferBackdrop) showBackdrop(it) else showPoster(it) }
             "audiobook" -> audiobookCover(itemId)
             "track" -> parentId?.toIntOrNull()?.let { albumArtwork(it) }
+            "youtube" -> "https://i.ytimg.com/vi/$itemId/hqdefault.jpg"
             else -> null
         }
     }
