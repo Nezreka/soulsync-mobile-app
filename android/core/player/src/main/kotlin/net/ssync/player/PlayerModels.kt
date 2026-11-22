@@ -592,6 +592,15 @@ data class DeviceProfileInfo(
     val avatarColor: String? = null,
     val avatarUrl: String? = null,
     val isAdmin: Boolean = false,
+    val needs: String? = null, // "pin" | "password" | null
+    val active: Boolean = false,
+)
+
+data class CastTokenResponse(
+    val token: String,
+    val streamPath: String,
+    val contentType: String,
+    val expiresIn: Int = 21600,
 )
 
 @Serializable
@@ -698,6 +707,7 @@ data class HomeLayout(
         fun defaultRows(): List<LayoutRow> = listOf(
             LayoutRow("continue", "wide", true),
             LayoutRow("watchlist", "standard", true),
+            LayoutRow("new-episodes", "wide", true),
             LayoutRow("top-rated", "ranked", true),
             LayoutRow("recent-movies", "standard", true),
             LayoutRow("recent-shows", "standard", true),

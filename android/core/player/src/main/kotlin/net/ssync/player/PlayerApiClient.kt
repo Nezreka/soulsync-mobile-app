@@ -461,6 +461,102 @@ class PlayerApiClient(
             execute(req) { }
         }
 
+    suspend fun fetchSwitchProfiles(): MusicApiResult<List<DeviceProfileInfo>> =
+        getJson("$base/api/devices/me/switch-profiles") { body ->
+            val root = json.parseToJsonElement(body).jsonObject
+            val arr = (root["profiles"] as? kotlinx.serialization.json.JsonArray) ?: return@getJson emptyList()
+            arr.mapNotNull { el ->
+                val obj = el as? JsonObject ?: return@mapNotNull null
+                val id = (obj["id"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toIntOrNull()
+                    ?: return@mapNotNull null
+                val name = (obj["name"] as? kotlinx.serialization.json.JsonPrimitive)?.content
+                    ?: return@mapNotNull null
+                val avatarColor = (obj["avatar_color"] as? kotlinx.serialization.json.JsonPrimitive)
+                    ?.takeIf { it !is kotlinx.serialization.json.JsonNull }?.content
+                val avatarUrl = (obj["avatar_url"] as? kotlinx.serialization.json.JsonPrimitive)
+                    ?.takeIf { it !is kotlinx.serialization.json.JsonNull }?.content
+                val needs = (obj["needs"] as? kotlinx.serialization.json.JsonPrimitive)
+                    ?.takeIf { it !is kotlinx.serialization.json.JsonNull }?.content
+                val active = (obj["active"] as? kotlinx.serialization.json.JsonPrimitive)
+                    ?.content?.toBooleanStrictOrNull() ?: false
+                DeviceProfileInfo(
+                    id = id,
+                    name = name,
+                    avatarColor = avatarColor,
+                    avatarUrl = avatarUrl,
+                    needs = needs,
+                    active = active,
+                )
+            }
+        }
+
+    suspend fun switchDeviceProfile(
+        profileId: Int,
+        pin: String? = null,
+        password: String? = null,
+    ): MusicApiResult<DeviceProfileInfo> = withContext(Dispatchers.IO) {
+        val fields = buildList {
+            add(""""profile_id":$profileId""")
+            if (!pin.isNullOrBlank()) add(""""pin":${json.encodeToString(kotlinx.serialization.serializer<String>(), pin)}""")
+            if (!password.isNullOrBlank()) add(""""password":${json.encodeToString(kotlinx.serialization.serializer<String>(), password)}""")
+        }
+        val req = Request.Builder()
+            .url("$base/api/devices/me/switch-profile")
+            .post("{${fields.joinToString(",")}}".toRequestBody(JSON_MEDIA_TYPE))
+            .build()
+        try {
+            pinnedAuthenticatedClient.newCall(req).execute().use { response ->
+                val body = response.body?.string().orEmpty()
+                if (response.code == 401) return@withContext MusicApiResult.DeviceRevoked
+                val root = runCatching { json.parseToJsonElement(body).jsonObject }.getOrNull()
+                if (response.isSuccessful && (root?.get("success") as? kotlinx.serialization.json.JsonPrimitive)?.content == "true") {
+                    val prof = root["profile"] as? JsonObject
+                    val id = (prof?.get("id") as? kotlinx.serialization.json.JsonPrimitive)?.content?.toIntOrNull() ?: profileId
+                    val name = (prof?.get("name") as? kotlinx.serialization.json.JsonPrimitive)?.content ?: ""
+                    val color = (prof?.get("avatar_color") as? kotlinx.serialization.json.JsonPrimitive)
+                        ?.takeIf { it !is kotlinx.serialization.json.JsonNull }?.content
+                    val avatar = (prof?.get("avatar_url") as? kotlinx.serialization.json.JsonPrimitive)
+                        ?.takeIf { it !is kotlinx.serialization.json.JsonNull }?.content
+                    MusicApiResult.Success(DeviceProfileInfo(id = id, name = name, avatarColor = color, avatarUrl = avatar, active = true))
+                } else {
+                    val msg = (root?.get("message") as? kotlinx.serialization.json.JsonPrimitive)?.content
+                        ?: (root?.get("error") as? kotlinx.serialization.json.JsonPrimitive)?.content
+                        ?: "Could not switch profile (HTTP ${response.code})"
+                    MusicApiResult.Error(msg)
+                }
+            }
+        } catch (e: Exception) {
+            MusicApiResult.Error(e.message ?: "Network error")
+        }
+    }
+
+    suspend fun createCastToken(
+        itemType: String,
+        itemId: String,
+        part: String? = null,
+    ): MusicApiResult<CastTokenResponse> = withContext(Dispatchers.IO) {
+        val fields = buildList {
+            add(""""item_type":${json.encodeToString(kotlinx.serialization.serializer<String>(), itemType)}""")
+            add(""""item_id":${json.encodeToString(kotlinx.serialization.serializer<String>(), itemId)}""")
+            if (!part.isNullOrBlank()) add(""""part":${json.encodeToString(kotlinx.serialization.serializer<String>(), part)}""")
+        }
+        val req = Request.Builder()
+            .url("$base/api/player/cast-token")
+            .post("{${fields.joinToString(",")}}".toRequestBody(JSON_MEDIA_TYPE))
+            .build()
+        execute(req) { body ->
+            val root = json.parseToJsonElement(body).jsonObject
+            CastTokenResponse(
+                token = (root["token"] as? kotlinx.serialization.json.JsonPrimitive)?.content.orEmpty(),
+                streamPath = (root["stream_path"] as? kotlinx.serialization.json.JsonPrimitive)?.content.orEmpty(),
+                contentType = (root["content_type"] as? kotlinx.serialization.json.JsonPrimitive)?.content
+                    ?: "video/mp4",
+                expiresIn = (root["expires_in"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toIntOrNull()
+                    ?: 21600,
+            )
+        }
+    }
+
     suspend fun searchSubtitles(kind: String, itemId: Int, lang: String = "en"): MusicApiResult<List<SubtitleCandidate>> {
         val url = "$base/api/video/subtitles/search/$kind/$itemId".toHttpUrl().newBuilder()
             .addQueryParameter("lang", lang)

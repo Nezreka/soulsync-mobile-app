@@ -31,6 +31,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.Cast
+import androidx.compose.material.icons.filled.CastConnected
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
@@ -39,6 +41,7 @@ import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.LiveTv
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.MusicNote
@@ -51,6 +54,8 @@ import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SmartDisplay
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Tv
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -60,6 +65,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberDrawerState
@@ -206,6 +212,8 @@ fun PlayerShell(
     var backStack by remember { mutableStateOf<List<PlayerDestination>>(listOf(PlayerDestination.Home)) }
     val current = backStack.last()
     var showProfileSheet by remember { mutableStateOf(false) }
+    var showCastSheet by remember { mutableStateOf(false) }
+    val castController = rememberCastController()
     var openHomeEditor by remember { mutableStateOf(false) }
     var sidebarCollapsed by remember { mutableStateOf(false) }
     var headerScrolled by remember { mutableStateOf(false) }
@@ -332,8 +340,10 @@ fun PlayerShell(
                                 showBack = backStack.size > 1,
                                 showMenuButton = !usePermanentSidebar,
                                 transparentOverHero = hasFullBleedHero && !headerScrolled,
+                                castConnected = castController.isConnected,
                                 onBack = { popBack() },
                                 onOpenDrawer = { scope.launch { drawerState.open() } },
+                                onCastClick = { showCastSheet = true },
                                 onSearch = { navigateTo(PlayerDestination.Search) },
                                 onProfileClick = { showProfileSheet = true },
                             )
@@ -388,20 +398,19 @@ fun PlayerShell(
                     record = currentRecord,
                     activeAvatarUrl = activeAvatarUrl,
                     api = api,
-                    onSwitchProfile = { chosen ->
+                    onProfileSwitched = { chosen ->
                         scope.launch {
-                            val res = api.pickDeviceProfile(chosen.id)
-                            if (res is MusicApiResult.Success) {
-                                val updated = currentRecord.copy(
-                                    profileId = chosen.id.toString(),
-                                    profileName = chosen.name,
-                                )
-                                currentRecord = updated
-                                KeystoreServerVault(context.applicationContext).save(updated)
-                                profileEpoch += 1
-                                showProfileSheet = false
-                                navigateTo(PlayerDestination.Home, clearToRoot = true)
-                            }
+                            val updated = currentRecord.copy(
+                                profileId = chosen.id.toString(),
+                                profileName = chosen.name,
+                            )
+                            currentRecord = updated
+                            activeAvatarUrl = api.artwork.resolve(chosen.avatarUrl)
+                                ?: api.artwork.profileAvatar(chosen.id.toString())
+                            KeystoreServerVault(context.applicationContext).save(updated)
+                            profileEpoch += 1
+                            showProfileSheet = false
+                            navigateTo(PlayerDestination.Home, clearToRoot = true)
                         }
                     },
                     onOpenSettings = {
@@ -421,6 +430,24 @@ fun PlayerShell(
                 )
             }
 
+            if (showCastSheet) {
+                CastDeviceSheet(
+                    castController = castController,
+                    api = api,
+                    baseUrl = activeBaseUrl,
+                    activeItem = coordinator.activeItem,
+                    currentPositionMs = coordinator.positionMs,
+                    onCastStarted = {
+                        if (coordinator.showVideoOverlay) {
+                            coordinator.closeVideo(coordinator.positionMs, coordinator.durationMs)
+                        } else if (coordinator.isPlaying) {
+                            coordinator.togglePlayPause()
+                        }
+                    },
+                    onDismiss = { showCastSheet = false },
+                )
+            }
+
             if (coordinator.showAudioSheet) {
                 AudioNowPlayingSheet(
                     coordinator = coordinator,
@@ -434,6 +461,8 @@ fun PlayerShell(
                     item = videoItem,
                     api = api,
                     pinnedHttpClient = pinnedClient,
+                    castConnected = castController.isConnected,
+                    onOpenCast = { showCastSheet = true },
                     onOpenChannel = { channelId ->
                         coordinator.closeVideo(coordinator.positionMs, coordinator.durationMs)
                         navigateTo(PlayerDestination.YouTubeChannel(channelId, videoItem.subtitle.ifBlank { "Channel" }))
@@ -491,8 +520,10 @@ private fun FloatingTopHeader(
     showBack: Boolean,
     showMenuButton: Boolean,
     transparentOverHero: Boolean,
+    castConnected: Boolean,
     onBack: () -> Unit,
     onOpenDrawer: () -> Unit,
+    onCastClick: () -> Unit,
     onSearch: () -> Unit,
     onProfileClick: () -> Unit,
 ) {
@@ -561,6 +592,29 @@ private fun FloatingTopHeader(
             Spacer(modifier = Modifier.weight(1f))
 
             IconButton(
+                onClick = onCastClick,
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .background(if (castConnected) SoulSyncColors.Accent.copy(alpha = 0.22f) else SoulSyncColors.PanelGlass)
+                    .border(
+                        1.dp,
+                        if (castConnected) SoulSyncColors.Accent else Color.White.copy(alpha = 0.12f),
+                        CircleShape,
+                    )
+                    .dpadFocusable(CircleShape),
+            ) {
+                Icon(
+                    imageVector = if (castConnected) Icons.Default.CastConnected else Icons.Default.Cast,
+                    contentDescription = "Cast",
+                    tint = if (castConnected) SoulSyncColors.AccentLight else Color.White,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+
+            Spacer(modifier = Modifier.width(6.dp))
+
+            IconButton(
                 onClick = onSearch,
                 modifier = Modifier
                     .size(36.dp)
@@ -620,19 +674,42 @@ private fun ProfileMenuSheet(
     record: PairedServerRecord,
     activeAvatarUrl: String?,
     api: PlayerApiClient,
-    onSwitchProfile: (DeviceProfileInfo) -> Unit,
+    onProfileSwitched: (DeviceProfileInfo) -> Unit,
     onOpenSettings: () -> Unit,
     onCustomizeHome: () -> Unit,
     onUnpair: () -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val scope = rememberCoroutineScope()
     var profiles by remember { mutableStateOf<List<DeviceProfileInfo>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
+    var pendingAuthProfile by remember { mutableStateOf<DeviceProfileInfo?>(null) }
+    var credentialInput by remember { mutableStateOf("") }
+    var switching by remember { mutableStateOf(false) }
+    var switchError by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(api) {
         loading = true
-        (api.fetchDeviceProfiles() as? MusicApiResult.Success)?.let { profiles = it.data }
+        (api.fetchSwitchProfiles() as? MusicApiResult.Success)?.let { profiles = it.data }
         loading = false
+    }
+
+    fun submitSwitch(target: DeviceProfileInfo, pin: String? = null, password: String? = null) {
+        if (switching) return
+        switching = true
+        switchError = null
+        scope.launch {
+            when (val r = api.switchDeviceProfile(target.id, pin = pin, password = password)) {
+                is MusicApiResult.Success -> {
+                    pendingAuthProfile = null
+                    credentialInput = ""
+                    onProfileSwitched(r.data)
+                }
+                is MusicApiResult.Error -> switchError = r.message
+                MusicApiResult.DeviceRevoked -> switchError = "Device session revoked."
+            }
+            switching = false
+        }
     }
 
     ModalBottomSheet(
@@ -696,8 +773,20 @@ private fun ProfileMenuSheet(
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(12.dp))
                             .background(Color.White.copy(alpha = 0.04f))
-                            .border(1.dp, SoulSyncColors.Line, RoundedCornerShape(12.dp))
-                            .clickable { onSwitchProfile(p) }
+                            .border(
+                                1.dp,
+                                if (pendingAuthProfile?.id == p.id) SoulSyncColors.Accent else SoulSyncColors.Line,
+                                RoundedCornerShape(12.dp),
+                            )
+                            .clickable(enabled = !switching) {
+                                switchError = null
+                                if (p.needs != null) {
+                                    pendingAuthProfile = p
+                                    credentialInput = ""
+                                } else {
+                                    submitSwitch(p)
+                                }
+                            }
                             .padding(horizontal = 14.dp, vertical = 11.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -705,7 +794,7 @@ private fun ProfileMenuSheet(
                         ProfileAvatarCircle(
                             avatarUrl = api.artwork.resolve(p.avatarUrl) ?: api.artwork.profileAvatar(p.id.toString()),
                             name = p.name,
-                            size = 32.dp,
+                            size = 34.dp,
                             fontSize = 14.sp,
                             containerColor = SoulSyncColors.Accent.copy(alpha = 0.25f),
                             initialColor = SoulSyncColors.AccentLight,
@@ -717,10 +806,61 @@ private fun ProfileMenuSheet(
                             fontWeight = FontWeight.SemiBold,
                             modifier = Modifier.weight(1f),
                         )
-                        if (p.id.toString() == record.profileId) {
-                            Icon(Icons.Default.Check, contentDescription = null, tint = SoulSyncColors.AccentLight)
+                        if (p.needs != null) {
+                            Icon(
+                                imageVector = Icons.Default.Lock,
+                                contentDescription = "Requires ${p.needs}",
+                                tint = SoulSyncColors.TextSecondary,
+                                modifier = Modifier.size(16.dp),
+                            )
                         }
                     }
+                }
+
+                val authTarget = pendingAuthProfile
+                if (authTarget != null) {
+                    val isPassword = authTarget.needs == "password"
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Color.White.copy(alpha = 0.05f))
+                            .border(1.dp, SoulSyncColors.Accent.copy(alpha = 0.5f), RoundedCornerShape(12.dp))
+                            .padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text(
+                            text = "Enter ${if (isPassword) "password" else "PIN"} for ${authTarget.name}",
+                            color = Color.White,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        OutlinedTextField(
+                            value = credentialInput,
+                            onValueChange = { credentialInput = it },
+                            placeholder = { Text(if (isPassword) "Password" else "PIN") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Button(
+                            onClick = {
+                                if (isPassword) submitSwitch(authTarget, password = credentialInput)
+                                else submitSwitch(authTarget, pin = credentialInput)
+                            },
+                            enabled = !switching && credentialInput.isNotBlank(),
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = SoulSyncColors.Accent,
+                                contentColor = SoulSyncColors.OnAccent,
+                            ),
+                        ) {
+                            Text(if (switching) "Switching…" else "Switch to ${authTarget.name}", fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                }
+
+                if (switchError != null) {
+                    Text(switchError!!, color = Color(0xFFFF6B6B), fontSize = 12.sp)
                 }
             } else if (!loading && profiles.size <= 1) {
                 Text(

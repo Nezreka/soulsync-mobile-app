@@ -21,6 +21,10 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.SoulSync">
 
+        <meta-data
+            android:name="com.google.android.gms.cast.framework.OPTIONS_PROVIDER_CLASS_NAME"
+            android:value="net.ssync.app.player.SoulSyncCastOptionsProvider" />
+
         <activity
             android:name=".MainActivity"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden"

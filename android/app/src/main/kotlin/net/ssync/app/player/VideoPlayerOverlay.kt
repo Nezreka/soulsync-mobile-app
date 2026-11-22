@@ -39,6 +39,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AspectRatio
 import androidx.compose.material.icons.filled.Brightness6
 import androidx.compose.material.icons.filled.Cast
+import androidx.compose.material.icons.filled.CastConnected
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Forward10
@@ -110,6 +111,8 @@ fun VideoPlayerOverlay(
     item: ActivePlayable,
     api: PlayerApiClient,
     pinnedHttpClient: OkHttpClient,
+    castConnected: Boolean = false,
+    onOpenCast: (() -> Unit)? = null,
     onOpenChannel: ((String) -> Unit)? = null,
     onClose: (positionMs: Long, durationMs: Long) -> Unit,
 ) {
@@ -377,18 +380,27 @@ fun VideoPlayerOverlay(
                     Spacer(modifier = Modifier.width(8.dp))
                     IconButton(
                         onClick = {
-                            runCatching {
-                                context.startActivity(Intent(Settings.ACTION_CAST_SETTINGS))
+                            if (onOpenCast != null) {
+                                onOpenCast()
+                            } else {
+                                runCatching {
+                                    context.startActivity(Intent(Settings.ACTION_CAST_SETTINGS))
+                                }
                             }
                             hudPoke++
                         },
                         modifier = Modifier
                             .size(40.dp)
                             .clip(CircleShape)
-                            .background(Color.White.copy(alpha = 0.12f))
+                            .background(if (castConnected) SoulSyncColors.Accent.copy(alpha = 0.25f) else Color.White.copy(alpha = 0.12f))
                             .dpadFocusable(CircleShape),
                     ) {
-                        Icon(Icons.Default.Cast, contentDescription = "Cast", tint = Color.White, modifier = Modifier.size(20.dp))
+                        Icon(
+                            imageVector = if (castConnected) Icons.Default.CastConnected else Icons.Default.Cast,
+                            contentDescription = "Cast",
+                            tint = if (castConnected) SoulSyncColors.AccentLight else Color.White,
+                            modifier = Modifier.size(20.dp),
+                        )
                     }
                 }
 
