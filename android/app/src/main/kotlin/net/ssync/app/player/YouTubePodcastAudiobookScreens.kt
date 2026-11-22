@@ -66,7 +66,8 @@ fun YouTubeScreen(
     onDeviceRevoked: () -> Unit,
 ) {
     var channels by remember { mutableStateOf<List<YtChannel>>(emptyList()) }
-    var videos by remember { mutableStateOf<List<YtVideo>>(emptyList()) }
+    var downloads by remember { mutableStateOf<List<YtVideo>>(emptyList()) }
+    var latest by remember { mutableStateOf<List<YtVideo>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
     var tab by remember { mutableStateOf(YtTab.FOR_YOU) }
 
@@ -75,13 +76,16 @@ fun YouTubeScreen(
         when (val r = api.fetchYoutubeOverview()) {
             is MusicApiResult.Success -> {
                 channels = r.data.channels
-                videos = r.data.videos
+                downloads = r.data.downloadedVideos
+                latest = r.data.latest
             }
             MusicApiResult.DeviceRevoked -> onDeviceRevoked()
             is MusicApiResult.Error -> Unit
         }
         isLoading = false
     }
+
+    val videos = remember(downloads, latest) { (downloads + latest).distinctBy { it.id } }
 
     if (isLoading) {
         LoadingBox()
@@ -92,6 +96,9 @@ fun YouTubeScreen(
         return
     }
 
+    fun thumbOf(v: YtVideo): String? =
+        api.artwork.resolve(v.thumbnail) ?: api.artwork.forItem("youtube", v.id)
+
     fun playYt(v: YtVideo) {
         coordinator.playVideo(
             ActivePlayable(
@@ -99,7 +106,7 @@ fun YouTubeScreen(
                 itemId = v.id,
                 title = v.title,
                 subtitle = v.channelTitle.orEmpty(),
-                artworkUrl = api.artwork.resolve(v.thumbnail) ?: api.artwork.forItem("youtube", v.id),
+                artworkUrl = thumbOf(v),
                 streamUrl = api.streamUrl("youtube", v.id),
                 isVideo = true,
                 parentId = v.channelId,
@@ -117,12 +124,12 @@ fun YouTubeScreen(
 
         when (tab) {
             YtTab.FOR_YOU -> {
-                val lead = videos.firstOrNull()
+                val lead = downloads.firstOrNull() ?: latest.firstOrNull()
                 val byChannel = remember(channels, videos) {
-                    channels.take(8).mapNotNull { ch ->
+                    channels.mapNotNull { ch ->
                         val chVids = videos.filter { it.channelId == ch.id || it.channelTitle == ch.title }
                         if (chVids.isNotEmpty()) ch to chVids else null
-                    }
+                    }.take(10)
                 }
                 LazyColumn(contentPadding = PaddingValues(bottom = 28.dp), modifier = Modifier.fillMaxSize()) {
                     if (lead != null) {
@@ -130,36 +137,67 @@ fun YouTubeScreen(
                             HeroSpotlight(
                                 title = lead.title,
                                 subtitle = lead.channelTitle.orEmpty(),
-                                backdropUrl = api.artwork.resolve(lead.thumbnail),
+                                backdropUrl = thumbOf(lead),
                                 eyebrow = "Latest Video",
                                 onPlay = { playYt(lead) },
                             )
                         }
                     }
-                    if (channels.isNotEmpty()) {
-                        item(key = "yt-ch") {
-                            MediaRail(title = "Followed Channels", actionLabel = "All", onAction = { tab = YtTab.CHANNELS }) {
-                                items(channels, key = { it.id }) { ch ->
-                                    SquareMediaCard(
-                                        title = ch.title,
-                                        subtitle = "${ch.downloadedCount} videos",
-                                        artworkUrl = api.artwork.resolve(ch.avatar),
-                                        width = 112.dp,
-                                        onClick = { onChannelClick(ch.id, ch.title) },
+                    if (downloads.isNotEmpty()) {
+                        item(key = "yt-downloads") {
+                            MediaRail(
+                                title = "Latest Downloads (${downloads.size})",
+                                actionLabel = "All",
+                                onAction = { tab = YtTab.DOWNLOADED },
+                            ) {
+                                items(downloads.take(24), key = { "dl-${it.id}" }) { v ->
+                                    WideMediaCard(
+                                        title = v.title,
+                                        subtitle = v.channelTitle,
+                                        artworkUrl = thumbOf(v),
+                                        onClick = { playYt(v) },
                                     )
                                 }
                             }
                         }
                     }
-                    if (videos.size > 1) {
+                    if (latest.isNotEmpty()) {
                         item(key = "yt-latest") {
-                            MediaRail(title = "Latest Downloads", actionLabel = "All", onAction = { tab = YtTab.DOWNLOADED }) {
-                                items(videos.take(18), key = { it.id }) { v ->
+                            MediaRail(title = "New From Followed Channels") {
+                                items(latest.take(24), key = { "lat-${it.id}" }) { v ->
                                     WideMediaCard(
                                         title = v.title,
                                         subtitle = v.channelTitle,
-                                        artworkUrl = api.artwork.resolve(v.thumbnail),
-                                        onClick = { playYt(v) },
+                                        artworkUrl = thumbOf(v),
+                                        onClick = {
+                                            val cid = v.channelId
+                                            if (v.downloaded) {
+                                                playYt(v)
+                                            } else if (!cid.isNullOrBlank()) {
+                                                onChannelClick(cid, v.channelTitle ?: "Channel")
+                                            } else {
+                                                playYt(v)
+                                            }
+                                        },
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    if (channels.isNotEmpty()) {
+                        item(key = "yt-ch") {
+                            MediaRail(
+                                title = "Followed Channels (${channels.size})",
+                                actionLabel = "All",
+                                onAction = { tab = YtTab.CHANNELS },
+                            ) {
+                                items(channels, key = { it.id }) { ch ->
+                                    SquareMediaCard(
+                                        title = ch.title,
+                                        subtitle = "${ch.downloadedCount} downloaded",
+                                        artworkUrl = api.artwork.resolve(ch.avatar),
+                                        width = 112.dp,
+                                        onClick = { onChannelClick(ch.id, ch.title) },
                                     )
                                 }
                             }
@@ -172,11 +210,11 @@ fun YouTubeScreen(
                                 actionLabel = "Channel",
                                 onAction = { onChannelClick(ch.id, ch.title) },
                             ) {
-                                items(chVids.take(12), key = { it.id }) { v ->
+                                items(chVids.take(12), key = { "${ch.id}-${it.id}" }) { v ->
                                     WideMediaCard(
                                         title = v.title,
                                         subtitle = ch.title,
-                                        artworkUrl = api.artwork.resolve(v.thumbnail),
+                                        artworkUrl = thumbOf(v),
                                         onClick = { playYt(v) },
                                     )
                                 }
@@ -187,11 +225,12 @@ fun YouTubeScreen(
             }
 
             YtTab.DOWNLOADED -> {
-                if (videos.isEmpty()) {
+                val dlList = downloads.ifEmpty { videos }
+                if (dlList.isEmpty()) {
                     EmptyBox("No downloaded YouTube videos yet.")
                 } else {
                     LazyColumn(contentPadding = PaddingValues(bottom = 24.dp), modifier = Modifier.fillMaxSize()) {
-                        items(videos, key = { it.id }) { v ->
+                        items(dlList, key = { it.id }) { v ->
                             Card(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -203,7 +242,7 @@ fun YouTubeScreen(
                             ) {
                                 Row(modifier = Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
                                     SoulSyncArtwork(
-                                        url = api.artwork.resolve(v.thumbnail),
+                                        url = thumbOf(v),
                                         contentDescription = v.title,
                                         modifier = Modifier.size(width = 118.dp, height = 68.dp).clip(RoundedCornerShape(8.dp)),
                                     )
@@ -254,7 +293,7 @@ fun YouTubeScreen(
                                     WideMediaCard(
                                         title = v.title,
                                         subtitle = v.channelTitle,
-                                        artworkUrl = api.artwork.resolve(v.thumbnail),
+                                        artworkUrl = thumbOf(v),
                                         onClick = { playYt(v) },
                                     )
                                 }
@@ -268,7 +307,7 @@ fun YouTubeScreen(
                                     WideMediaCard(
                                         title = v.title,
                                         subtitle = v.channelTitle,
-                                        artworkUrl = api.artwork.resolve(v.thumbnail),
+                                        artworkUrl = thumbOf(v),
                                         onClick = { playYt(v) },
                                     )
                                 }
@@ -282,7 +321,7 @@ fun YouTubeScreen(
                                     WideMediaCard(
                                         title = v.title,
                                         subtitle = v.channelTitle,
-                                        artworkUrl = api.artwork.resolve(v.thumbnail),
+                                        artworkUrl = thumbOf(v),
                                         onClick = { playYt(v) },
                                     )
                                 }
@@ -296,7 +335,7 @@ fun YouTubeScreen(
                                     WideMediaCard(
                                         title = v.title,
                                         subtitle = v.channelTitle,
-                                        artworkUrl = api.artwork.resolve(v.thumbnail),
+                                        artworkUrl = thumbOf(v),
                                         onClick = { playYt(v) },
                                     )
                                 }

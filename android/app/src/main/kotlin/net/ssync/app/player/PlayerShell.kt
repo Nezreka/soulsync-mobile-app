@@ -214,9 +214,11 @@ fun PlayerShell(
 
     LaunchedEffect(api, currentRecord.profileId, profileEpoch) {
         val fallback = api.artwork.profileAvatar(currentRecord.profileId)
-        val fetched = (api.fetchDeviceProfiles() as? MusicApiResult.Success)?.data
-            ?.firstOrNull { it.id.toString() == currentRecord.profileId }
-            ?.avatarUrl
+        val activeProf = (api.fetchActiveDeviceProfile() as? MusicApiResult.Success)?.data
+        val fetched = activeProf?.avatarUrl
+            ?: (api.fetchDeviceProfiles() as? MusicApiResult.Success)?.data
+                ?.firstOrNull { it.id.toString() == currentRecord.profileId }
+                ?.avatarUrl
         activeAvatarUrl = api.artwork.resolve(fetched) ?: fallback
     }
 
@@ -262,7 +264,8 @@ fun PlayerShell(
 
     val hasFullBleedHero = (current is PlayerDestination.Home && homeHasHero) ||
         current is PlayerDestination.MovieDetail ||
-        current is PlayerDestination.ShowDetail
+        current is PlayerDestination.ShowDetail ||
+        current is PlayerDestination.EpisodeDetail
 
     CompositionLocalProvider(LocalSoulSyncImageLoader provides imageLoader) {
         BoxWithConstraints(
@@ -381,6 +384,7 @@ fun PlayerShell(
             if (showProfileSheet) {
                 ProfileMenuSheet(
                     record = currentRecord,
+                    activeAvatarUrl = activeAvatarUrl,
                     api = api,
                     onSwitchProfile = { chosen ->
                         scope.launch {
@@ -612,6 +616,7 @@ private fun FloatingTopHeader(
 @Composable
 private fun ProfileMenuSheet(
     record: PairedServerRecord,
+    activeAvatarUrl: String?,
     api: PlayerApiClient,
     onSwitchProfile: (DeviceProfileInfo) -> Unit,
     onOpenSettings: () -> Unit,
@@ -645,10 +650,11 @@ private fun ProfileMenuSheet(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                val currentProfileAvatar = profiles
-                    .firstOrNull { it.id.toString() == record.profileId }
-                    ?.avatarUrl
-                    ?.let { api.artwork.resolve(it) }
+                val currentProfileAvatar = activeAvatarUrl
+                    ?: profiles
+                        .firstOrNull { it.id.toString() == record.profileId }
+                        ?.avatarUrl
+                        ?.let { api.artwork.resolve(it) }
                     ?: api.artwork.profileAvatar(record.profileId)
                 ProfileAvatarCircle(
                     avatarUrl = currentProfileAvatar,
@@ -812,7 +818,7 @@ private fun PlayerSidebar(
 
         if (!collapsed) SidebarGroupLabel("WATCH") else Spacer(Modifier.height(10.dp))
         SidebarItem(Icons.Default.Movie, "Movies", current is PlayerDestination.Movies || current is PlayerDestination.MovieDetail, collapsed) { onNavigate(PlayerDestination.Movies) }
-        SidebarItem(Icons.Default.Tv, "TV Shows", current is PlayerDestination.Tv || current is PlayerDestination.ShowDetail, collapsed) { onNavigate(PlayerDestination.Tv) }
+        SidebarItem(Icons.Default.Tv, "TV Shows", current is PlayerDestination.Tv || current is PlayerDestination.ShowDetail || current is PlayerDestination.EpisodeDetail, collapsed) { onNavigate(PlayerDestination.Tv) }
         SidebarItem(Icons.Default.SmartDisplay, "YouTube", current is PlayerDestination.YouTube || current is PlayerDestination.YouTubeChannel, collapsed) { onNavigate(PlayerDestination.YouTube) }
 
         if (!collapsed) SidebarGroupLabel("LISTEN") else Spacer(Modifier.height(10.dp))
@@ -913,7 +919,8 @@ private fun PlayerContent(
         PlayerDestination.Movies -> MoviesScreen(api, { onNavigate(PlayerDestination.MovieDetail(it)) }, onDeviceRevoked)
         is PlayerDestination.MovieDetail -> MovieDetailScreen(current.movieId, api, coordinator, onNavigate, onDeviceRevoked)
         PlayerDestination.Tv -> TvScreen(api, { onNavigate(PlayerDestination.ShowDetail(it)) }, onDeviceRevoked)
-        is PlayerDestination.ShowDetail -> ShowDetailScreen(current.showId, api, coordinator, onDeviceRevoked)
+        is PlayerDestination.ShowDetail -> ShowDetailScreen(current.showId, api, coordinator, onNavigate, onDeviceRevoked)
+        is PlayerDestination.EpisodeDetail -> EpisodeDetailScreen(current.showId, current.episodeId, api, coordinator, onNavigate, onDeviceRevoked)
         is PlayerDestination.PersonDetail -> PersonDetailScreen(current.tmdbId, current.name, api, onNavigate, onDeviceRevoked)
         PlayerDestination.Music -> MusicScreen(api, coordinator, onNavigate, onDeviceRevoked)
         is PlayerDestination.ArtistDetail -> ArtistDetailScreen(current.artistId, api, { onNavigate(PlayerDestination.AlbumDetail(it)) }, onDeviceRevoked)

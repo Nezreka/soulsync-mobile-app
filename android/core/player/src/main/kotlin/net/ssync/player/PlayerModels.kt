@@ -415,7 +415,7 @@ data class YtVideo(
     val channelId: String? = null,
     @SerialName("channel_title")
     val channelTitle: String? = null,
-    val thumbnail: String = "",
+    val thumbnail: String? = null,
     @SerialName("duration_seconds")
     val durationSeconds: Int? = null,
     @SerialName("published_at")
@@ -426,8 +426,17 @@ data class YtVideo(
 @Serializable
 data class YtOverviewResponse(
     val channels: List<YtChannel> = emptyList(),
-    val videos: List<YtVideo> = emptyList(),
-)
+    val downloads: List<YtVideo> = emptyList(),
+    val latest: List<YtVideo> = emptyList(),
+    @SerialName("videos")
+    val legacyVideos: List<YtVideo> = emptyList(),
+) {
+    val allVideos: List<YtVideo>
+        get() = (downloads + latest + legacyVideos).distinctBy { it.id }
+
+    val downloadedVideos: List<YtVideo>
+        get() = downloads.ifEmpty { legacyVideos.filter { it.downloaded }.ifEmpty { legacyVideos } }
+}
 
 @Serializable
 data class YtChannelDetailResponse(

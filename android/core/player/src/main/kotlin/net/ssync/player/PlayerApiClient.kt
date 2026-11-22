@@ -405,6 +405,20 @@ class PlayerApiClient(
         }
     }
 
+    suspend fun fetchActiveDeviceProfile(): MusicApiResult<DeviceProfileInfo?> =
+        getJson("$base/api/devices/me") { body ->
+            val root = json.parseToJsonElement(body).jsonObject
+            val prof = root["profile"] as? JsonObject ?: return@getJson null
+            val id = (prof["id"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toIntOrNull()
+                ?: return@getJson null
+            val name = (prof["name"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: ""
+            val avatarColor = (prof["avatar_color"] as? kotlinx.serialization.json.JsonPrimitive)
+                ?.takeIf { it !is kotlinx.serialization.json.JsonNull }?.content
+            val avatarUrl = (prof["avatar_url"] as? kotlinx.serialization.json.JsonPrimitive)
+                ?.takeIf { it !is kotlinx.serialization.json.JsonNull }?.content
+            DeviceProfileInfo(id = id, name = name, avatarColor = avatarColor, avatarUrl = avatarUrl)
+        }
+
     suspend fun fetchDeviceAddresses(): MusicApiResult<List<String>> =
         getJson("$base/api/devices/me") { body ->
             val root = json.parseToJsonElement(body).jsonObject

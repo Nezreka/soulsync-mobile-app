@@ -1080,6 +1080,7 @@ fun ShowDetailScreen(
     showId: Int,
     api: PlayerApiClient,
     coordinator: PlaybackCoordinator,
+    onNavigate: (PlayerDestination) -> Unit,
     onDeviceRevoked: () -> Unit,
 ) {
     var detail by remember { mutableStateOf<ShowDetail?>(null) }
@@ -1108,8 +1109,6 @@ fun ShowDetailScreen(
 
     val seasons = show.seasons
     val activeSeason = seasons.getOrNull(selectedSeasonIndex)
-
-    var pendingRequest by remember { mutableStateOf<UnownedTitleTarget?>(null) }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -1182,18 +1181,8 @@ fun ShowDetailScreen(
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp, vertical = 5.dp)
                         .dpadFocusable(RoundedCornerShape(12.dp))
-                        .clickable(enabled = ep.owned) {
-                            coordinator.playVideo(
-                                ActivePlayable(
-                                    itemType = "episode",
-                                    itemId = ep.id.toString(),
-                                    title = ep.title ?: "Episode ${ep.episodeNumber}",
-                                    subtitle = "${show.title} • S${activeSeason.seasonNumber}E${ep.episodeNumber}",
-                                    artworkUrl = api.artwork.episodeStill(ep.id),
-                                    streamUrl = api.streamUrl("episode", ep.id.toString()),
-                                    isVideo = true,
-                                ),
-                            )
+                        .clickable {
+                            onNavigate(PlayerDestination.EpisodeDetail(show.id, ep.id))
                         },
                     colors = CardDefaults.cardColors(containerColor = SoulSyncColors.Card),
                     border = BorderStroke(1.dp, SoulSyncColors.Line),
@@ -1208,7 +1197,8 @@ fun ShowDetailScreen(
                             modifier = Modifier
                                 .width(120.dp)
                                 .aspectRatio(16f / 9f)
-                                .clip(RoundedCornerShape(8.dp)),
+                                .clip(RoundedCornerShape(8.dp))
+                                .alpha(if (ep.owned) 1f else 0.55f),
                         )
                         Spacer(modifier = Modifier.width(12.dp))
                         Column(modifier = Modifier.weight(1f)) {
@@ -1226,15 +1216,283 @@ fun ShowDetailScreen(
                                     overflow = TextOverflow.Ellipsis,
                                     fontSize = 12.sp,
                                 )
+                            } else if (!ep.owned) {
+                                Text(
+                                    text = "Not in your library",
+                                    color = SoulSyncColors.TextSecondary,
+                                    fontSize = 12.sp,
+                                )
                             }
                         }
                         if (ep.owned) {
-                            Icon(
-                                Icons.Default.PlayArrow,
-                                contentDescription = "Play",
-                                tint = SoulSyncColors.AccentLight,
-                                modifier = Modifier.size(24.dp),
+                            IconButton(
+                                onClick = {
+                                    coordinator.playVideo(
+                                        ActivePlayable(
+                                            itemType = "episode",
+                                            itemId = ep.id.toString(),
+                                            title = ep.title ?: "Episode ${ep.episodeNumber}",
+                                            subtitle = "${show.title} • S${activeSeason.seasonNumber}E${ep.episodeNumber}",
+                                            artworkUrl = api.artwork.episodeStill(ep.id),
+                                            streamUrl = api.streamUrl("episode", ep.id.toString()),
+                                            isVideo = true,
+                                        ),
+                                    )
+                                },
+                            ) {
+                                Icon(
+                                    Icons.Default.PlayArrow,
+                                    contentDescription = "Play episode",
+                                    tint = SoulSyncColors.AccentLight,
+                                    modifier = Modifier.size(24.dp),
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun EpisodeDetailScreen(
+    showId: Int,
+    episodeId: Int,
+    api: PlayerApiClient,
+    coordinator: PlaybackCoordinator,
+    onNavigate: (PlayerDestination) -> Unit,
+    onDeviceRevoked: () -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    var detail by remember { mutableStateOf<ShowDetail?>(null) }
+    var notes by remember { mutableStateOf<List<PlayerNote>>(emptyList()) }
+    var noteDraft by remember { mutableStateOf("") }
+    var isLoading by remember { mutableStateOf(true) }
+
+    LaunchedEffect(showId, episodeId, api) {
+        isLoading = true
+        when (val res = api.fetchShowDetail(showId)) {
+            is MusicApiResult.Success -> detail = res.data
+            MusicApiResult.DeviceRevoked -> onDeviceRevoked()
+            is MusicApiResult.Error -> Unit
+        }
+        (api.fetchNotes("episode", episodeId.toString()) as? MusicApiResult.Success)?.let { notes = it.data }
+        isLoading = false
+    }
+
+    val show = detail
+    if (isLoading) {
+        LoadingBox()
+        return
+    }
+    if (show == null) {
+        EmptyBox("Couldn't load episode details.")
+        return
+    }
+
+    val sortedSeasons = remember(show) {
+        show.seasons.sortedBy { if (it.seasonNumber == 0) 999 else it.seasonNumber }
+    }
+    val flat = remember(sortedSeasons) {
+        sortedSeasons.flatMap { se ->
+            se.episodes.sortedBy { it.episodeNumber }.map { se to it }
+        }
+    }
+    val currentIndex = flat.indexOfFirst { it.second.id == episodeId }
+    if (currentIndex < 0) {
+        EmptyBox("Episode not found.")
+        return
+    }
+    val (season, ep) = flat[currentIndex]
+    val prev = flat.getOrNull(currentIndex - 1)
+    val next = flat.getOrNull(currentIndex + 1)
+    val code = "S${season.seasonNumber.toString().padStart(2, '0')} · E${ep.episodeNumber.toString().padStart(2, '0')}"
+    val seasonLabel = season.title ?: if (season.seasonNumber == 0) "Specials" else "Season ${season.seasonNumber}"
+
+    fun playEpisode(targetSeasonNum: Int, target: net.ssync.player.DetailEpisode) {
+        if (!target.owned) return
+        coordinator.playVideo(
+            ActivePlayable(
+                itemType = "episode",
+                itemId = target.id.toString(),
+                title = target.title ?: "Episode ${target.episodeNumber}",
+                subtitle = "${show.title} • S${targetSeasonNum}E${target.episodeNumber}",
+                artworkUrl = api.artwork.episodeStill(target.id),
+                streamUrl = api.streamUrl("episode", target.id.toString()),
+                isVideo = true,
+            ),
+        )
+    }
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(bottom = 28.dp),
+    ) {
+        item {
+            HeroSpotlight(
+                title = ep.title ?: "Episode ${ep.episodeNumber}",
+                subtitle = listOfNotNull(
+                    show.title,
+                    code,
+                    ep.airDate,
+                    ep.runtimeMinutes?.let { "${it}m" },
+                    if (!ep.owned) "Not in library" else null,
+                ).joinToString("  •  "),
+                backdropUrl = api.artwork.episodeStill(ep.id),
+                eyebrow = "$seasonLabel • $code",
+                onPlay = { playEpisode(season.seasonNumber, ep) },
+            )
+        }
+
+        // Quick episode navigation strip: Prev / Next / Show Page
+        item {
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                item {
+                    FilterChip(
+                        selected = false,
+                        onClick = { onNavigate(PlayerDestination.ShowDetail(show.id)) },
+                        label = { Text(show.title) },
+                        colors = FilterChipDefaults.filterChipColors(
+                            containerColor = SoulSyncColors.Card,
+                            labelColor = SoulSyncColors.AccentLight,
+                        ),
+                        modifier = Modifier.dpadFocusable(),
+                    )
+                }
+                if (prev != null) {
+                    item {
+                        FilterChip(
+                            selected = false,
+                            onClick = { onNavigate(PlayerDestination.EpisodeDetail(show.id, prev.second.id)) },
+                            label = { Text("← S${prev.first.seasonNumber}E${prev.second.episodeNumber}") },
+                            colors = FilterChipDefaults.filterChipColors(
+                                containerColor = SoulSyncColors.Card,
+                                labelColor = Color.White,
+                            ),
+                            modifier = Modifier.dpadFocusable(),
+                        )
+                    }
+                }
+                if (next != null) {
+                    item {
+                        FilterChip(
+                            selected = false,
+                            onClick = { onNavigate(PlayerDestination.EpisodeDetail(show.id, next.second.id)) },
+                            label = { Text("S${next.first.seasonNumber}E${next.second.episodeNumber} →") },
+                            colors = FilterChipDefaults.filterChipColors(
+                                containerColor = SoulSyncColors.Card,
+                                labelColor = Color.White,
+                            ),
+                            modifier = Modifier.dpadFocusable(),
+                        )
+                    }
+                }
+            }
+        }
+
+        if (!ep.overview.isNullOrBlank()) {
+            item {
+                Text(
+                    text = ep.overview.orEmpty(),
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                )
+            }
+        }
+
+        item {
+            NotesSection(
+                notes = notes,
+                draft = noteDraft,
+                onDraftChange = { noteDraft = it },
+                onAdd = {
+                    val body = noteDraft.trim()
+                    if (body.isNotEmpty()) {
+                        noteDraft = ""
+                        scope.launch {
+                            api.addNote("episode", ep.id.toString(), body)
+                            (api.fetchNotes("episode", ep.id.toString()) as? MusicApiResult.Success)?.let { notes = it.data }
+                        }
+                    }
+                },
+                onDelete = { noteId ->
+                    scope.launch {
+                        api.deleteNote(noteId)
+                        notes = notes.filterNot { it.id == noteId }
+                    }
+                },
+            )
+        }
+
+        val siblings = season.episodes.sortedBy { it.episodeNumber }
+        if (siblings.size > 1) {
+            item {
+                SectionHeader("More in $seasonLabel")
+            }
+            items(siblings, key = { "sib-${it.id}" }) { other ->
+                val isCurrent = other.id == ep.id
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp)
+                        .dpadFocusable(RoundedCornerShape(12.dp))
+                        .clickable {
+                            if (!isCurrent) {
+                                onNavigate(PlayerDestination.EpisodeDetail(show.id, other.id))
+                            }
+                        },
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (isCurrent) SoulSyncColors.Accent.copy(alpha = 0.14f) else SoulSyncColors.Card,
+                    ),
+                    border = BorderStroke(
+                        1.dp,
+                        if (isCurrent) SoulSyncColors.Accent.copy(alpha = 0.6f) else SoulSyncColors.Line,
+                    ),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        SoulSyncArtwork(
+                            url = api.artwork.episodeStill(other.id),
+                            contentDescription = other.title,
+                            modifier = Modifier
+                                .width(104.dp)
+                                .aspectRatio(16f / 9f)
+                                .clip(RoundedCornerShape(8.dp))
+                                .alpha(if (other.owned) 1f else 0.55f),
+                        )
+                        Spacer(Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "E${other.episodeNumber} • ${other.title ?: "Episode ${other.episodeNumber}"}",
+                                color = if (isCurrent) SoulSyncColors.AccentLight else Color.White,
+                                fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.SemiBold,
+                                fontSize = 14.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
                             )
+                            val sub = listOfNotNull(
+                                if (isCurrent) "Viewing" else null,
+                                other.airDate,
+                                if (!other.owned) "Not in library" else null,
+                            ).joinToString(" • ")
+                            if (sub.isNotBlank()) {
+                                Text(sub, color = SoulSyncColors.TextSecondary, fontSize = 12.sp, maxLines = 1)
+                            }
+                        }
+                        if (other.owned) {
+                            IconButton(onClick = { playEpisode(season.seasonNumber, other) }) {
+                                Icon(
+                                    Icons.Default.PlayArrow,
+                                    contentDescription = "Play",
+                                    tint = SoulSyncColors.AccentLight,
+                                )
+                            }
                         }
                     }
                 }
