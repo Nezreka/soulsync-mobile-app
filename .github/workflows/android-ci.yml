@@ -27,7 +27,9 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
 
       - name: Run conformance & crypto unit tests (:core:connect)
-        run: ./gradlew :core:connect:test
+        run: |
+          chmod +x gradlew
+          ./gradlew :core:connect:test
 
       - name: Run all Android unit tests & assemble debug APK
         run: ./gradlew testDebugUnitTest assembleDebug
