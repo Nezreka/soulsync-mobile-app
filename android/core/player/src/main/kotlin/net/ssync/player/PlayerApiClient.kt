@@ -405,6 +405,18 @@ class PlayerApiClient(
         }
     }
 
+    suspend fun fetchDeviceAddresses(): MusicApiResult<List<String>> =
+        getJson("$base/api/devices/me") { body ->
+            val root = json.parseToJsonElement(body).jsonObject
+            val arr = (root["addresses"] as? kotlinx.serialization.json.JsonArray) ?: return@getJson emptyList()
+            arr.mapNotNull { el ->
+                (el as? kotlinx.serialization.json.JsonPrimitive)
+                    ?.takeIf { it !is kotlinx.serialization.json.JsonNull }
+                    ?.content
+                    ?.takeIf { it.startsWith("https://") }
+            }
+        }
+
     suspend fun fetchDeviceProfiles(): MusicApiResult<List<DeviceProfileInfo>> =
         getJson("$base/api/devices/me/profiles") { body ->
             val root = json.parseToJsonElement(body).jsonObject

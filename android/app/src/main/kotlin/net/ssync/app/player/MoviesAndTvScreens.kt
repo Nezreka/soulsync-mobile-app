@@ -1,8 +1,11 @@
 package net.ssync.app.player
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -20,12 +23,15 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PlayArrow
@@ -42,6 +48,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -53,10 +60,13 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
@@ -197,14 +207,13 @@ fun MovieDetailScreen(
             item {
                 MediaRail(title = "More Like This") {
                     items(similar, key = { "${it.kind}-${it.tmdbId}" }) { rec ->
-                        PosterCard(
+                        val isOwned = rec.libraryId != null
+                        CreditPosterCard(
                             title = rec.title,
-                            subtitle = if (rec.libraryId != null) {
-                                rec.yearText ?: "In Library"
-                            } else {
-                                listOfNotNull(rec.yearText, "Request").joinToString(" • ")
-                            },
+                            subtitle = rec.yearText ?: if (rec.kind == "show" || rec.kind == "tv") "TV Show" else "Movie",
                             artworkUrl = api.artwork.resolve(rec.poster),
+                            isOwned = isOwned,
+                            width = 126.dp,
                             onClick = {
                                 val libId = rec.libraryId
                                 if (libId != null) {
@@ -305,6 +314,240 @@ private fun NotesSection(
 }
 
 @Composable
+private fun CreditPosterCard(
+    title: String,
+    subtitle: String?,
+    artworkUrl: String?,
+    isOwned: Boolean,
+    width: Dp? = null,
+    onClick: () -> Unit,
+) {
+    val containerMod = (if (width != null) Modifier.width(width) else Modifier.fillMaxWidth())
+        .clip(RoundedCornerShape(12.dp))
+        .clickable(onClick = onClick)
+        .dpadFocusable(RoundedCornerShape(12.dp))
+    val borderColor = if (isOwned) SoulSyncColors.Accent.copy(alpha = 0.65f) else SoulSyncColors.Line
+
+    Column(modifier = containerMod) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(2f / 3f)
+                .clip(RoundedCornerShape(12.dp))
+                .background(SoulSyncColors.Card)
+                .border(if (isOwned) 1.5.dp else 1.dp, borderColor, RoundedCornerShape(12.dp)),
+        ) {
+            SoulSyncArtwork(
+                url = artworkUrl,
+                contentDescription = title,
+                fallbackIcon = Icons.Default.Movie,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .alpha(if (isOwned) 1f else 0.58f),
+            )
+            // Subtle bottom vignette for crisp badge legibility
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(44.dp)
+                    .align(Alignment.BottomCenter)
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(Color.Transparent, Color.Black.copy(alpha = 0.72f)),
+                        ),
+                    ),
+            )
+            // Top-left status pill: vibrant emerald checkmark for owned, frosted glass Request pill for unowned
+            if (isOwned) {
+                Row(
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(6.dp)
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(SoulSyncColors.Accent)
+                        .padding(horizontal = 7.dp, vertical = 3.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(3.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Check,
+                        contentDescription = "In Library",
+                        tint = Color.Black,
+                        modifier = Modifier.size(11.dp),
+                    )
+                    Text(
+                        text = "IN LIBRARY",
+                        color = Color.Black,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        letterSpacing = 0.4.sp,
+                    )
+                }
+            } else {
+                Row(
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(6.dp)
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(Color.Black.copy(alpha = 0.72f))
+                        .border(1.dp, Color.White.copy(alpha = 0.18f), RoundedCornerShape(999.dp))
+                        .padding(horizontal = 7.dp, vertical = 3.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(3.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Download,
+                        contentDescription = "Request",
+                        tint = Color.White.copy(alpha = 0.9f),
+                        modifier = Modifier.size(11.dp),
+                    )
+                    Text(
+                        text = "REQUEST",
+                        color = Color.White.copy(alpha = 0.9f),
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 0.4.sp,
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        Text(
+            text = title,
+            color = if (isOwned) Color.White else SoulSyncColors.TextSoft,
+            fontSize = 12.sp,
+            fontWeight = if (isOwned) FontWeight.SemiBold else FontWeight.Medium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        if (!subtitle.isNullOrBlank()) {
+            Text(
+                text = subtitle,
+                color = SoulSyncColors.TextSecondary,
+                fontSize = 11.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+@Composable
+private fun FilmographyListCard(
+    title: String,
+    year: String?,
+    role: String?,
+    kindLabel: String,
+    artworkUrl: String?,
+    isOwned: Boolean,
+    onClick: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .clickable(onClick = onClick)
+            .dpadFocusable(RoundedCornerShape(14.dp)),
+        shape = RoundedCornerShape(14.dp),
+        color = if (isOwned) SoulSyncColors.Card else SoulSyncColors.Card.copy(alpha = 0.62f),
+        border = BorderStroke(
+            width = if (isOwned) 1.2.dp else 1.dp,
+            color = if (isOwned) SoulSyncColors.Accent.copy(alpha = 0.55f) else SoulSyncColors.Line,
+        ),
+    ) {
+        Row(
+            modifier = Modifier.padding(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Box(
+                modifier = Modifier
+                    .width(50.dp)
+                    .aspectRatio(2f / 3f)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(SoulSyncColors.Surface),
+            ) {
+                SoulSyncArtwork(
+                    url = artworkUrl,
+                    contentDescription = title,
+                    fallbackIcon = Icons.Default.Movie,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .alpha(if (isOwned) 1f else 0.58f),
+                )
+            }
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(
+                    text = title,
+                    color = if (isOwned) Color.White else SoulSyncColors.TextSoft,
+                    fontSize = 15.sp,
+                    fontWeight = if (isOwned) FontWeight.SemiBold else FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                val meta = listOfNotNull(year, kindLabel, role?.takeIf { it.isNotBlank() }).joinToString(" • ")
+                if (meta.isNotBlank()) {
+                    Text(
+                        text = meta,
+                        color = SoulSyncColors.TextSecondary,
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            if (isOwned) {
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(SoulSyncColors.Accent.copy(alpha = 0.18f))
+                        .border(1.dp, SoulSyncColors.Accent.copy(alpha = 0.6f), RoundedCornerShape(999.dp))
+                        .padding(horizontal = 9.dp, vertical = 5.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Check,
+                        contentDescription = null,
+                        tint = SoulSyncColors.AccentLight,
+                        modifier = Modifier.size(13.dp),
+                    )
+                    Text(
+                        text = "Owned",
+                        color = SoulSyncColors.AccentLight,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+            } else {
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(Color.White.copy(alpha = 0.06f))
+                        .border(1.dp, Color.White.copy(alpha = 0.16f), RoundedCornerShape(999.dp))
+                        .padding(horizontal = 9.dp, vertical = 5.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Download,
+                        contentDescription = null,
+                        tint = SoulSyncColors.TextSoft,
+                        modifier = Modifier.size(13.dp),
+                    )
+                    Text(
+                        text = "Request",
+                        color = SoulSyncColors.TextSoft,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
 fun PersonDetailScreen(
     tmdbId: Int,
     fallbackName: String,
@@ -315,6 +558,8 @@ fun PersonDetailScreen(
     var person by remember { mutableStateOf<PersonDetail?>(null) }
     var isLoading by remember { mutableStateOf(true) }
     var filter by remember { mutableStateOf("all") } // "all" | "owned" | "acting" | "crew"
+    var gridView by remember { mutableStateOf(true) }
+    var bioExpanded by remember { mutableStateOf(false) }
     var pendingRequest by remember { mutableStateOf<UnownedTitleTarget?>(null) }
 
     LaunchedEffect(tmdbId, api) {
@@ -332,10 +577,13 @@ fun PersonDetailScreen(
         return
     }
     val p = person
-    val allCredits = remember(p) {
+    val rawCredits = remember(p) {
         p?.credits.orEmpty()
             .distinctBy { "${it.kind}:${it.tmdbId}:${it.role.orEmpty()}" }
-            .sortedByDescending { it.yearText?.toIntOrNull() ?: 0 }
+    }
+    val knownForCredits = remember(rawCredits) { rawCredits.take(12) }
+    val allCredits = remember(rawCredits) {
+        rawCredits.sortedByDescending { it.yearText?.toIntOrNull() ?: 0 }
     }
     val ownedCredits = remember(allCredits) { allCredits.filter { it.libraryId != null } }
     val actingCredits = remember(allCredits) {
@@ -350,40 +598,223 @@ fun PersonDetailScreen(
         "crew" -> crewCredits
         else -> allCredits
     }
+    val years = remember(allCredits) {
+        allCredits.mapNotNull { it.yearText?.toIntOrNull() }.filter { it > 1800 }
+    }
+    val activeSpan = if (years.isNotEmpty()) "${years.min()}–${years.max()}" else null
+
+    fun onCreditTap(c: net.ssync.player.PersonCredit) {
+        val libId = c.libraryId
+        if (libId != null) {
+            if (c.kind == "movie") onNavigate(PlayerDestination.MovieDetail(libId))
+            else onNavigate(PlayerDestination.ShowDetail(libId))
+        } else if (c.tmdbId > 0) {
+            pendingRequest = UnownedTitleTarget(
+                kind = if (c.kind == "show" || c.kind == "tv") "show" else "movie",
+                tmdbId = c.tmdbId,
+                title = c.title,
+                year = c.yearText,
+                subtitle = c.role?.takeIf { it.isNotBlank() }
+                    ?: if (c.kind == "show" || c.kind == "tv") "TV Show" else "Movie",
+                posterUrl = api.artwork.resolve(c.poster),
+            )
+        }
+    }
 
     LazyColumn(
-        contentPadding = PaddingValues(start = 18.dp, end = 18.dp, top = 74.dp, bottom = 28.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        contentPadding = PaddingValues(top = 74.dp, bottom = 32.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
+        // Cinema Person Hero Header
         item {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                SoulSyncArtwork(
-                    url = api.artwork.resolve(p?.photo),
-                    contentDescription = p?.name ?: fallbackName,
-                    fallbackIcon = Icons.Default.Person,
-                    modifier = Modifier.size(92.dp).clip(RoundedCornerShape(14.dp)),
-                )
-                Spacer(Modifier.width(14.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(p?.name ?: fallbackName, style = MaterialTheme.typography.headlineMedium)
-                    val meta = listOfNotNull(
-                        p?.placeOfBirth,
-                        "${allCredits.size} credits",
-                        if (ownedCredits.isNotEmpty()) "${ownedCredits.size} in library" else null,
-                    ).joinToString(" • ")
-                    if (meta.isNotBlank()) {
-                        Text(meta, style = MaterialTheme.typography.bodyMedium, color = SoulSyncColors.TextSoft)
+            Column(
+                modifier = Modifier.padding(horizontal = 18.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    SoulSyncArtwork(
+                        url = api.artwork.resolve(p?.photo),
+                        contentDescription = p?.name ?: fallbackName,
+                        fallbackIcon = Icons.Default.Person,
+                        modifier = Modifier
+                            .size(96.dp)
+                            .clip(CircleShape)
+                            .border(2.dp, SoulSyncColors.LineStrong, CircleShape),
+                    )
+                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                        Text(
+                            text = p?.name ?: fallbackName,
+                            color = Color.White,
+                            fontSize = 24.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            letterSpacing = (-0.4).sp,
+                        )
+                        val meta = listOfNotNull(activeSpan, "${allCredits.size} credits", p?.placeOfBirth)
+                            .joinToString(" • ")
+                        if (meta.isNotBlank()) {
+                            Text(meta, color = SoulSyncColors.TextSoft, fontSize = 13.sp, maxLines = 2)
+                        }
+                        if (ownedCredits.isNotEmpty()) {
+                            Row(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(999.dp))
+                                    .background(SoulSyncColors.Accent.copy(alpha = 0.16f))
+                                    .border(1.dp, SoulSyncColors.Accent.copy(alpha = 0.5f), RoundedCornerShape(999.dp))
+                                    .padding(horizontal = 9.dp, vertical = 3.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Check,
+                                    contentDescription = null,
+                                    tint = SoulSyncColors.AccentLight,
+                                    modifier = Modifier.size(12.dp),
+                                )
+                                Text(
+                                    text = "${ownedCredits.size} in your library",
+                                    color = SoulSyncColors.AccentLight,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                )
+                            }
+                        }
+                    }
+                }
+
+                if (!p?.biography.isNullOrBlank()) {
+                    val bio = p?.biography.orEmpty()
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(SoulSyncColors.Card)
+                            .border(1.dp, SoulSyncColors.Line, RoundedCornerShape(12.dp))
+                            .clickable { bioExpanded = !bioExpanded }
+                            .padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        Text(
+                            text = bio,
+                            color = SoulSyncColors.TextSoft,
+                            fontSize = 13.sp,
+                            lineHeight = 19.sp,
+                            maxLines = if (bioExpanded) Int.MAX_VALUE else 3,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        if (bio.length > 160) {
+                            Text(
+                                text = if (bioExpanded) "Show less" else "Read more",
+                                color = SoulSyncColors.AccentLight,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
                     }
                 }
             }
         }
-        if (!p?.biography.isNullOrBlank()) {
-            item { Text(p?.biography.orEmpty(), style = MaterialTheme.typography.bodyMedium) }
+
+        // Known For rail (matches desktop person.$personId.tsx)
+        if (knownForCredits.isNotEmpty()) {
+            item {
+                MediaRail(title = "Known For") {
+                    items(
+                        items = knownForCredits,
+                        key = { "kf-${it.kind}-${it.tmdbId}-${it.role.orEmpty()}" },
+                    ) { c ->
+                        CreditPosterCard(
+                            title = c.title,
+                            subtitle = listOfNotNull(c.yearText, c.role?.takeIf { it.isNotBlank() }).joinToString(" • "),
+                            artworkUrl = api.artwork.resolve(c.poster),
+                            isOwned = c.libraryId != null,
+                            width = 124.dp,
+                            onClick = { onCreditTap(c) },
+                        )
+                    }
+                }
+            }
         }
+
+        // In Your Library rail (if any)
+        if (ownedCredits.isNotEmpty()) {
+            item {
+                MediaRail(title = "In Your Library (${ownedCredits.size})") {
+                    items(
+                        items = ownedCredits,
+                        key = { "own-${it.kind}-${it.tmdbId}-${it.role.orEmpty()}" },
+                    ) { c ->
+                        CreditPosterCard(
+                            title = c.title,
+                            subtitle = listOfNotNull(c.yearText, c.role?.takeIf { it.isNotBlank() }).joinToString(" • "),
+                            artworkUrl = api.artwork.resolve(c.poster),
+                            isOwned = true,
+                            width = 124.dp,
+                            onClick = { onCreditTap(c) },
+                        )
+                    }
+                }
+            }
+        }
+
+        // Full Filmography section with filter chips + Grid/List toggle
         if (allCredits.isNotEmpty()) {
             item {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    SectionHeader("Filmography (${allCredits.size})")
+                Column(
+                    modifier = Modifier.padding(horizontal = 18.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = "Filmography",
+                            color = Color.White,
+                            fontSize = 19.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Row(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(999.dp))
+                                .background(SoulSyncColors.Card)
+                                .border(1.dp, SoulSyncColors.Line, RoundedCornerShape(999.dp))
+                                .padding(2.dp),
+                        ) {
+                            IconButton(
+                                onClick = { gridView = true },
+                                modifier = Modifier
+                                    .size(32.dp)
+                                    .clip(CircleShape)
+                                    .background(if (gridView) SoulSyncColors.Accent else Color.Transparent),
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.GridView,
+                                    contentDescription = "Poster Grid",
+                                    tint = if (gridView) Color.Black else SoulSyncColors.TextSoft,
+                                    modifier = Modifier.size(16.dp),
+                                )
+                            }
+                            IconButton(
+                                onClick = { gridView = false },
+                                modifier = Modifier
+                                    .size(32.dp)
+                                    .clip(CircleShape)
+                                    .background(if (!gridView) SoulSyncColors.Accent else Color.Transparent),
+                            ) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.ViewList,
+                                    contentDescription = "List View",
+                                    tint = if (!gridView) Color.Black else SoulSyncColors.TextSoft,
+                                    modifier = Modifier.size(16.dp),
+                                )
+                            }
+                        }
+                    }
+
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         val chips = buildList {
                             add("all" to "All (${allCredits.size})")
@@ -410,38 +841,52 @@ fun PersonDetailScreen(
                     }
                 }
             }
-            items(
-                items = visibleCredits,
-                key = { "${it.kind}-${it.tmdbId}-${it.role.orEmpty()}-${it.yearText.orEmpty()}" },
-            ) { c ->
-                val isOwned = c.libraryId != null
-                SimpleTrackRow(
-                    title = c.title,
-                    subtitle = listOfNotNull(
-                        c.yearText,
-                        c.role?.takeIf { it.isNotBlank() },
-                        if (isOwned) "In Library" else "Not in library • Tap to request",
-                    ).joinToString(" • "),
-                    artworkUrl = api.artwork.resolve(c.poster),
-                    trailingBadge = if (isOwned) "Owned" else "Request",
-                    onClick = {
-                        val libId = c.libraryId
-                        if (libId != null) {
-                            if (c.kind == "movie") onNavigate(PlayerDestination.MovieDetail(libId))
-                            else onNavigate(PlayerDestination.ShowDetail(libId))
-                        } else if (c.tmdbId > 0) {
-                            pendingRequest = UnownedTitleTarget(
-                                kind = if (c.kind == "show" || c.kind == "tv") "show" else "movie",
-                                tmdbId = c.tmdbId,
-                                title = c.title,
-                                year = c.yearText,
-                                subtitle = c.role?.takeIf { it.isNotBlank() }
-                                    ?: if (c.kind == "show" || c.kind == "tv") "TV Show" else "Movie",
-                                posterUrl = api.artwork.resolve(c.poster),
-                            )
+
+            if (gridView) {
+                val rows = visibleCredits.chunked(3)
+                items(
+                    items = rows,
+                    key = { row -> row.joinToString("|") { "${it.kind}-${it.tmdbId}-${it.role.orEmpty()}" } },
+                ) { row ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 18.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        row.forEach { c ->
+                            Box(modifier = Modifier.weight(1f)) {
+                                CreditPosterCard(
+                                    title = c.title,
+                                    subtitle = listOfNotNull(c.yearText, c.role?.takeIf { it.isNotBlank() }).joinToString(" • "),
+                                    artworkUrl = api.artwork.resolve(c.poster),
+                                    isOwned = c.libraryId != null,
+                                    onClick = { onCreditTap(c) },
+                                )
+                            }
                         }
-                    },
-                )
+                        repeat(3 - row.size) {
+                            Spacer(modifier = Modifier.weight(1f))
+                        }
+                    }
+                }
+            } else {
+                items(
+                    items = visibleCredits,
+                    key = { "list-${it.kind}-${it.tmdbId}-${it.role.orEmpty()}-${it.yearText.orEmpty()}" },
+                ) { c ->
+                    Box(modifier = Modifier.padding(horizontal = 18.dp)) {
+                        FilmographyListCard(
+                            title = c.title,
+                            year = c.yearText,
+                            role = c.role,
+                            kindLabel = if (c.kind == "show" || c.kind == "tv") "TV" else "Movie",
+                            artworkUrl = api.artwork.resolve(c.poster),
+                            isOwned = c.libraryId != null,
+                            onClick = { onCreditTap(c) },
+                        )
+                    }
+                }
             }
         }
     }

@@ -95,6 +95,8 @@ import coil.request.ImageRequest
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import net.ssync.app.R
+import net.ssync.connect.CandidateAddress
+import net.ssync.connect.CandidateScope
 import net.ssync.network.CandidateAddressRacer
 import net.ssync.network.CertPinningOkHttp
 import net.ssync.pairing.theme.SoulSyncColors
@@ -153,6 +155,26 @@ fun PlayerShell(
         runCatching { cm?.registerDefaultNetworkCallback(callback) }
         onDispose {
             runCatching { cm?.unregisterNetworkCallback(callback) }
+        }
+    }
+
+    // Refresh live LAN + WAN candidate addresses from /api/devices/me (picks up UPnP port changes without re-pairing)
+    LaunchedEffect(api, currentRecord.lookupId) {
+        val urls = (api.fetchDeviceAddresses() as? MusicApiResult.Success)?.data.orEmpty()
+        if (urls.isNotEmpty()) {
+            val fresh = urls.map { url ->
+                val host = url.removePrefix("https://").substringBefore("/").substringBefore(":")
+                val firstLabel = host.substringBefore(".")
+                val isLan = firstLabel.startsWith("10-") ||
+                    firstLabel.startsWith("192-168-") ||
+                    (firstLabel.startsWith("172-") && (firstLabel.split("-").getOrNull(1)?.toIntOrNull() in 16..31))
+                CandidateAddress(url = url, scope = if (isLan) CandidateScope.LAN else CandidateScope.WAN)
+            }
+            if (fresh != currentRecord.candidateAddresses) {
+                val updated = currentRecord.copy(candidateAddresses = fresh)
+                currentRecord = updated
+                KeystoreServerVault(context.applicationContext).save(updated)
+            }
         }
     }
 
