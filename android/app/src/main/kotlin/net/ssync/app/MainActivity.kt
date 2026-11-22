@@ -24,6 +24,7 @@ import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.ListenableFuture
 import kotlinx.coroutines.launch
+import net.ssync.app.player.PlayerShell
 import net.ssync.connect.RendezvousClient
 import net.ssync.pairing.PairingScreen
 import net.ssync.pairing.PairingViewModel
@@ -107,7 +108,7 @@ private fun SoulSyncRoot() {
             },
         )
     } else {
-        MusicHomeScreen(
+        PlayerShell(
             record = activeRecord,
             mediaController = controller,
             onDeviceRevoked = {

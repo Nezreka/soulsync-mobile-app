@@ -1,0 +1,424 @@
+package net.ssync.app.player
+
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.launch
+import net.ssync.pairing.theme.SoulSyncColors
+import net.ssync.pairing.ui.dpadFocusable
+import net.ssync.player.CatalogMovie
+import net.ssync.player.CatalogShow
+import net.ssync.player.MovieDetail
+import net.ssync.player.MusicApiResult
+import net.ssync.player.PlayerApiClient
+import net.ssync.player.ShowDetail
+
+@Composable
+fun MoviesScreen(
+    api: PlayerApiClient,
+    onMovieClick: (Int) -> Unit,
+    onDeviceRevoked: () -> Unit,
+) {
+    var movies by remember { mutableStateOf<List<CatalogMovie>>(emptyList()) }
+    var isLoading by remember { mutableStateOf(true) }
+
+    LaunchedEffect(api) {
+        isLoading = true
+        when (val res = api.fetchVideoCatalog()) {
+            is MusicApiResult.Success -> movies = res.data.movies
+            MusicApiResult.DeviceRevoked -> onDeviceRevoked()
+            is MusicApiResult.Error -> Unit
+        }
+        isLoading = false
+    }
+
+    if (isLoading) {
+        LoadingBox()
+        return
+    }
+    if (movies.isEmpty()) {
+        EmptyBox("No movies in your SoulSync library yet.")
+        return
+    }
+
+    LazyVerticalGrid(
+        columns = GridCells.Adaptive(minSize = 116.dp),
+        contentPadding = PaddingValues(16.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+        modifier = Modifier.fillMaxSize(),
+    ) {
+        items(movies, key = { it.id }) { m ->
+            PosterCard(
+                title = m.title,
+                subtitle = m.year?.toString(),
+                artworkUrl = api.artwork.moviePoster(m.id),
+                badge = m.rating?.let { "%.1f".format(it) },
+                onClick = { onMovieClick(m.id) },
+            )
+        }
+    }
+}
+
+@Composable
+fun MovieDetailScreen(
+    movieId: Int,
+    api: PlayerApiClient,
+    coordinator: PlaybackCoordinator,
+    onDeviceRevoked: () -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    var detail by remember { mutableStateOf<MovieDetail?>(null) }
+    var inWatchlist by remember { mutableStateOf(false) }
+    var isLoading by remember { mutableStateOf(true) }
+
+    LaunchedEffect(movieId, api) {
+        isLoading = true
+        when (val res = api.fetchMovieDetail(movieId)) {
+            is MusicApiResult.Success -> detail = res.data
+            MusicApiResult.DeviceRevoked -> onDeviceRevoked()
+            is MusicApiResult.Error -> Unit
+        }
+        (api.fetchWatchlist() as? MusicApiResult.Success)?.let { list ->
+            inWatchlist = list.data.any { it.itemType == "movie" && it.itemId == movieId.toString() }
+        }
+        isLoading = false
+    }
+
+    val movie = detail
+    if (isLoading) {
+        LoadingBox()
+        return
+    }
+    if (movie == null) {
+        EmptyBox("Couldn't load movie details.")
+        return
+    }
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(bottom = 24.dp),
+    ) {
+        item {
+            HeroSpotlight(
+                title = movie.title,
+                subtitle = listOfNotNull(
+                    movie.year?.toString(),
+                    movie.contentRating,
+                    movie.runtimeMinutes?.let { "${it}m" },
+                    movie.rating?.let { "★ %.1f".format(it) },
+                ).joinToString("  •  "),
+                backdropUrl = api.artwork.movieBackdrop(movie.id),
+                inWatchlist = inWatchlist,
+                onPlay = {
+                    coordinator.playVideo(
+                        ActivePlayable(
+                            itemType = "movie",
+                            itemId = movie.id.toString(),
+                            title = movie.title,
+                            subtitle = movie.year?.toString().orEmpty(),
+                            artworkUrl = api.artwork.moviePoster(movie.id),
+                            streamUrl = api.streamUrl("movie", movie.id.toString()),
+                            isVideo = true,
+                        ),
+                    )
+                },
+                onToggleWatchlist = {
+                    scope.launch {
+                        if (inWatchlist) {
+                            api.removeFromWatchlist("movie", movie.id.toString())
+                        } else {
+                            api.addToWatchlist("movie", movie.id.toString())
+                        }
+                        inWatchlist = !inWatchlist
+                    }
+                },
+            )
+        }
+        if (!movie.overview.isNullOrBlank()) {
+            item {
+                Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
+                    if (!movie.tagline.isNullOrBlank()) {
+                        Text(
+                            text = movie.tagline.orEmpty(),
+                            color = SoulSyncColors.AccentLight,
+                            fontWeight = FontWeight.Medium,
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                    }
+                    Text(text = movie.overview.orEmpty(), style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+        }
+        if (movie.cast.isNotEmpty()) {
+            item {
+                MediaRail(title = "Cast") {
+                    items(movie.cast.take(15)) { member ->
+                        SquareMediaCard(
+                            title = member.name,
+                            subtitle = member.character,
+                            artworkUrl = api.artwork.resolve(member.photo),
+                            width = 104.dp,
+                            onClick = {},
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun TvScreen(
+    api: PlayerApiClient,
+    onShowClick: (Int) -> Unit,
+    onDeviceRevoked: () -> Unit,
+) {
+    var shows by remember { mutableStateOf<List<CatalogShow>>(emptyList()) }
+    var isLoading by remember { mutableStateOf(true) }
+
+    LaunchedEffect(api) {
+        isLoading = true
+        when (val res = api.fetchVideoCatalog()) {
+            is MusicApiResult.Success -> shows = res.data.shows
+            MusicApiResult.DeviceRevoked -> onDeviceRevoked()
+            is MusicApiResult.Error -> Unit
+        }
+        isLoading = false
+    }
+
+    if (isLoading) {
+        LoadingBox()
+        return
+    }
+    if (shows.isEmpty()) {
+        EmptyBox("No TV shows in your SoulSync library yet.")
+        return
+    }
+
+    LazyVerticalGrid(
+        columns = GridCells.Adaptive(minSize = 116.dp),
+        contentPadding = PaddingValues(16.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+        modifier = Modifier.fillMaxSize(),
+    ) {
+        items(shows, key = { it.id }) { s ->
+            PosterCard(
+                title = s.title,
+                subtitle = "${s.episodeCount} episodes",
+                artworkUrl = api.artwork.showPoster(s.id),
+                badge = s.rating?.let { "%.1f".format(it) },
+                onClick = { onShowClick(s.id) },
+            )
+        }
+    }
+}
+
+@Composable
+fun ShowDetailScreen(
+    showId: Int,
+    api: PlayerApiClient,
+    coordinator: PlaybackCoordinator,
+    onDeviceRevoked: () -> Unit,
+) {
+    var detail by remember { mutableStateOf<ShowDetail?>(null) }
+    var isLoading by remember { mutableStateOf(true) }
+    var selectedSeasonIndex by remember { mutableIntStateOf(0) }
+
+    LaunchedEffect(showId, api) {
+        isLoading = true
+        when (val res = api.fetchShowDetail(showId)) {
+            is MusicApiResult.Success -> detail = res.data
+            MusicApiResult.DeviceRevoked -> onDeviceRevoked()
+            is MusicApiResult.Error -> Unit
+        }
+        isLoading = false
+    }
+
+    val show = detail
+    if (isLoading) {
+        LoadingBox()
+        return
+    }
+    if (show == null) {
+        EmptyBox("Couldn't load show details.")
+        return
+    }
+
+    val seasons = show.seasons
+    val activeSeason = seasons.getOrNull(selectedSeasonIndex)
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(bottom = 24.dp),
+    ) {
+        item {
+            val firstEp = activeSeason?.episodes?.firstOrNull { it.owned }
+            HeroSpotlight(
+                title = show.title,
+                subtitle = listOfNotNull(show.year?.toString(), show.network, show.contentRating)
+                    .joinToString("  •  "),
+                backdropUrl = api.artwork.showBackdrop(show.id),
+                onPlay = {
+                    if (firstEp != null) {
+                        coordinator.playVideo(
+                            ActivePlayable(
+                                itemType = "episode",
+                                itemId = firstEp.id.toString(),
+                                title = firstEp.title ?: "Episode ${firstEp.episodeNumber}",
+                                subtitle = "${show.title} • S${activeSeason.seasonNumber}E${firstEp.episodeNumber}",
+                                artworkUrl = api.artwork.episodeStill(firstEp.id),
+                                streamUrl = api.streamUrl("episode", firstEp.id.toString()),
+                                isVideo = true,
+                            ),
+                        )
+                    }
+                },
+            )
+        }
+
+        if (!show.overview.isNullOrBlank()) {
+            item {
+                Text(
+                    text = show.overview.orEmpty(),
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                )
+            }
+        }
+
+        if (seasons.isNotEmpty()) {
+            item {
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    items(seasons.indices.toList()) { idx ->
+                        val s = seasons[idx]
+                        FilterChip(
+                            selected = idx == selectedSeasonIndex,
+                            onClick = { selectedSeasonIndex = idx },
+                            label = { Text(s.title ?: "Season ${s.seasonNumber}") },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = SoulSyncColors.Accent,
+                                selectedLabelColor = SoulSyncColors.OnAccent,
+                                containerColor = SoulSyncColors.Card,
+                                labelColor = SoulSyncColors.TextSoft,
+                            ),
+                            modifier = Modifier.dpadFocusable(),
+                        )
+                    }
+                }
+            }
+        }
+
+        if (activeSeason != null) {
+            items(activeSeason.episodes, key = { it.id }) { ep ->
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 5.dp)
+                        .dpadFocusable(RoundedCornerShape(12.dp))
+                        .clickable(enabled = ep.owned) {
+                            coordinator.playVideo(
+                                ActivePlayable(
+                                    itemType = "episode",
+                                    itemId = ep.id.toString(),
+                                    title = ep.title ?: "Episode ${ep.episodeNumber}",
+                                    subtitle = "${show.title} • S${activeSeason.seasonNumber}E${ep.episodeNumber}",
+                                    artworkUrl = api.artwork.episodeStill(ep.id),
+                                    streamUrl = api.streamUrl("episode", ep.id.toString()),
+                                    isVideo = true,
+                                ),
+                            )
+                        },
+                    colors = CardDefaults.cardColors(containerColor = SoulSyncColors.Card),
+                    border = BorderStroke(1.dp, SoulSyncColors.Line),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        SoulSyncArtwork(
+                            url = api.artwork.episodeStill(ep.id),
+                            contentDescription = ep.title,
+                            modifier = Modifier
+                                .width(120.dp)
+                                .aspectRatio(16f / 9f)
+                                .clip(RoundedCornerShape(8.dp)),
+                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "E${ep.episodeNumber} • ${ep.title ?: "Episode ${ep.episodeNumber}"}",
+                                style = MaterialTheme.typography.titleMedium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            if (!ep.overview.isNullOrBlank()) {
+                                Text(
+                                    text = ep.overview.orEmpty(),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                    fontSize = 12.sp,
+                                )
+                            }
+                        }
+                        if (ep.owned) {
+                            Icon(
+                                Icons.Default.PlayArrow,
+                                contentDescription = "Play",
+                                tint = SoulSyncColors.AccentLight,
+                                modifier = Modifier.size(24.dp),
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

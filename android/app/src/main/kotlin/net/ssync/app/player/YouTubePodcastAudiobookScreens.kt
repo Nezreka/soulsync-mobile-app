@@ -1,0 +1,408 @@
+package net.ssync.app.player
+
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Headphones
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Podcasts
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import net.ssync.pairing.theme.SoulSyncColors
+import net.ssync.pairing.ui.dpadFocusable
+import net.ssync.player.MusicApiResult
+import net.ssync.player.OwnedBook
+import net.ssync.player.PlayerApiClient
+import net.ssync.player.PodcastShow
+import net.ssync.player.PodcastSub
+import net.ssync.player.YtChannel
+import net.ssync.player.YtVideo
+
+@Composable
+fun YouTubeScreen(
+    api: PlayerApiClient,
+    coordinator: PlaybackCoordinator,
+    onChannelClick: (String, String) -> Unit,
+    onDeviceRevoked: () -> Unit,
+) {
+    var channels by remember { mutableStateOf<List<YtChannel>>(emptyList()) }
+    var videos by remember { mutableStateOf<List<YtVideo>>(emptyList()) }
+    var isLoading by remember { mutableStateOf(true) }
+
+    LaunchedEffect(api) {
+        isLoading = true
+        when (val r = api.fetchYoutubeOverview()) {
+            is MusicApiResult.Success -> {
+                channels = r.data.channels
+                videos = r.data.videos
+            }
+            MusicApiResult.DeviceRevoked -> onDeviceRevoked()
+            is MusicApiResult.Error -> Unit
+        }
+        isLoading = false
+    }
+
+    if (isLoading) {
+        LoadingBox()
+        return
+    }
+    if (channels.isEmpty() && videos.isEmpty()) {
+        EmptyBox("No YouTube channels or videos yet.")
+        return
+    }
+
+    LazyColumn(contentPadding = PaddingValues(bottom = 24.dp)) {
+        if (channels.isNotEmpty()) {
+            item {
+                MediaRail(title = "Channels") {
+                    items(channels, key = { it.id }) { ch ->
+                        SquareMediaCard(
+                            title = ch.title,
+                            subtitle = "${ch.downloadedCount} videos",
+                            artworkUrl = api.artwork.resolve(ch.avatar),
+                            width = 112.dp,
+                            onClick = { onChannelClick(ch.id, ch.title) },
+                        )
+                    }
+                }
+            }
+        }
+        if (videos.isNotEmpty()) {
+            item { SectionHeader("Videos") }
+            items(videos, key = { it.id }) { v ->
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 5.dp)
+                        .dpadFocusable(RoundedCornerShape(12.dp))
+                        .clickable {
+                            coordinator.playVideo(
+                                ActivePlayable(
+                                    itemType = "youtube",
+                                    itemId = v.id,
+                                    title = v.title,
+                                    subtitle = v.channelTitle.orEmpty(),
+                                    artworkUrl = api.artwork.resolve(v.thumbnail),
+                                    streamUrl = api.streamUrl("youtube", v.id),
+                                    isVideo = true,
+                                ),
+                            )
+                        },
+                    colors = CardDefaults.cardColors(containerColor = SoulSyncColors.Card),
+                    border = BorderStroke(1.dp, SoulSyncColors.Line),
+                ) {
+                    Row(modifier = Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                        SoulSyncArtwork(
+                            url = api.artwork.resolve(v.thumbnail),
+                            contentDescription = v.title,
+                            modifier = Modifier.size(width = 112.dp, height = 64.dp).clip(RoundedCornerShape(8.dp)),
+                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(v.title, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            Text(v.channelTitle.orEmpty(), style = MaterialTheme.typography.bodyMedium, maxLines = 1)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun YouTubeChannelScreen(
+    channelId: String,
+    fallbackTitle: String,
+    api: PlayerApiClient,
+    coordinator: PlaybackCoordinator,
+    onDeviceRevoked: () -> Unit,
+) {
+    var videos by remember { mutableStateOf<List<YtVideo>>(emptyList()) }
+    var channelName by remember { mutableStateOf(fallbackTitle) }
+    var isLoading by remember { mutableStateOf(true) }
+
+    LaunchedEffect(channelId, api) {
+        isLoading = true
+        when (val r = api.fetchYoutubeChannel(channelId)) {
+            is MusicApiResult.Success -> {
+                channelName = r.data.channel?.title ?: fallbackTitle
+                videos = r.data.videos
+            }
+            MusicApiResult.DeviceRevoked -> onDeviceRevoked()
+            is MusicApiResult.Error -> Unit
+        }
+        isLoading = false
+    }
+
+    if (isLoading) {
+        LoadingBox()
+        return
+    }
+    LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        item { Text(channelName, style = MaterialTheme.typography.headlineMedium) }
+        items(videos, key = { it.id }) { v ->
+            SimpleTrackRow(
+                title = v.title,
+                subtitle = v.publishedAt.orEmpty(),
+                artworkUrl = api.artwork.resolve(v.thumbnail),
+                onClick = {
+                    coordinator.playVideo(
+                        ActivePlayable(
+                            itemType = "youtube",
+                            itemId = v.id,
+                            title = v.title,
+                            subtitle = channelName,
+                            artworkUrl = api.artwork.resolve(v.thumbnail),
+                            streamUrl = api.streamUrl("youtube", v.id),
+                            isVideo = true,
+                        ),
+                    )
+                },
+            )
+        }
+    }
+}
+
+@Composable
+fun PodcastsScreen(
+    api: PlayerApiClient,
+    onPodcastClick: (PodcastSub) -> Unit,
+    onDeviceRevoked: () -> Unit,
+) {
+    var subs by remember { mutableStateOf<List<PodcastSub>>(emptyList()) }
+    var isLoading by remember { mutableStateOf(true) }
+
+    LaunchedEffect(api) {
+        isLoading = true
+        when (val r = api.fetchPodcastSubs()) {
+            is MusicApiResult.Success -> subs = r.data
+            MusicApiResult.DeviceRevoked -> onDeviceRevoked()
+            is MusicApiResult.Error -> Unit
+        }
+        isLoading = false
+    }
+
+    if (isLoading) {
+        LoadingBox()
+        return
+    }
+    if (subs.isEmpty()) {
+        EmptyBox("No podcast subscriptions yet.")
+        return
+    }
+
+    LazyVerticalGrid(
+        columns = GridCells.Adaptive(140.dp),
+        contentPadding = PaddingValues(16.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        items(subs, key = { it.id }) { sub ->
+            SquareMediaCard(
+                title = sub.title,
+                subtitle = sub.author,
+                artworkUrl = api.artwork.resolve(sub.artworkUrl),
+                fallbackIcon = Icons.Default.Podcasts,
+                onClick = { onPodcastClick(sub) },
+            )
+        }
+    }
+}
+
+@Composable
+fun PodcastDetailScreen(
+    sub: PodcastSub,
+    api: PlayerApiClient,
+    coordinator: PlaybackCoordinator,
+    onDeviceRevoked: () -> Unit,
+) {
+    var show by remember { mutableStateOf<PodcastShow?>(null) }
+    var isLoading by remember { mutableStateOf(true) }
+
+    LaunchedEffect(sub.feedUrl, api) {
+        isLoading = true
+        when (val r = api.fetchPodcastShow(sub.feedUrl)) {
+            is MusicApiResult.Success -> show = r.data
+            MusicApiResult.DeviceRevoked -> onDeviceRevoked()
+            is MusicApiResult.Error -> Unit
+        }
+        isLoading = false
+    }
+
+    if (isLoading) {
+        LoadingBox()
+        return
+    }
+    val episodes = show?.episodes.orEmpty()
+    LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        item {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                SoulSyncArtwork(
+                    url = api.artwork.resolve(show?.artworkUrl ?: sub.artworkUrl),
+                    contentDescription = sub.title,
+                    fallbackIcon = Icons.Default.Podcasts,
+                    modifier = Modifier.size(88.dp).clip(RoundedCornerShape(12.dp)),
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+                Column {
+                    Text(sub.title, style = MaterialTheme.typography.titleLarge)
+                    Text(sub.author.orEmpty(), style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+            Spacer(modifier = Modifier.height(10.dp))
+        }
+        items(episodes) { ep ->
+            val stream = ep.enclosureUrl ?: api.streamUrl("podcast", ep.guid ?: ep.title)
+            SimpleTrackRow(
+                title = ep.title,
+                subtitle = listOfNotNull(ep.pubDate, ep.durationSeconds?.let { "${it / 60}m" }).joinToString(" • "),
+                artworkUrl = api.artwork.resolve(ep.artworkUrl ?: sub.artworkUrl),
+                onClick = {
+                    coordinator.playAudio(
+                        ActivePlayable(
+                            itemType = "podcast",
+                            itemId = ep.guid ?: ep.title,
+                            title = ep.title,
+                            subtitle = sub.title,
+                            artworkUrl = api.artwork.resolve(ep.artworkUrl ?: sub.artworkUrl),
+                            streamUrl = stream,
+                        ),
+                    )
+                },
+            )
+        }
+    }
+}
+
+@Composable
+fun AudiobooksScreen(
+    api: PlayerApiClient,
+    onBookClick: (OwnedBook) -> Unit,
+    onDeviceRevoked: () -> Unit,
+) {
+    var books by remember { mutableStateOf<List<OwnedBook>>(emptyList()) }
+    var isLoading by remember { mutableStateOf(true) }
+
+    LaunchedEffect(api) {
+        isLoading = true
+        when (val r = api.fetchAudiobooks()) {
+            is MusicApiResult.Success -> books = r.data
+            MusicApiResult.DeviceRevoked -> onDeviceRevoked()
+            is MusicApiResult.Error -> Unit
+        }
+        isLoading = false
+    }
+
+    if (isLoading) {
+        LoadingBox()
+        return
+    }
+    if (books.isEmpty()) {
+        EmptyBox("No audiobooks in your library yet.")
+        return
+    }
+
+    LazyVerticalGrid(
+        columns = GridCells.Adaptive(140.dp),
+        contentPadding = PaddingValues(16.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        items(books, key = { it.asin }) { book ->
+            SquareMediaCard(
+                title = book.title,
+                subtitle = book.author,
+                artworkUrl = api.artwork.resolve(book.coverUrl),
+                fallbackIcon = Icons.Default.Headphones,
+                onClick = { onBookClick(book) },
+            )
+        }
+    }
+}
+
+@Composable
+fun AudiobookDetailScreen(
+    book: OwnedBook,
+    api: PlayerApiClient,
+    coordinator: PlaybackCoordinator,
+) {
+    Column(
+        modifier = Modifier.fillMaxSize().padding(20.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        SoulSyncArtwork(
+            url = api.artwork.resolve(book.coverUrl),
+            contentDescription = book.title,
+            fallbackIcon = Icons.Default.Headphones,
+            modifier = Modifier.size(200.dp).clip(RoundedCornerShape(16.dp)),
+        )
+        Spacer(modifier = Modifier.height(16.dp))
+        Text(book.title, style = MaterialTheme.typography.headlineMedium)
+        if (!book.author.isNullOrBlank()) {
+            Text("By ${book.author}", style = MaterialTheme.typography.titleMedium, color = SoulSyncColors.TextSoft)
+        }
+        if (!book.narrator.isNullOrBlank()) {
+            Text("Narrated by ${book.narrator}", style = MaterialTheme.typography.bodyMedium)
+        }
+        book.runtimeMinutes?.let { mins ->
+            Text("${mins / 60}h ${mins % 60}m", style = MaterialTheme.typography.bodyMedium)
+        }
+        Spacer(modifier = Modifier.height(20.dp))
+        Button(
+            onClick = {
+                coordinator.playAudio(
+                    ActivePlayable(
+                        itemType = "audiobook",
+                        itemId = book.asin,
+                        title = book.title,
+                        subtitle = book.author.orEmpty(),
+                        artworkUrl = api.artwork.resolve(book.coverUrl),
+                        streamUrl = api.streamUrl("audiobook", book.asin),
+                    ),
+                )
+            },
+            colors = ButtonDefaults.buttonColors(
+                containerColor = SoulSyncColors.Accent,
+                contentColor = SoulSyncColors.OnAccent,
+            ),
+            modifier = Modifier.fillMaxWidth().height(50.dp).dpadFocusable(),
+        ) {
+            Icon(Icons.Default.PlayArrow, contentDescription = null)
+            Spacer(modifier = Modifier.width(6.dp))
+            Text("Listen")
+        }
+    }
+}
