@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -27,11 +28,13 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Movie
@@ -43,24 +46,25 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SmartDisplay
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Tv
-import androidx.compose.material3.Badge
-import androidx.compose.material3.BadgedBox
+import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.material3.ModalDrawerSheet
+import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -80,11 +84,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.media3.session.MediaController
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import net.ssync.app.R
 import net.ssync.network.CandidateAddressRacer
 import net.ssync.network.CertPinningOkHttp
 import net.ssync.pairing.theme.SoulSyncColors
 import net.ssync.pairing.ui.dpadFocusable
+import net.ssync.player.DeviceProfileInfo
 import net.ssync.player.MusicApiResult
 import net.ssync.player.PlayerApiClient
 import net.ssync.storage.KeystoreServerVault
@@ -101,15 +107,20 @@ fun PlayerShell(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    val pinnedClient = remember(record) {
+    var currentRecord by remember(record) { mutableStateOf(record) }
+    var profileEpoch by remember { mutableIntStateOf(0) }
+
+    val pinnedClient = remember(currentRecord.certFingerprintSha256, currentRecord.deviceToken) {
         CertPinningOkHttp.createPinnedClient(
-            expectedCertFingerprintSha256 = record.certFingerprintSha256,
-            deviceTokenProvider = { record.deviceToken },
+            expectedCertFingerprintSha256 = currentRecord.certFingerprintSha256,
+            deviceTokenProvider = { currentRecord.deviceToken },
             onUnauthorized = onDeviceRevoked,
         )
     }
-    var activeBaseUrl by remember(record) { mutableStateOf(record.lastWorkingBaseUrl) }
-    val api = remember(activeBaseUrl, pinnedClient) {
+    var activeBaseUrl by remember(currentRecord.lastWorkingBaseUrl) {
+        mutableStateOf(currentRecord.lastWorkingBaseUrl)
+    }
+    val api = remember(activeBaseUrl, pinnedClient, profileEpoch) {
         PlayerApiClient(
             baseUrl = activeBaseUrl,
             pinnedAuthenticatedClient = pinnedClient,
@@ -117,12 +128,14 @@ fun PlayerShell(
     }
 
     // Seamless Wi-Fi <-> 5G LAN/WAN failover: race cached candidate addresses on start
-    LaunchedEffect(record, pinnedClient) {
-        if (record.candidateAddresses.size > 1) {
-            val best = CandidateAddressRacer(pinnedClient).selectBestBaseUrl(record.candidateAddresses)
+    LaunchedEffect(currentRecord.lookupId, pinnedClient) {
+        if (currentRecord.candidateAddresses.size > 1) {
+            val best = CandidateAddressRacer(pinnedClient).selectBestBaseUrl(currentRecord.candidateAddresses)
             if (best != null && best != activeBaseUrl) {
                 activeBaseUrl = best
-                KeystoreServerVault(context.applicationContext).save(record.copy(lastWorkingBaseUrl = best))
+                val updated = currentRecord.copy(lastWorkingBaseUrl = best)
+                currentRecord = updated
+                KeystoreServerVault(context.applicationContext).save(updated)
             }
         }
     }
@@ -139,10 +152,13 @@ fun PlayerShell(
 
     var backStack by remember { mutableStateOf<List<PlayerDestination>>(listOf(PlayerDestination.Home)) }
     val current = backStack.last()
-    var showMoreSheet by remember { mutableStateOf(false) }
+    var showProfileSheet by remember { mutableStateOf(false) }
+    var openHomeEditor by remember { mutableStateOf(false) }
     var sidebarCollapsed by remember { mutableStateOf(false) }
     var headerScrolled by remember { mutableStateOf(false) }
+    var homeHasHero by remember { mutableStateOf(false) }
     var watchingOthersCount by remember { mutableIntStateOf(0) }
+    val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
 
     LaunchedEffect(current) {
         headerScrolled = false
@@ -158,8 +174,14 @@ fun PlayerShell(
         }
     }
 
-    BackHandler(enabled = coordinator.showVideoOverlay || coordinator.showAudioSheet || backStack.size > 1) {
+    BackHandler(
+        enabled = drawerState.isOpen ||
+            coordinator.showVideoOverlay ||
+            coordinator.showAudioSheet ||
+            backStack.size > 1,
+    ) {
         when {
+            drawerState.isOpen -> scope.launch { drawerState.close() }
             coordinator.showVideoOverlay -> coordinator.closeVideo(coordinator.positionMs, coordinator.durationMs)
             coordinator.showAudioSheet -> coordinator.showAudioSheet = false
             else -> popBack()
@@ -178,7 +200,7 @@ fun PlayerShell(
         }
     }
 
-    val hasFullBleedHero = current is PlayerDestination.Home ||
+    val hasFullBleedHero = (current is PlayerDestination.Home && homeHasHero) ||
         current is PlayerDestination.MovieDetail ||
         current is PlayerDestination.ShowDetail
 
@@ -188,146 +210,148 @@ fun PlayerShell(
                 .fillMaxSize()
                 .background(SoulSyncColors.BgPrimary),
         ) {
-            val useSidebar = maxWidth >= 700.dp
+            val usePermanentSidebar = maxWidth >= 700.dp
 
-            Column(modifier = Modifier.fillMaxSize()) {
-                Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                    // Adaptive 1:1 `/player` Left Glass Sidebar on Tablets, Landscape & Android TV
-                    if (useSidebar) {
-                        PlayerSidebar(
-                            current = current,
-                            collapsed = sidebarCollapsed,
-                            watchingCount = watchingOthersCount,
-                            onNavigate = { navigateTo(it, clearToRoot = true) },
-                            onToggleCollapse = { sidebarCollapsed = !sidebarCollapsed },
-                        )
-                    }
-
-                    // Main Content + Floating Translucent Header
-                    Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(top = if (hasFullBleedHero) 0.dp else 64.dp),
-                        ) {
-                            PlayerContent(
+            val mainScaffold: @Composable () -> Unit = {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(SoulSyncColors.BgPrimary)
+                        .navigationBarsPadding(),
+                ) {
+                    Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                        if (usePermanentSidebar) {
+                            PlayerSidebar(
                                 current = current,
-                                record = record,
-                                api = api,
-                                coordinator = coordinator,
-                                onNavigate = { navigateTo(it) },
-                                onScrolledChanged = { headerScrolled = it },
-                                onDeviceRevoked = onDeviceRevoked,
-                                onUnpair = onUnpair,
+                                collapsed = sidebarCollapsed,
+                                watchingCount = watchingOthersCount,
+                                showCollapseToggle = true,
+                                onNavigate = { navigateTo(it, clearToRoot = true) },
+                                onToggleCollapse = { sidebarCollapsed = !sidebarCollapsed },
                             )
                         }
 
-                        // Floating Translucent Top Header (clear over Hero top, solid frosted once scrolled)
-                        FloatingTopHeader(
-                            record = record,
-                            showBack = backStack.size > 1,
-                            showBrand = !useSidebar,
-                            transparentOverHero = hasFullBleedHero && !headerScrolled,
-                            onBack = { popBack() },
-                            onSearch = { navigateTo(PlayerDestination.Search) },
-                            onSettings = { navigateTo(PlayerDestination.Settings) },
-                        )
+                        Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .then(
+                                        if (hasFullBleedHero) Modifier
+                                        else Modifier.statusBarsPadding().padding(top = 60.dp),
+                                    ),
+                            ) {
+                                key(profileEpoch) {
+                                    PlayerContent(
+                                        current = current,
+                                        record = currentRecord,
+                                        api = api,
+                                        coordinator = coordinator,
+                                        openHomeEditor = openHomeEditor,
+                                        onConsumeHomeEditor = { openHomeEditor = false },
+                                        onCustomizeHome = {
+                                            openHomeEditor = true
+                                            navigateTo(PlayerDestination.Home, clearToRoot = true)
+                                        },
+                                        onNavigate = { navigateTo(it) },
+                                        onScrolledChanged = { headerScrolled = it },
+                                        onHasHeroChanged = { homeHasHero = it },
+                                        onDeviceRevoked = onDeviceRevoked,
+                                        onUnpair = onUnpair,
+                                    )
+                                }
+                            }
+
+                            FloatingTopHeader(
+                                record = currentRecord,
+                                showBack = backStack.size > 1,
+                                showMenuButton = !usePermanentSidebar,
+                                transparentOverHero = hasFullBleedHero && !headerScrolled,
+                                onBack = { popBack() },
+                                onOpenDrawer = { scope.launch { drawerState.open() } },
+                                onSearch = { navigateTo(PlayerDestination.Search) },
+                                onProfileClick = { showProfileSheet = true },
+                            )
+                        }
                     }
-                }
 
-                // Persistent Mini Transport Bar
-                val active = coordinator.activeItem
-                if (active != null && !active.isVideo) {
-                    MiniTransportBar(
-                        item = active,
-                        isPlaying = coordinator.isPlaying,
-                        onExpand = { coordinator.showAudioSheet = true },
-                        onTogglePlayPause = { coordinator.togglePlayPause() },
-                        onNext = { coordinator.skipNext() },
-                    )
-                }
-
-                // Phone Bottom Glass Tab Bar (mirrors `player.module.css @media (max-width: 768px)`)
-                if (!useSidebar) {
-                    HorizontalDivider(color = SoulSyncColors.Line, thickness = 1.dp)
-                    NavigationBar(
-                        containerColor = SoulSyncColors.BgPrimary.copy(alpha = 0.96f),
-                        contentColor = SoulSyncColors.TextPrimary,
-                        tonalElevation = 0.dp,
-                    ) {
-                        val activeTab = tabForDestination(current)
-                        BottomTab.entries.forEach { tab ->
-                            val selected = activeTab == tab
-                            NavigationBarItem(
-                                selected = selected,
-                                onClick = {
-                                    when (tab) {
-                                        BottomTab.HOME -> navigateTo(PlayerDestination.Home, clearToRoot = true)
-                                        BottomTab.GUIDE -> navigateTo(PlayerDestination.Guide, clearToRoot = true)
-                                        BottomTab.MOVIES -> navigateTo(PlayerDestination.Movies, clearToRoot = true)
-                                        BottomTab.TV -> navigateTo(PlayerDestination.Tv, clearToRoot = true)
-                                        BottomTab.MUSIC -> navigateTo(PlayerDestination.Music, clearToRoot = true)
-                                        BottomTab.MORE -> showMoreSheet = true
-                                    }
-                                },
-                                icon = {
-                                    if (tab == BottomTab.MORE && watchingOthersCount > 0) {
-                                        BadgedBox(badge = { Badge { Text("$watchingOthersCount") } }) {
-                                            Icon(iconForTab(tab), contentDescription = tab.label, modifier = Modifier.size(22.dp))
-                                        }
-                                    } else {
-                                        Icon(iconForTab(tab), contentDescription = tab.label, modifier = Modifier.size(22.dp))
-                                    }
-                                },
-                                label = { Text(tab.label, fontSize = 10.sp, maxLines = 1) },
-                                colors = NavigationBarItemDefaults.colors(
-                                    selectedIconColor = SoulSyncColors.AccentLight,
-                                    selectedTextColor = SoulSyncColors.AccentLight,
-                                    indicatorColor = SoulSyncColors.Accent.copy(alpha = 0.16f),
-                                    unselectedIconColor = SoulSyncColors.TextSecondary,
-                                    unselectedTextColor = SoulSyncColors.TextSecondary,
-                                ),
-                            )
-                        }
+                    // Persistent Mini Transport Bar (only when audio is active)
+                    val active = coordinator.activeItem
+                    if (active != null && !active.isVideo) {
+                        MiniTransportBar(
+                            item = active,
+                            isPlaying = coordinator.isPlaying,
+                            onExpand = { coordinator.showAudioSheet = true },
+                            onTogglePlayPause = { coordinator.togglePlayPause() },
+                            onNext = { coordinator.skipNext() },
+                        )
                     }
                 }
             }
 
-            if (showMoreSheet) {
-                ModalBottomSheet(
-                    onDismissRequest = { showMoreSheet = false },
-                    containerColor = SoulSyncColors.PanelSolid,
-                ) {
-                    Column(modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp)) {
-                        MoreSheetRow(Icons.Default.Bookmark, "Watchlist") {
-                            showMoreSheet = false
-                            navigateTo(PlayerDestination.Watchlist)
-                        }
-                        MoreSheetRow(
-                            icon = Icons.Default.Group,
-                            label = if (watchingOthersCount > 0) "Watching now ($watchingOthersCount)" else "Watching now",
+            if (usePermanentSidebar) {
+                mainScaffold()
+            } else {
+                ModalNavigationDrawer(
+                    drawerState = drawerState,
+                    scrimColor = Color.Black.copy(alpha = 0.68f),
+                    drawerContent = {
+                        ModalDrawerSheet(
+                            drawerContainerColor = SoulSyncColors.BgPrimary,
+                            drawerContentColor = SoulSyncColors.TextPrimary,
+                            modifier = Modifier.width(272.dp),
                         ) {
-                            showMoreSheet = false
-                            navigateTo(PlayerDestination.WatchingNow)
+                            PlayerSidebar(
+                                current = current,
+                                collapsed = false,
+                                watchingCount = watchingOthersCount,
+                                showCollapseToggle = false,
+                                onNavigate = { dest ->
+                                    scope.launch { drawerState.close() }
+                                    navigateTo(dest, clearToRoot = true)
+                                },
+                                onToggleCollapse = {},
+                            )
                         }
-                        MoreSheetRow(Icons.Default.SmartDisplay, "YouTube") {
-                            showMoreSheet = false
-                            navigateTo(PlayerDestination.YouTube)
+                    },
+                    content = mainScaffold,
+                )
+            }
+
+            if (showProfileSheet) {
+                ProfileMenuSheet(
+                    record = currentRecord,
+                    api = api,
+                    onSwitchProfile = { chosen ->
+                        scope.launch {
+                            val res = api.pickDeviceProfile(chosen.id)
+                            if (res is MusicApiResult.Success) {
+                                val updated = currentRecord.copy(
+                                    profileId = chosen.id.toString(),
+                                    profileName = chosen.name,
+                                )
+                                currentRecord = updated
+                                KeystoreServerVault(context.applicationContext).save(updated)
+                                profileEpoch += 1
+                                showProfileSheet = false
+                                navigateTo(PlayerDestination.Home, clearToRoot = true)
+                            }
                         }
-                        MoreSheetRow(Icons.Default.Podcasts, "Podcasts") {
-                            showMoreSheet = false
-                            navigateTo(PlayerDestination.Podcasts)
-                        }
-                        MoreSheetRow(Icons.Default.Headphones, "Audiobooks") {
-                            showMoreSheet = false
-                            navigateTo(PlayerDestination.Audiobooks)
-                        }
-                        MoreSheetRow(Icons.Default.Settings, "Player Settings") {
-                            showMoreSheet = false
-                            navigateTo(PlayerDestination.Settings)
-                        }
-                    }
-                }
+                    },
+                    onOpenSettings = {
+                        showProfileSheet = false
+                        navigateTo(PlayerDestination.Settings)
+                    },
+                    onCustomizeHome = {
+                        showProfileSheet = false
+                        openHomeEditor = true
+                        navigateTo(PlayerDestination.Home, clearToRoot = true)
+                    },
+                    onUnpair = {
+                        showProfileSheet = false
+                        onUnpair()
+                    },
+                    onDismiss = { showProfileSheet = false },
+                )
             }
 
             if (coordinator.showAudioSheet) {
@@ -353,100 +377,292 @@ fun PlayerShell(
 private fun FloatingTopHeader(
     record: PairedServerRecord,
     showBack: Boolean,
-    showBrand: Boolean,
+    showMenuButton: Boolean,
     transparentOverHero: Boolean,
     onBack: () -> Unit,
+    onOpenDrawer: () -> Unit,
     onSearch: () -> Unit,
-    onSettings: () -> Unit,
+    onProfileClick: () -> Unit,
 ) {
     val bgModifier = if (transparentOverHero) {
         Modifier.background(
             Brush.verticalGradient(
-                listOf(SoulSyncColors.BgPrimary.copy(alpha = 0.78f), Color.Transparent),
+                listOf(SoulSyncColors.BgPrimary.copy(alpha = 0.82f), Color.Transparent),
             ),
         )
     } else {
-        Modifier
-            .background(SoulSyncColors.BgPrimary.copy(alpha = 0.92f))
+        Modifier.background(SoulSyncColors.BgPrimary.copy(alpha = 0.94f))
     }
 
+    Column(modifier = Modifier.fillMaxWidth().then(bgModifier)) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .statusBarsPadding()
+                .height(58.dp)
+                .padding(horizontal = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (showBack) {
+                IconButton(
+                    onClick = onBack,
+                    modifier = Modifier
+                        .size(38.dp)
+                        .clip(CircleShape)
+                        .background(SoulSyncColors.PanelGlass)
+                        .dpadFocusable(CircleShape),
+                ) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
+                }
+            } else if (showMenuButton) {
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(999.dp))
+                        .clickable(onClick = onOpenDrawer)
+                        .dpadFocusable(RoundedCornerShape(999.dp))
+                        .padding(horizontal = 6.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Menu,
+                        contentDescription = "Open menu",
+                        tint = Color.White,
+                        modifier = Modifier.size(22.dp),
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Image(
+                        painter = painterResource(id = R.drawable.soulsync_mark),
+                        contentDescription = "SoulSync",
+                        modifier = Modifier.size(26.dp),
+                    )
+                    Spacer(modifier = Modifier.width(7.dp))
+                    Text(
+                        text = "SoulSync",
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 17.sp,
+                        letterSpacing = (-0.3).sp,
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.weight(1f))
+
+            IconButton(
+                onClick = onSearch,
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .background(SoulSyncColors.PanelGlass)
+                    .border(1.dp, Color.White.copy(alpha = 0.12f), CircleShape)
+                    .dpadFocusable(CircleShape),
+            ) {
+                Icon(Icons.Default.Search, contentDescription = "Search", tint = Color.White, modifier = Modifier.size(19.dp))
+            }
+
+            Spacer(modifier = Modifier.width(8.dp))
+
+            // Profile chip -> opens Profile & Household Switcher Sheet
+            Row(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(SoulSyncColors.PanelGlass)
+                    .border(1.dp, SoulSyncColors.LineStrong, RoundedCornerShape(999.dp))
+                    .clickable(onClick = onProfileClick)
+                    .dpadFocusable(RoundedCornerShape(999.dp))
+                    .padding(start = 6.dp, end = 8.dp, top = 5.dp, bottom = 5.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(22.dp)
+                        .clip(CircleShape)
+                        .background(SoulSyncColors.Accent),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = record.profileName.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "S",
+                        color = Color.Black,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                    )
+                }
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = record.profileName,
+                    color = Color.White,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Icon(
+                    imageVector = Icons.Default.KeyboardArrowDown,
+                    contentDescription = "Switch profile",
+                    tint = SoulSyncColors.TextSoft,
+                    modifier = Modifier.size(16.dp),
+                )
+            }
+        }
+        if (!transparentOverHero) {
+            HorizontalDivider(color = SoulSyncColors.Line, thickness = 1.dp)
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ProfileMenuSheet(
+    record: PairedServerRecord,
+    api: PlayerApiClient,
+    onSwitchProfile: (DeviceProfileInfo) -> Unit,
+    onOpenSettings: () -> Unit,
+    onCustomizeHome: () -> Unit,
+    onUnpair: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var profiles by remember { mutableStateOf<List<DeviceProfileInfo>>(emptyList()) }
+    var loading by remember { mutableStateOf(true) }
+
+    LaunchedEffect(api) {
+        loading = true
+        (api.fetchDeviceProfiles() as? MusicApiResult.Success)?.let { profiles = it.data }
+        loading = false
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = SoulSyncColors.Surface,
+        contentColor = SoulSyncColors.TextPrimary,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 28.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            // Current profile header
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(44.dp)
+                        .clip(CircleShape)
+                        .background(SoulSyncColors.Accent),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = record.profileName.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "S",
+                        color = Color.Black,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                    )
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = record.profileName,
+                        color = Color.White,
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Text(
+                        text = "${record.serverName ?: "SoulSync"} · ${record.formattedFingerprint}",
+                        color = SoulSyncColors.TextSecondary,
+                        fontSize = 12.sp,
+                    )
+                }
+            }
+
+            // Switch profile section
+            val others = profiles.filter { it.id.toString() != record.profileId }
+            if (others.isNotEmpty()) {
+                HorizontalDivider(color = SoulSyncColors.Line)
+                Text(
+                    text = "SWITCH PROFILE",
+                    color = SoulSyncColors.TextSecondary,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 0.8.sp,
+                )
+                others.forEach { p ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Color.White.copy(alpha = 0.04f))
+                            .border(1.dp, SoulSyncColors.Line, RoundedCornerShape(12.dp))
+                            .clickable { onSwitchProfile(p) }
+                            .padding(horizontal = 14.dp, vertical = 11.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(32.dp)
+                                .clip(CircleShape)
+                                .background(SoulSyncColors.Accent.copy(alpha = 0.25f)),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                text = p.name.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "?",
+                                color = SoulSyncColors.AccentLight,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold,
+                            )
+                        }
+                        Text(
+                            text = p.name,
+                            color = Color.White,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.weight(1f),
+                        )
+                        if (p.id.toString() == record.profileId) {
+                            Icon(Icons.Default.Check, contentDescription = null, tint = SoulSyncColors.AccentLight)
+                        }
+                    }
+                }
+            } else if (!loading && profiles.size <= 1) {
+                Text(
+                    text = "Signed in as the only profile available on this device.",
+                    color = SoulSyncColors.TextSecondary,
+                    fontSize = 12.sp,
+                )
+            }
+
+            HorizontalDivider(color = SoulSyncColors.Line)
+
+            ProfileSheetAction(
+                icon = Icons.Default.Tune,
+                label = "Customize Home",
+                onClick = onCustomizeHome,
+            )
+            ProfileSheetAction(
+                icon = Icons.Default.Settings,
+                label = "Player Settings",
+                onClick = onOpenSettings,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ProfileSheetAction(icon: ImageVector, label: String, onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .then(bgModifier)
-            .statusBarsPadding()
-            .padding(horizontal = 14.dp, vertical = 10.dp),
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        if (showBack) {
-            IconButton(
-                onClick = onBack,
-                modifier = Modifier
-                    .size(38.dp)
-                    .clip(CircleShape)
-                    .background(SoulSyncColors.PanelGlass)
-                    .dpadFocusable(CircleShape),
-            ) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
-            }
-            Spacer(modifier = Modifier.width(10.dp))
-        } else if (showBrand) {
-            Image(
-                painter = painterResource(id = R.drawable.soulsync_mark),
-                contentDescription = "SoulSync",
-                modifier = Modifier.size(30.dp),
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-            Text(
-                text = "SoulSync",
-                color = Color.White,
-                fontWeight = FontWeight.Bold,
-                fontSize = 18.sp,
-                letterSpacing = (-0.3).sp,
-            )
-        }
-
-        Spacer(modifier = Modifier.weight(1f))
-
-        // Profile chip (exact `/player` top-right pill style)
-        Row(
-            modifier = Modifier
-                .clip(RoundedCornerShape(999.dp))
-                .background(SoulSyncColors.PanelGlass)
-                .border(1.dp, SoulSyncColors.LineStrong, RoundedCornerShape(999.dp))
-                .clickable(onClick = onSettings)
-                .dpadFocusable(RoundedCornerShape(999.dp))
-                .padding(horizontal = 10.dp, vertical = 5.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(8.dp)
-                    .clip(CircleShape)
-                    .background(SoulSyncColors.AccentLight),
-            )
-            Spacer(modifier = Modifier.width(6.dp))
-            Text(
-                text = record.profileName,
-                color = Color.White,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-            )
-        }
-
-        Spacer(modifier = Modifier.width(6.dp))
-
-        IconButton(
-            onClick = onSearch,
-            modifier = Modifier
-                .size(36.dp)
-                .clip(CircleShape)
-                .background(SoulSyncColors.PanelGlass)
-                .dpadFocusable(CircleShape),
-        ) {
-            Icon(Icons.Default.Search, contentDescription = "Search", tint = Color.White, modifier = Modifier.size(19.dp))
-        }
+        Icon(icon, contentDescription = null, tint = SoulSyncColors.TextSoft, modifier = Modifier.size(20.dp))
+        Text(text = label, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+        Icon(Icons.Default.ChevronRight, contentDescription = null, tint = SoulSyncColors.TextSecondary, modifier = Modifier.size(18.dp))
     }
 }
 
@@ -455,30 +671,31 @@ private fun PlayerSidebar(
     current: PlayerDestination,
     collapsed: Boolean,
     watchingCount: Int,
+    showCollapseToggle: Boolean,
     onNavigate: (PlayerDestination) -> Unit,
     onToggleCollapse: () -> Unit,
 ) {
     Column(
         modifier = Modifier
-            .width(if (collapsed) 72.dp else 224.dp)
+            .width(if (collapsed) 72.dp else 248.dp)
             .fillMaxHeight()
             .background(
                 Brush.verticalGradient(
-                    listOf(Color(0x0AFFFFFF), Color(0x05FFFFFF)),
+                    listOf(Color(0x0EFFFFFF), Color(0x05FFFFFF)),
                 ),
             )
-            .border(BorderStroke(1.dp, SoulSyncColors.Line))
+            .statusBarsPadding()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 12.dp, vertical = 18.dp),
+            .padding(horizontal = 12.dp, vertical = 16.dp),
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 6.dp, vertical = 8.dp),
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Image(
                 painter = painterResource(id = R.drawable.soulsync_mark),
                 contentDescription = "SoulSync",
-                modifier = Modifier.size(32.dp),
+                modifier = Modifier.size(30.dp),
             )
             if (!collapsed) {
                 Spacer(modifier = Modifier.width(10.dp))
@@ -495,7 +712,7 @@ private fun PlayerSidebar(
         Spacer(modifier = Modifier.height(14.dp))
 
         SidebarItem(Icons.Default.Home, "Home", current is PlayerDestination.Home, collapsed) { onNavigate(PlayerDestination.Home) }
-        SidebarItem(Icons.Default.LiveTv, "Guide", current is PlayerDestination.Guide, collapsed) { onNavigate(PlayerDestination.Guide) }
+        SidebarItem(Icons.Default.LiveTv, "Live Guide", current is PlayerDestination.Guide, collapsed) { onNavigate(PlayerDestination.Guide) }
         SidebarItem(Icons.Default.Bookmark, "Watchlist", current is PlayerDestination.Watchlist, collapsed) { onNavigate(PlayerDestination.Watchlist) }
         SidebarItem(
             icon = Icons.Default.Group,
@@ -506,7 +723,7 @@ private fun PlayerSidebar(
 
         if (!collapsed) SidebarGroupLabel("WATCH") else Spacer(Modifier.height(10.dp))
         SidebarItem(Icons.Default.Movie, "Movies", current is PlayerDestination.Movies || current is PlayerDestination.MovieDetail, collapsed) { onNavigate(PlayerDestination.Movies) }
-        SidebarItem(Icons.Default.Tv, "TV", current is PlayerDestination.Tv || current is PlayerDestination.ShowDetail, collapsed) { onNavigate(PlayerDestination.Tv) }
+        SidebarItem(Icons.Default.Tv, "TV Shows", current is PlayerDestination.Tv || current is PlayerDestination.ShowDetail, collapsed) { onNavigate(PlayerDestination.Tv) }
         SidebarItem(Icons.Default.SmartDisplay, "YouTube", current is PlayerDestination.YouTube || current is PlayerDestination.YouTubeChannel, collapsed) { onNavigate(PlayerDestination.YouTube) }
 
         if (!collapsed) SidebarGroupLabel("LISTEN") else Spacer(Modifier.height(10.dp))
@@ -517,14 +734,16 @@ private fun PlayerSidebar(
         Spacer(modifier = Modifier.weight(1f))
         HorizontalDivider(color = SoulSyncColors.Line, modifier = Modifier.padding(vertical = 10.dp))
 
-        SidebarItem(Icons.Default.Settings, "Settings", current is PlayerDestination.Settings, collapsed) { onNavigate(PlayerDestination.Settings) }
-        SidebarItem(
-            icon = if (collapsed) Icons.Default.ChevronRight else Icons.Default.ChevronLeft,
-            label = "Collapse",
-            selected = false,
-            collapsed = collapsed,
-            onClick = onToggleCollapse,
-        )
+        SidebarItem(Icons.Default.Settings, "Player Settings", current is PlayerDestination.Settings, collapsed) { onNavigate(PlayerDestination.Settings) }
+        if (showCollapseToggle) {
+            SidebarItem(
+                icon = if (collapsed) Icons.Default.ChevronRight else Icons.Default.ChevronLeft,
+                label = "Collapse",
+                selected = false,
+                collapsed = collapsed,
+                onClick = onToggleCollapse,
+            )
+        }
     }
 }
 
@@ -557,18 +776,17 @@ private fun SidebarItem(
             .background(bg)
             .dpadFocusable(RoundedCornerShape(10.dp))
             .clickable(onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 10.dp),
+            .padding(horizontal = 10.dp, vertical = 11.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = if (collapsed) Arrangement.Center else Arrangement.Start,
     ) {
         Icon(icon, contentDescription = label, tint = fg, modifier = Modifier.size(20.dp))
         if (!collapsed) {
             Spacer(modifier = Modifier.width(12.dp))
             Text(
                 text = label,
-                color = if (selected) Color.White else fg,
+                color = if (selected) Color.White else SoulSyncColors.TextSoft,
                 fontSize = 14.sp,
-                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -582,12 +800,15 @@ private fun PlayerContent(
     record: PairedServerRecord,
     api: PlayerApiClient,
     coordinator: PlaybackCoordinator,
+    openHomeEditor: Boolean,
+    onConsumeHomeEditor: () -> Unit,
+    onCustomizeHome: () -> Unit,
     onNavigate: (PlayerDestination) -> Unit,
     onScrolledChanged: (Boolean) -> Unit,
+    onHasHeroChanged: (Boolean) -> Unit,
     onDeviceRevoked: () -> Unit,
     onUnpair: () -> Unit,
 ) {
-    var openHomeEditor by remember { mutableStateOf(false) }
     when (current) {
         PlayerDestination.Home -> HomeScreen(
             api = api,
@@ -595,8 +816,9 @@ private fun PlayerContent(
             onNavigate = onNavigate,
             onDeviceRevoked = onDeviceRevoked,
             onScrolledChanged = onScrolledChanged,
+            onHasHeroChanged = onHasHeroChanged,
             openEditorInitially = openHomeEditor,
-            onEditorConsumed = { openHomeEditor = false },
+            onEditorConsumed = onConsumeHomeEditor,
         )
         PlayerDestination.Guide -> GuideScreen(api, coordinator, onDeviceRevoked)
         PlayerDestination.Movies -> MoviesScreen(api, { onNavigate(PlayerDestination.MovieDetail(it)) }, onDeviceRevoked)
@@ -620,10 +842,7 @@ private fun PlayerContent(
         PlayerDestination.Settings -> SettingsScreen(
             record = record,
             api = api,
-            onCustomizeHome = {
-                openHomeEditor = true
-                onNavigate(PlayerDestination.Home)
-            },
+            onCustomizeHome = onCustomizeHome,
             onUnpair = onUnpair,
         )
     }
@@ -646,65 +865,38 @@ private fun MiniTransportBar(
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            SoulSyncArtwork(
-                url = item.artworkUrl,
-                contentDescription = item.title,
-                fallbackIcon = Icons.Default.MusicNote,
-                modifier = Modifier.size(40.dp).clip(RoundedCornerShape(6.dp)),
-            )
-            Spacer(modifier = Modifier.width(10.dp))
+            Box(modifier = Modifier.size(44.dp).clip(RoundedCornerShape(8.dp))) {
+                SoulSyncArtwork(url = item.artworkUrl, contentDescription = item.title, modifier = Modifier.fillMaxSize())
+            }
+            Spacer(modifier = Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
-                Text(item.title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(item.subtitle, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 12.sp)
+                Text(
+                    text = item.title,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = Color.White,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (item.subtitle.isNotBlank()) {
+                    Text(
+                        text = item.subtitle,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = SoulSyncColors.TextSecondary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
             IconButton(onClick = onTogglePlayPause, modifier = Modifier.dpadFocusable()) {
                 Icon(
                     imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
                     contentDescription = if (isPlaying) "Pause" else "Play",
-                    tint = SoulSyncColors.AccentLight,
+                    tint = Color.White,
                 )
             }
             IconButton(onClick = onNext, modifier = Modifier.dpadFocusable()) {
-                Icon(Icons.Default.SkipNext, contentDescription = "Next", tint = SoulSyncColors.TextPrimary)
+                Icon(Icons.Default.SkipNext, contentDescription = "Next", tint = Color.White)
             }
         }
     }
-}
-
-@Composable
-private fun MoreSheetRow(icon: ImageVector, label: String, onClick: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .dpadFocusable()
-            .clickable(onClick = onClick)
-            .padding(horizontal = 20.dp, vertical = 14.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(icon, contentDescription = null, tint = SoulSyncColors.AccentLight)
-        Spacer(modifier = Modifier.width(16.dp))
-        Text(label, style = MaterialTheme.typography.titleMedium)
-    }
-}
-
-private fun iconForTab(tab: BottomTab): ImageVector = when (tab) {
-    BottomTab.HOME -> Icons.Default.Home
-    BottomTab.GUIDE -> Icons.Default.LiveTv
-    BottomTab.MOVIES -> Icons.Default.Movie
-    BottomTab.TV -> Icons.Default.Tv
-    BottomTab.MUSIC -> Icons.Default.MusicNote
-    BottomTab.MORE -> Icons.Default.Menu
-}
-
-private fun tabForDestination(dest: PlayerDestination): BottomTab = when (dest) {
-    PlayerDestination.Home -> BottomTab.HOME
-    PlayerDestination.Guide -> BottomTab.GUIDE
-    PlayerDestination.Movies, is PlayerDestination.MovieDetail -> BottomTab.MOVIES
-    PlayerDestination.Tv, is PlayerDestination.ShowDetail -> BottomTab.TV
-    PlayerDestination.Music,
-    is PlayerDestination.ArtistDetail,
-    is PlayerDestination.AlbumDetail,
-    is PlayerDestination.PlaylistDetail,
-    -> BottomTab.MUSIC
-    else -> BottomTab.MORE
 }

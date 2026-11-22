@@ -19,13 +19,19 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BookmarkAdd
 import androidx.compose.material.icons.filled.BookmarkAdded
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.ui.layout.ContentScale
+import coil.compose.SubcomposeAsyncImage
+import coil.request.ImageRequest
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -112,15 +118,20 @@ fun HeroSpotlight(
     title: String,
     subtitle: String,
     backdropUrl: String?,
+    eyebrow: String? = null,
+    logoUrl: String? = null,
     inWatchlist: Boolean = false,
     onPlay: () -> Unit,
+    onDetails: (() -> Unit)? = null,
     onToggleWatchlist: (() -> Unit)? = null,
 ) {
     val chips = subtitle.split("•").map { it.trim() }.filter { it.isNotEmpty() }
+    val imageLoader = LocalSoulSyncImageLoader.current
+    val context = LocalContext.current
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(370.dp)
+            .height(430.dp)
             .background(SoulSyncColors.BgPrimary),
     ) {
         SoulSyncArtwork(
@@ -134,10 +145,10 @@ fun HeroSpotlight(
                 .fillMaxSize()
                 .background(
                     Brush.verticalGradient(
-                        0.0f to SoulSyncColors.BgPrimary.copy(alpha = 0.72f),
-                        0.28f to Color.Transparent,
-                        0.58f to SoulSyncColors.BgPrimary.copy(alpha = 0.55f),
-                        0.85f to SoulSyncColors.BgPrimary.copy(alpha = 0.92f),
+                        0.0f to SoulSyncColors.BgPrimary.copy(alpha = 0.86f),
+                        0.26f to SoulSyncColors.BgPrimary.copy(alpha = 0.16f),
+                        0.52f to SoulSyncColors.BgPrimary.copy(alpha = 0.35f),
+                        0.82f to SoulSyncColors.BgPrimary.copy(alpha = 0.92f),
                         1.0f to SoulSyncColors.BgPrimary,
                     ),
                 ),
@@ -146,18 +157,64 @@ fun HeroSpotlight(
             modifier = Modifier
                 .align(Alignment.BottomStart)
                 .fillMaxWidth()
-                .padding(horizontal = 18.dp, vertical = 18.dp),
+                .padding(horizontal = 18.dp, vertical = 20.dp),
         ) {
-            Text(
-                text = title,
-                color = Color.White,
-                fontWeight = FontWeight.ExtraBold,
-                fontSize = 30.sp,
-                lineHeight = 34.sp,
-                letterSpacing = (-0.5).sp,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
+            if (!eyebrow.isNullOrBlank()) {
+                Box(
+                    modifier = Modifier
+                        .background(SoulSyncColors.Accent.copy(alpha = 0.18f), RoundedCornerShape(999.dp))
+                        .border(1.dp, SoulSyncColors.Accent.copy(alpha = 0.5f), RoundedCornerShape(999.dp))
+                        .padding(horizontal = 10.dp, vertical = 4.dp),
+                ) {
+                    Text(
+                        text = eyebrow.uppercase(),
+                        color = SoulSyncColors.AccentLight,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        letterSpacing = 1.sp,
+                    )
+                }
+                Spacer(modifier = Modifier.height(10.dp))
+            }
+
+            if (!logoUrl.isNullOrBlank() && imageLoader != null) {
+                SubcomposeAsyncImage(
+                    model = ImageRequest.Builder(context)
+                        .data(logoUrl)
+                        .crossfade(true)
+                        .build(),
+                    imageLoader = imageLoader,
+                    contentDescription = title,
+                    contentScale = ContentScale.Fit,
+                    alignment = Alignment.BottomStart,
+                    modifier = Modifier
+                        .fillMaxWidth(0.74f)
+                        .height(68.dp),
+                    error = {
+                        Text(
+                            text = title,
+                            color = Color.White,
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = 30.sp,
+                            lineHeight = 34.sp,
+                            letterSpacing = (-0.5).sp,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    },
+                )
+            } else {
+                Text(
+                    text = title,
+                    color = Color.White,
+                    fontWeight = FontWeight.ExtraBold,
+                    fontSize = 30.sp,
+                    lineHeight = 34.sp,
+                    letterSpacing = (-0.5).sp,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
             if (chips.isNotEmpty()) {
                 Spacer(modifier = Modifier.height(10.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -179,13 +236,16 @@ fun HeroSpotlight(
                 }
             }
             Spacer(modifier = Modifier.height(16.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 Button(
                     onClick = onPlay,
                     shape = RoundedCornerShape(999.dp),
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = SoulSyncColors.Accent,
-                        contentColor = SoulSyncColors.OnAccent,
+                        containerColor = Color.White,
+                        contentColor = Color.Black,
                     ),
                     contentPadding = PaddingValues(horizontal = 22.dp, vertical = 12.dp),
                     modifier = Modifier.dpadFocusable(RoundedCornerShape(999.dp)),
@@ -194,29 +254,46 @@ fun HeroSpotlight(
                     Spacer(modifier = Modifier.width(6.dp))
                     Text("Play", fontWeight = FontWeight.Bold, fontSize = 15.sp)
                 }
-                if (onToggleWatchlist != null) {
+                if (onDetails != null) {
                     OutlinedButton(
-                        onClick = onToggleWatchlist,
+                        onClick = onDetails,
                         shape = RoundedCornerShape(999.dp),
                         colors = ButtonDefaults.outlinedButtonColors(
                             containerColor = SoulSyncColors.PanelGlass,
                             contentColor = SoulSyncColors.TextPrimary,
                         ),
                         border = BorderStroke(1.dp, SoulSyncColors.LineStrong),
-                        contentPadding = PaddingValues(horizontal = 18.dp, vertical = 12.dp),
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
                         modifier = Modifier.dpadFocusable(RoundedCornerShape(999.dp)),
+                    ) {
+                        Icon(Icons.Default.Info, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Details", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                    }
+                }
+                if (onToggleWatchlist != null) {
+                    Box(
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(CircleShape)
+                            .background(
+                                if (inWatchlist) SoulSyncColors.Accent.copy(alpha = 0.22f)
+                                else SoulSyncColors.PanelGlass,
+                            )
+                            .border(
+                                1.dp,
+                                if (inWatchlist) SoulSyncColors.AccentLight else SoulSyncColors.LineStrong,
+                                CircleShape,
+                            )
+                            .dpadFocusable(CircleShape)
+                            .clickable(onClick = onToggleWatchlist),
+                        contentAlignment = Alignment.Center,
                     ) {
                         Icon(
                             imageVector = if (inWatchlist) Icons.Default.BookmarkAdded else Icons.Default.BookmarkAdd,
-                            contentDescription = null,
-                            tint = if (inWatchlist) SoulSyncColors.AccentLight else SoulSyncColors.TextPrimary,
-                            modifier = Modifier.size(18.dp),
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = if (inWatchlist) "In Watchlist" else "Watchlist",
-                            fontWeight = FontWeight.SemiBold,
-                            fontSize = 14.sp,
+                            contentDescription = if (inWatchlist) "In Watchlist" else "Add to Watchlist",
+                            tint = if (inWatchlist) SoulSyncColors.AccentLight else Color.White,
+                            modifier = Modifier.size(20.dp),
                         )
                     }
                 }

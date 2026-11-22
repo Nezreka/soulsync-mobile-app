@@ -387,6 +387,52 @@ class PlayerApiClient(
             execute(Request.Builder().url(url).delete().build()) { }
         }
 
+    suspend fun fetchLogos(items: List<String>): MusicApiResult<Map<String, String>> {
+        if (items.isEmpty()) return MusicApiResult.Success(emptyMap())
+        val url = "$base/api/player/logos".toHttpUrl().newBuilder()
+            .addQueryParameter("items", items.take(12).joinToString(","))
+            .build()
+        return getJson(url.toString()) { body ->
+            val root = json.parseToJsonElement(body).jsonObject
+            val map = (root["logos"] as? JsonObject) ?: return@getJson emptyMap()
+            map.mapNotNull { (k, v) ->
+                val p = v as? kotlinx.serialization.json.JsonPrimitive ?: return@mapNotNull null
+                if (p is kotlinx.serialization.json.JsonNull) return@mapNotNull null
+                p.content.takeIf { it.isNotBlank() }?.let { k to it }
+            }.toMap()
+        }
+    }
+
+    suspend fun fetchDeviceProfiles(): MusicApiResult<List<DeviceProfileInfo>> =
+        getJson("$base/api/devices/me/profiles") { body ->
+            val root = json.parseToJsonElement(body).jsonObject
+            val arr = (root["profiles"] as? kotlinx.serialization.json.JsonArray) ?: return@getJson emptyList()
+            arr.mapNotNull { el ->
+                val obj = el as? JsonObject ?: return@mapNotNull null
+                val id = (obj["id"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toIntOrNull()
+                    ?: return@mapNotNull null
+                val name = (obj["name"] as? kotlinx.serialization.json.JsonPrimitive)?.content
+                    ?: return@mapNotNull null
+                val avatarColor = (obj["avatar_color"] as? kotlinx.serialization.json.JsonPrimitive)
+                    ?.takeIf { it !is kotlinx.serialization.json.JsonNull }?.content
+                val avatarUrl = (obj["avatar_url"] as? kotlinx.serialization.json.JsonPrimitive)
+                    ?.takeIf { it !is kotlinx.serialization.json.JsonNull }?.content
+                val isAdmin = (obj["is_admin"] as? kotlinx.serialization.json.JsonPrimitive)
+                    ?.content?.toBooleanStrictOrNull() ?: false
+                DeviceProfileInfo(id = id, name = name, avatarColor = avatarColor, avatarUrl = avatarUrl, isAdmin = isAdmin)
+            }
+        }
+
+    suspend fun pickDeviceProfile(profileId: Int): MusicApiResult<Unit> =
+        withContext(Dispatchers.IO) {
+            val payload = """{"profile_id":$profileId}"""
+            val req = Request.Builder()
+                .url("$base/api/devices/me/profile")
+                .post(payload.toRequestBody(JSON_MEDIA_TYPE))
+                .build()
+            execute(req) { }
+        }
+
     private suspend fun <T> getJson(url: String, parser: (String) -> T): MusicApiResult<T> =
         withContext(Dispatchers.IO) {
             execute(Request.Builder().url(url).get().build(), parser)

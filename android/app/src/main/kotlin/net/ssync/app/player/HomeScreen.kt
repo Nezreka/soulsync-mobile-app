@@ -2,6 +2,7 @@ package net.ssync.app.player
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -13,16 +14,26 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.Headphones
+import androidx.compose.material.icons.filled.LiveTv
+import androidx.compose.material.icons.filled.Movie
+import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Podcasts
+import androidx.compose.material.icons.filled.SmartDisplay
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -37,7 +48,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -54,6 +69,18 @@ import net.ssync.player.ProgressRow
 import net.ssync.player.VideoCatalog
 import net.ssync.player.WatchlistItem
 
+private data class BillboardSlide(
+    val kind: String, // "movie" | "show"
+    val id: Int,
+    val tmdbId: Int?,
+    val title: String,
+    val eyebrow: String,
+    val subtitle: String,
+    val backdropUrl: String,
+    val posterUrl: String,
+    val addedAt: String,
+)
+
 @Composable
 fun HomeScreen(
     api: PlayerApiClient,
@@ -61,6 +88,7 @@ fun HomeScreen(
     onNavigate: (PlayerDestination) -> Unit,
     onDeviceRevoked: () -> Unit,
     onScrolledChanged: (Boolean) -> Unit = {},
+    onHasHeroChanged: (Boolean) -> Unit = {},
     openEditorInitially: Boolean = false,
     onEditorConsumed: () -> Unit = {},
 ) {
@@ -72,6 +100,7 @@ fun HomeScreen(
     var albums by remember { mutableStateOf<List<LibAlbum>>(emptyList()) }
     var podcasts by remember { mutableStateOf<List<PodcastSub>>(emptyList()) }
     var books by remember { mutableStateOf<List<OwnedBook>>(emptyList()) }
+    var logos by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     var homeLayout by remember { mutableStateOf(HomeLayout()) }
     var layoutShared by remember { mutableStateOf(true) }
     var showEditor by remember { mutableStateOf(openEditorInitially) }
@@ -83,7 +112,6 @@ fun HomeScreen(
         }
     }
 
-    // Auto-rotating Netflix-style Billboard slide index
     var billboardIndex by remember { mutableIntStateOf(0) }
 
     LaunchedEffect(api) {
@@ -133,12 +161,75 @@ fun HomeScreen(
         isLoading = false
     }
 
-    val billboardMovies = catalog.movies.take(5)
-    LaunchedEffect(billboardMovies.size) {
-        if (billboardMovies.size > 1) {
+    // Build New Releases Billboard slides from newest Movies + TV Shows (1:1 with desktop /player)
+    val billboardSlides = remember(catalog) {
+        val movieSlides = catalog.movies
+            .sortedByDescending { it.addedAt.orEmpty() }
+            .take(4)
+            .map { m ->
+                BillboardSlide(
+                    kind = "movie",
+                    id = m.id,
+                    tmdbId = m.tmdbId,
+                    title = m.title,
+                    eyebrow = "New Release",
+                    subtitle = listOfNotNull(
+                        m.year?.toString(),
+                        m.contentRating,
+                        m.rating?.let { "★ %.1f".format(it) },
+                        m.genres.firstOrNull(),
+                    ).joinToString(" • "),
+                    backdropUrl = api.artwork.movieBackdrop(m.id),
+                    posterUrl = api.artwork.moviePoster(m.id),
+                    addedAt = m.addedAt.orEmpty(),
+                )
+            }
+        val showSlides = catalog.shows
+            .sortedByDescending { it.addedAt.orEmpty() }
+            .take(3)
+            .map { s ->
+                BillboardSlide(
+                    kind = "show",
+                    id = s.id,
+                    tmdbId = s.tmdbId,
+                    title = s.title,
+                    eyebrow = "New Series",
+                    subtitle = listOfNotNull(
+                        s.year?.toString(),
+                        s.contentRating,
+                        s.rating?.let { "★ %.1f".format(it) },
+                        s.genres.firstOrNull(),
+                    ).joinToString(" • "),
+                    backdropUrl = api.artwork.showBackdrop(s.id),
+                    posterUrl = api.artwork.showPoster(s.id),
+                    addedAt = s.addedAt.orEmpty(),
+                )
+            }
+        (movieSlides + showSlides)
+            .sortedByDescending { it.addedAt }
+            .take(6)
+    }
+
+    // Fetch official TMDB wordmark logos for the billboard slides
+    LaunchedEffect(billboardSlides) {
+        val keys = billboardSlides.mapNotNull { slide ->
+            slide.tmdbId?.let { "${slide.kind}:$it" }
+        }
+        if (keys.isNotEmpty()) {
+            (api.fetchLogos(keys) as? MusicApiResult.Success)?.let { logos = it.data }
+        }
+    }
+
+    val showBillboard = homeLayout.billboard && billboardSlides.isNotEmpty()
+    LaunchedEffect(showBillboard) {
+        onHasHeroChanged(showBillboard)
+    }
+
+    LaunchedEffect(billboardSlides.size) {
+        if (billboardSlides.size > 1) {
             while (true) {
-                delay(7_000L)
-                billboardIndex = (billboardIndex + 1) % billboardMovies.size
+                delay(8_000L)
+                billboardIndex = (billboardIndex + 1) % billboardSlides.size
             }
         }
     }
@@ -154,63 +245,76 @@ fun HomeScreen(
         onScrolledChanged(scrolled)
     }
 
+    val moviesById = remember(catalog.movies) { catalog.movies.associateBy { it.id } }
+    val showsById = remember(catalog.shows) { catalog.shows.associateBy { it.id } }
+    val sortedMovies = remember(catalog.movies) { catalog.movies.sortedByDescending { it.addedAt.orEmpty() } }
+    val sortedShows = remember(catalog.shows) { catalog.shows.sortedByDescending { it.addedAt.orEmpty() } }
+
     LazyColumn(
         state = listState,
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(bottom = 28.dp),
+        contentPadding = PaddingValues(bottom = 36.dp),
     ) {
-        // Netflix-style auto-rotating Hero Billboard (toggleable via Home Layout)
-        if (homeLayout.billboard && billboardMovies.isNotEmpty()) {
+        if (showBillboard) {
             item(key = "billboard") {
-                val hero = billboardMovies[billboardIndex % billboardMovies.size]
-                val saved = watchlist.any { it.itemType == "movie" && it.itemId == hero.id.toString() }
+                val hero = billboardSlides[billboardIndex % billboardSlides.size]
+                val saved = watchlist.any { it.itemType == hero.kind && it.itemId == hero.id.toString() }
+                val logoKey = hero.tmdbId?.let { "${hero.kind}:$it" }
                 Box {
                     HeroSpotlight(
                         title = hero.title,
-                        subtitle = listOfNotNull(
-                            hero.year?.toString(),
-                            hero.contentRating,
-                            hero.rating?.let { "★ %.1f".format(it) },
-                            hero.genres.firstOrNull(),
-                        ).joinToString(" • "),
-                        backdropUrl = api.artwork.movieBackdrop(hero.id),
+                        subtitle = hero.subtitle,
+                        backdropUrl = hero.backdropUrl,
+                        eyebrow = hero.eyebrow,
+                        logoUrl = logoKey?.let { logos[it] }?.let { api.artwork.resolve(it) },
                         inWatchlist = saved,
                         onPlay = {
-                            coordinator.playVideo(
-                                ActivePlayable(
-                                    itemType = "movie",
-                                    itemId = hero.id.toString(),
-                                    title = hero.title,
-                                    subtitle = hero.year?.toString().orEmpty(),
-                                    artworkUrl = api.artwork.moviePoster(hero.id),
-                                    streamUrl = api.streamUrl("movie", hero.id.toString()),
-                                    isVideo = true,
-                                ),
-                            )
+                            if (hero.kind == "movie") {
+                                coordinator.playVideo(
+                                    ActivePlayable(
+                                        itemType = "movie",
+                                        itemId = hero.id.toString(),
+                                        title = hero.title,
+                                        subtitle = hero.subtitle,
+                                        artworkUrl = hero.posterUrl,
+                                        streamUrl = api.streamUrl("movie", hero.id.toString()),
+                                        isVideo = true,
+                                    ),
+                                )
+                            } else {
+                                onNavigate(PlayerDestination.ShowDetail(hero.id))
+                            }
+                        },
+                        onDetails = {
+                            if (hero.kind == "movie") onNavigate(PlayerDestination.MovieDetail(hero.id))
+                            else onNavigate(PlayerDestination.ShowDetail(hero.id))
                         },
                         onToggleWatchlist = {
                             scope.launch {
-                                if (saved) api.removeFromWatchlist("movie", hero.id.toString())
-                                else api.addToWatchlist("movie", hero.id.toString())
+                                if (saved) api.removeFromWatchlist(hero.kind, hero.id.toString())
+                                else api.addToWatchlist(hero.kind, hero.id.toString())
                                 (api.fetchWatchlist() as? MusicApiResult.Success)?.let { watchlist = it.data }
                             }
                         },
                     )
-                    if (billboardMovies.size > 1) {
+                    if (billboardSlides.size > 1) {
                         Row(
                             modifier = Modifier
                                 .align(Alignment.BottomEnd)
-                                .padding(end = 18.dp, bottom = 22.dp),
+                                .padding(end = 18.dp, bottom = 26.dp),
                             horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            billboardMovies.indices.forEach { idx ->
+                            billboardSlides.indices.forEach { idx ->
+                                val active = idx == billboardIndex % billboardSlides.size
                                 Box(
                                     modifier = Modifier
-                                        .size(if (idx == billboardIndex) 8.dp else 6.dp)
+                                        .width(if (active) 20.dp else 6.dp)
+                                        .height(6.dp)
                                         .clip(CircleShape)
                                         .background(
-                                            if (idx == billboardIndex) SoulSyncColors.AccentLight
-                                            else SoulSyncColors.TextSecondary.copy(alpha = 0.5f),
+                                            if (active) SoulSyncColors.AccentLight
+                                            else Color.White.copy(alpha = 0.35f),
                                         )
                                         .clickable { billboardIndex = idx },
                                 )
@@ -219,20 +323,37 @@ fun HomeScreen(
                     }
                 }
             }
+        } else {
+            // Guaranteed top safe-zone when no hero billboard is shown so header NEVER overlaps row 1
+            item(key = "top-header-spacer") {
+                Spacer(modifier = Modifier.statusBarsPadding().height(68.dp))
+            }
+        }
+
+        // Sleek Plex/Apple-TV-style Quick-Jump Category Pill Strip (no dated bottom nav needed)
+        item(key = "quick-pills") {
+            QuickJumpStrip(onNavigate = onNavigate)
         }
 
         // Dynamic customizable rows driven by HomeLayout (order, visibility, style, genre rows)
         homeLayout.rows.filter { it.on }.forEach { row ->
-            val cardWidth = if (row.style == "large") 150.dp else 122.dp
+            val cardWidth = if (row.style == "large") 150.dp else 124.dp
             when {
                 row.id == "continue" && continueItems.isNotEmpty() -> {
                     item(key = "row-continue") {
-                        MediaRail(title = "Continue") {
+                        MediaRail(title = "Continue Watching") {
                             items(continueItems, key = { "${it.itemType}:${it.itemId}" }) { item ->
+                                val resolvedArt = api.artwork.resolve(item.meta?.backdrop ?: item.meta?.artwork)
+                                    ?: api.artwork.forItem(
+                                        itemType = item.itemType,
+                                        itemId = item.itemId,
+                                        preferBackdrop = true,
+                                        parentId = item.meta?.parentId,
+                                    )
                                 WideMediaCard(
                                     title = item.meta?.title ?: item.itemId,
                                     subtitle = item.meta?.subtitle ?: item.itemType.replaceFirstChar { it.uppercase() },
-                                    artworkUrl = api.artwork.resolve(item.meta?.backdrop ?: item.meta?.artwork),
+                                    artworkUrl = resolvedArt,
                                     progress = item.progressFraction,
                                     onClick = {
                                         val isVideo = item.itemType in setOf("movie", "episode", "youtube")
@@ -241,7 +362,7 @@ fun HomeScreen(
                                             itemId = item.itemId,
                                             title = item.meta?.title ?: item.itemId,
                                             subtitle = item.meta?.subtitle.orEmpty(),
-                                            artworkUrl = api.artwork.resolve(item.meta?.artwork),
+                                            artworkUrl = resolvedArt,
                                             streamUrl = api.streamUrl(item.itemType, item.itemId),
                                             isVideo = isVideo,
                                             resumePositionMs = (item.positionSeconds * 1000.0).toLong(),
@@ -255,15 +376,22 @@ fun HomeScreen(
                 }
                 row.id == "watchlist" && watchlist.isNotEmpty() -> {
                     item(key = "row-watchlist") {
-                        MediaRail("Watchlist", actionLabel = "See all", onAction = { onNavigate(PlayerDestination.Watchlist) }) {
+                        MediaRail("Your Watchlist", actionLabel = "See all", onAction = { onNavigate(PlayerDestination.Watchlist) }) {
                             items(watchlist, key = { "${it.itemType}:${it.itemId}" }) { w ->
+                                val idInt = w.itemId.toIntOrNull()
+                                val movie = if (w.itemType == "movie" && idInt != null) moviesById[idInt] else null
+                                val show = if (w.itemType == "show" && idInt != null) showsById[idInt] else null
+                                val title = movie?.title ?: show?.title ?: w.meta?.title ?: w.itemId
+                                val art = api.artwork.resolve(w.meta?.artwork)
+                                    ?: api.artwork.forItem(w.itemType, w.itemId, preferBackdrop = false)
                                 PosterCard(
-                                    title = w.meta?.title ?: w.itemId,
-                                    subtitle = w.itemType.replaceFirstChar { it.uppercase() },
-                                    artworkUrl = api.artwork.resolve(w.meta?.artwork),
+                                    title = title,
+                                    subtitle = movie?.year?.toString()
+                                        ?: show?.year?.toString()
+                                        ?: w.itemType.replaceFirstChar { it.uppercase() },
+                                    artworkUrl = art,
                                     width = cardWidth,
                                     onClick = {
-                                        val idInt = w.itemId.toIntOrNull()
                                         if (w.itemType == "movie" && idInt != null) onNavigate(PlayerDestination.MovieDetail(idInt))
                                         if (w.itemType == "show" && idInt != null) onNavigate(PlayerDestination.ShowDetail(idInt))
                                     },
@@ -272,11 +400,40 @@ fun HomeScreen(
                         }
                     }
                 }
-                row.id == "top-rated" && catalog.movies.isNotEmpty() -> {
-                    item(key = "row-top-rated") {
+                row.id == "new-episodes" && catalog.recentEpisodes.isNotEmpty() -> {
+                    item(key = "row-new-episodes") {
+                        MediaRail("New Episodes", actionLabel = "TV", onAction = { onNavigate(PlayerDestination.Tv) }) {
+                            items(catalog.recentEpisodes.take(18), key = { it.id }) { ep ->
+                                val art = if (ep.hasStill) api.artwork.episodeStill(ep.id)
+                                else api.artwork.showBackdrop(ep.showId)
+                                WideMediaCard(
+                                    title = ep.showTitle,
+                                    subtitle = "S${ep.seasonNumber} E${ep.episodeNumber}" +
+                                        (ep.title?.let { " · $it" } ?: ""),
+                                    artworkUrl = art,
+                                    onClick = {
+                                        coordinator.playVideo(
+                                            ActivePlayable(
+                                                itemType = "episode",
+                                                itemId = ep.id.toString(),
+                                                title = ep.title ?: "${ep.showTitle} S${ep.seasonNumber}E${ep.episodeNumber}",
+                                                subtitle = ep.showTitle,
+                                                artworkUrl = art,
+                                                streamUrl = api.streamUrl("episode", ep.id.toString()),
+                                                isVideo = true,
+                                            ),
+                                        )
+                                    },
+                                )
+                            }
+                        }
+                    }
+                }
+                (row.id == "top-rated" || row.id == "top-movies") && catalog.movies.isNotEmpty() -> {
+                    item(key = "row-${row.id}") {
                         val top10 = catalog.movies.sortedByDescending { it.rating ?: 0.0 }.take(10)
                         MediaRail("Top 10 in Your Library") {
-                            itemsIndexed(top10, key = { _, m -> "top-${m.id}" }) { idx, m ->
+                            itemsIndexed(top10, key = { _, m -> "${row.id}-${m.id}" }) { idx, m ->
                                 if (row.style == "ranked") {
                                     RankedPosterCard(
                                         rank = idx + 1,
@@ -298,10 +455,25 @@ fun HomeScreen(
                         }
                     }
                 }
-                row.id == "recent-movies" && catalog.movies.isNotEmpty() -> {
+                row.id == "top-shows" && catalog.shows.isNotEmpty() -> {
+                    item(key = "row-top-shows") {
+                        val top10 = catalog.shows.sortedByDescending { it.rating ?: 0.0 }.take(10)
+                        MediaRail("Top 10 TV Shows") {
+                            itemsIndexed(top10, key = { _, s -> "top-show-${s.id}" }) { idx, s ->
+                                RankedPosterCard(
+                                    rank = idx + 1,
+                                    title = s.title,
+                                    artworkUrl = api.artwork.showPoster(s.id),
+                                    onClick = { onNavigate(PlayerDestination.ShowDetail(s.id)) },
+                                )
+                            }
+                        }
+                    }
+                }
+                row.id == "recent-movies" && sortedMovies.isNotEmpty() -> {
                     item(key = "row-movies") {
-                        MediaRail("Movies", actionLabel = "All", onAction = { onNavigate(PlayerDestination.Movies) }) {
-                            items(catalog.movies.take(20), key = { it.id }) { m ->
+                        MediaRail("Recently Added Movies", actionLabel = "All", onAction = { onNavigate(PlayerDestination.Movies) }) {
+                            items(sortedMovies.take(20), key = { it.id }) { m ->
                                 if (row.style == "wide") {
                                     WideMediaCard(
                                         title = m.title,
@@ -323,10 +495,10 @@ fun HomeScreen(
                         }
                     }
                 }
-                row.id == "recent-shows" && catalog.shows.isNotEmpty() -> {
+                row.id == "recent-shows" && sortedShows.isNotEmpty() -> {
                     item(key = "row-shows") {
-                        MediaRail("TV Shows", actionLabel = "All", onAction = { onNavigate(PlayerDestination.Tv) }) {
-                            items(catalog.shows.take(20), key = { it.id }) { show ->
+                        MediaRail("Recently Added Shows", actionLabel = "All", onAction = { onNavigate(PlayerDestination.Tv) }) {
+                            items(sortedShows.take(20), key = { it.id }) { show ->
                                 PosterCard(
                                     title = show.title,
                                     subtitle = "${show.episodeCount} episodes",
@@ -341,7 +513,7 @@ fun HomeScreen(
                 }
                 row.id == "recent-music" && albums.isNotEmpty() -> {
                     item(key = "row-music") {
-                        MediaRail("Music", actionLabel = "Library", onAction = { onNavigate(PlayerDestination.Music) }) {
+                        MediaRail("Recently Added Music", actionLabel = "Library", onAction = { onNavigate(PlayerDestination.Music) }) {
                             items(albums.take(20), key = { it.id }) { album ->
                                 SquareMediaCard(
                                     title = album.title,
@@ -401,7 +573,7 @@ fun HomeScreen(
                                 SquareMediaCard(
                                     title = book.title,
                                     subtitle = book.author,
-                                    artworkUrl = api.artwork.resolve(book.coverUrl),
+                                    artworkUrl = api.artwork.resolve(book.coverUrl) ?: api.artwork.audiobookCover(book.asin),
                                     fallbackIcon = Icons.Default.Headphones,
                                     onClick = { onNavigate(PlayerDestination.AudiobookDetail(book)) },
                                 )
@@ -411,11 +583,11 @@ fun HomeScreen(
                 }
                 row.id.startsWith("genre:movie:") -> {
                     val genre = row.id.removePrefix("genre:movie:")
-                    val matches = catalog.movies.filter { it.genres.any { g -> g.equals(genre, ignoreCase = true) } }
+                    val matches = catalog.movies.filter { m -> m.genres.any { it.equals(genre, ignoreCase = true) } }
                     if (matches.isNotEmpty()) {
                         item(key = "row-${row.id}") {
                             MediaRail("$genre Movies") {
-                                items(matches, key = { it.id }) { m ->
+                                items(matches.take(20), key = { it.id }) { m ->
                                     PosterCard(
                                         title = m.title,
                                         subtitle = m.year?.toString(),
@@ -428,39 +600,62 @@ fun HomeScreen(
                         }
                     }
                 }
+                row.id.startsWith("genre:show:") -> {
+                    val genre = row.id.removePrefix("genre:show:")
+                    val matches = catalog.shows.filter { s -> s.genres.any { it.equals(genre, ignoreCase = true) } }
+                    if (matches.isNotEmpty()) {
+                        item(key = "row-${row.id}") {
+                            MediaRail("$genre Shows") {
+                                items(matches.take(20), key = { it.id }) { s ->
+                                    PosterCard(
+                                        title = s.title,
+                                        subtitle = "${s.episodeCount} episodes",
+                                        artworkUrl = api.artwork.showPoster(s.id),
+                                        width = cardWidth,
+                                        onClick = { onNavigate(PlayerDestination.ShowDetail(s.id)) },
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
 
-        // Customize Home Layout Footer CTA
+        // Customize Home footer action
         item(key = "customize-home") {
             Box(
-                modifier = Modifier.fillMaxWidth().padding(vertical = 18.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 18.dp, vertical = 14.dp),
                 contentAlignment = Alignment.Center,
             ) {
                 OutlinedButton(
                     onClick = { showEditor = true },
                     border = BorderStroke(1.dp, SoulSyncColors.LineStrong),
-                    modifier = Modifier.dpadFocusable(),
+                    shape = CircleShape,
+                    modifier = Modifier.dpadFocusable(CircleShape),
                 ) {
-                    Icon(Icons.Default.Tune, contentDescription = null, tint = SoulSyncColors.AccentLight, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("Customize Home Layout", color = SoulSyncColors.TextPrimary)
+                    Icon(Icons.Default.Tune, contentDescription = null, modifier = Modifier.size(16.dp), tint = SoulSyncColors.TextSoft)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Customize Home", color = SoulSyncColors.TextSoft)
                 }
             }
         }
     }
 
     if (showEditor) {
-        val allGenres = catalog.movies.flatMap { it.genres }.distinct().sorted()
         HomeEditorSheet(
             initialLayout = homeLayout,
             initialShared = layoutShared,
-            availableMovieGenres = allGenres,
-            onSave = { updated, isShared ->
+            availableMovieGenres = catalog.movies.flatMap { it.genres }.distinct().sorted(),
+            onSave = { updated, shared ->
                 homeLayout = updated
-                layoutShared = isShared
+                layoutShared = shared
                 showEditor = false
-                scope.launch { api.saveHomeLayout(updated, device = "phone", shared = isShared) }
+                scope.launch {
+                    api.saveHomeLayout(layout = updated, device = if (shared) "*" else "phone")
+                }
             },
             onReset = {
                 homeLayout = HomeLayout()
@@ -469,5 +664,55 @@ fun HomeScreen(
             },
             onDismiss = { showEditor = false },
         )
+    }
+}
+
+private data class QuickChip(val label: String, val icon: ImageVector, val dest: PlayerDestination)
+
+@Composable
+private fun QuickJumpStrip(onNavigate: (PlayerDestination) -> Unit) {
+    val chips = remember {
+        listOf(
+            QuickChip("Movies", Icons.Default.Movie, PlayerDestination.Movies),
+            QuickChip("TV Shows", Icons.Default.Tv, PlayerDestination.Tv),
+            QuickChip("Music", Icons.Default.MusicNote, PlayerDestination.Music),
+            QuickChip("Live Guide", Icons.Default.LiveTv, PlayerDestination.Guide),
+            QuickChip("Watchlist", Icons.Default.Bookmark, PlayerDestination.Watchlist),
+            QuickChip("Watching Now", Icons.Default.Group, PlayerDestination.WatchingNow),
+            QuickChip("YouTube", Icons.Default.SmartDisplay, PlayerDestination.YouTube),
+            QuickChip("Podcasts", Icons.Default.Podcasts, PlayerDestination.Podcasts),
+            QuickChip("Audiobooks", Icons.Default.Headphones, PlayerDestination.Audiobooks),
+        )
+    }
+    LazyRow(
+        contentPadding = PaddingValues(horizontal = 18.dp, vertical = 10.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        items(chips, key = { it.label }) { chip ->
+            Row(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(Color.White.copy(alpha = 0.06f))
+                    .border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(999.dp))
+                    .dpadFocusable(RoundedCornerShape(999.dp))
+                    .clickable { onNavigate(chip.dest) }
+                    .padding(horizontal = 13.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Icon(
+                    imageVector = chip.icon,
+                    contentDescription = null,
+                    tint = SoulSyncColors.TextSoft,
+                    modifier = Modifier.size(15.dp),
+                )
+                Text(
+                    text = chip.label,
+                    color = Color.White,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+        }
     }
 }

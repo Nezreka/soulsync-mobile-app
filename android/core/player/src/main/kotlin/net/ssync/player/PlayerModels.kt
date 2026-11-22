@@ -574,6 +574,14 @@ data class PlayerSettings(
     val stillWatchingAfter: Int = 3,
 )
 
+data class DeviceProfileInfo(
+    val id: Int,
+    val name: String,
+    val avatarColor: String? = null,
+    val avatarUrl: String? = null,
+    val isAdmin: Boolean = false,
+)
+
 // ── Customizable Home Layout (1:1 with core/player/home_layout.py) ───────────
 
 @Serializable
@@ -785,63 +793,154 @@ internal data class WatchlistPutRequest(
 
 /**
  * Helper to decode SoulSync's compact `GET /api/player/video-catalog` wire format
- * (handles both compact array-table wire format and standard object list format).
+ * (1:1 port of `webui/src/routes/player/-lib/catalog.ts` — handles both positional
+ * array-table rows indexed by `fields.movie`/`fields.show` + `genres` dictionary
+ * AND standard JSON object lists).
  */
 internal object VideoCatalogDecoder {
     fun decode(root: JsonObject): VideoCatalog {
-        val movies = parseMovies(root["movies"])
-        val shows = parseShows(root["shows"])
+        val fieldsObj = root["fields"] as? JsonObject
+        val movieFields = (fieldsObj?.get("movie") as? JsonArray)
+            ?.mapIndexedNotNull { idx, el -> el.strOrNull()?.let { it to idx } }
+            ?.toMap()
+            ?: emptyMap()
+        val showFields = (fieldsObj?.get("show") as? JsonArray)
+            ?.mapIndexedNotNull { idx, el -> el.strOrNull()?.let { it to idx } }
+            ?.toMap()
+            ?: emptyMap()
+        val genreMap = (root["genres"] as? JsonObject)
+            ?.mapNotNull { (k, v) -> v.strOrNull()?.let { k to it } }
+            ?.toMap()
+            ?: emptyMap()
+
+        val movies = parseMovies(root["movies"], movieFields, genreMap)
+        val shows = parseShows(root["shows"], showFields, genreMap)
         val recent = parseRecentEpisodes(root["recent_episodes"])
         val youtube = parseYoutube(root["youtube"])
         val kindsObj = root["kinds"] as? JsonObject
         val kinds = VideoCatalogKinds(
-            movies = kindsObj?.get("movies")?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: true,
-            shows = kindsObj?.get("shows")?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: true,
-            youtube = kindsObj?.get("youtube")?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: true,
+            movies = kindsObj?.get("movies")?.boolOrNull() ?: movies.isNotEmpty(),
+            shows = kindsObj?.get("shows")?.boolOrNull() ?: shows.isNotEmpty(),
+            youtube = kindsObj?.get("youtube")?.boolOrNull() ?: youtube.isNotEmpty(),
         )
         return VideoCatalog(movies, shows, recent, youtube, kinds)
     }
 
-    private fun parseMovies(el: JsonElement?): List<CatalogMovie> {
+    private fun JsonElement?.strOrNull(): String? {
+        val p = this as? kotlinx.serialization.json.JsonPrimitive ?: return null
+        if (p is kotlinx.serialization.json.JsonNull) return null
+        return p.content.takeIf { it.isNotEmpty() }
+    }
+
+    private fun JsonElement?.intOrNullSafe(): Int? {
+        val p = this as? kotlinx.serialization.json.JsonPrimitive ?: return null
+        if (p is kotlinx.serialization.json.JsonNull) return null
+        return p.intOrNull ?: p.doubleOrNull?.toInt()
+    }
+
+    private fun JsonElement?.doubleOrNullSafe(): Double? {
+        val p = this as? kotlinx.serialization.json.JsonPrimitive ?: return null
+        if (p is kotlinx.serialization.json.JsonNull) return null
+        return p.doubleOrNull
+    }
+
+    private fun JsonElement?.boolOrNull(): Boolean? {
+        val p = this as? kotlinx.serialization.json.JsonPrimitive ?: return null
+        if (p is kotlinx.serialization.json.JsonNull) return null
+        return p.content.toBooleanStrictOrNull() ?: (p.intOrNull?.let { it != 0 })
+    }
+
+    private fun parseGenreIds(el: JsonElement?, genreMap: Map<String, String>): List<String> {
         val arr = el as? JsonArray ?: return emptyList()
+        return arr.mapNotNull { g ->
+            val key = g.strOrNull() ?: return@mapNotNull null
+            genreMap[key] ?: key.takeIf { it.toIntOrNull() == null }
+        }
+    }
+
+    private fun parseMovies(
+        el: JsonElement?,
+        fields: Map<String, Int>,
+        genreMap: Map<String, String>,
+    ): List<CatalogMovie> {
+        val arr = el as? JsonArray ?: return emptyList()
+        fun JsonArray.col(name: String): JsonElement? = fields[name]?.let { getOrNull(it) }
         return arr.mapNotNull { item ->
             when (item) {
+                is JsonArray -> CatalogMovie(
+                    id = item.col("id").intOrNullSafe() ?: return@mapNotNull null,
+                    title = item.col("title").strOrNull() ?: return@mapNotNull null,
+                    year = item.col("year").intOrNullSafe(),
+                    runtimeSeconds = item.col("runtime_seconds").intOrNullSafe(),
+                    contentRating = item.col("content_rating").strOrNull(),
+                    rating = item.col("rating").doubleOrNullSafe(),
+                    genres = parseGenreIds(item.col("genre_ids") ?: item.col("genres"), genreMap),
+                    addedAt = item.col("added_at").strOrNull(),
+                    hasPoster = item.col("has_poster").boolOrNull() ?: true,
+                    hasBackdrop = item.col("has_backdrop").boolOrNull() ?: false,
+                    studio = item.col("studio").strOrNull(),
+                    tmdbId = item.col("tmdb_id").intOrNullSafe(),
+                )
                 is JsonObject -> CatalogMovie(
-                    id = item["id"]?.jsonPrimitive?.intOrNull ?: return@mapNotNull null,
-                    title = item["title"]?.jsonPrimitive?.content ?: return@mapNotNull null,
-                    year = item["year"]?.jsonPrimitive?.intOrNull,
-                    runtimeSeconds = item["runtime_seconds"]?.jsonPrimitive?.intOrNull,
-                    contentRating = item["content_rating"]?.jsonPrimitive?.content,
-                    rating = item["rating"]?.jsonPrimitive?.doubleOrNull,
-                    genres = (item["genres"] as? JsonArray)?.mapNotNull { it.jsonPrimitive.content } ?: emptyList(),
-                    addedAt = item["added_at"]?.jsonPrimitive?.content,
-                    hasPoster = item["has_poster"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: true,
-                    hasBackdrop = item["has_backdrop"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: false,
-                    studio = item["studio"]?.jsonPrimitive?.content,
-                    tmdbId = item["tmdb_id"]?.jsonPrimitive?.intOrNull,
+                    id = item["id"].intOrNullSafe() ?: return@mapNotNull null,
+                    title = item["title"].strOrNull() ?: return@mapNotNull null,
+                    year = item["year"].intOrNullSafe(),
+                    runtimeSeconds = item["runtime_seconds"].intOrNullSafe(),
+                    contentRating = item["content_rating"].strOrNull(),
+                    rating = item["rating"].doubleOrNullSafe(),
+                    genres = parseGenreIds(item["genres"] ?: item["genre_ids"], genreMap),
+                    addedAt = item["added_at"].strOrNull(),
+                    hasPoster = item["has_poster"].boolOrNull() ?: true,
+                    hasBackdrop = item["has_backdrop"].boolOrNull() ?: false,
+                    studio = item["studio"].strOrNull(),
+                    tmdbId = item["tmdb_id"].intOrNullSafe(),
                 )
                 else -> null
             }
         }
     }
 
-    private fun parseShows(el: JsonElement?): List<CatalogShow> {
+    private fun parseShows(
+        el: JsonElement?,
+        fields: Map<String, Int>,
+        genreMap: Map<String, String>,
+    ): List<CatalogShow> {
         val arr = el as? JsonArray ?: return emptyList()
+        fun JsonArray.col(name: String): JsonElement? = fields[name]?.let { getOrNull(it) }
         return arr.mapNotNull { item ->
             when (item) {
+                is JsonArray -> {
+                    val epsCount = item.col("episode_count").intOrNullSafe()
+                        ?: (item.col("episodes") as? JsonArray)?.size
+                        ?: 0
+                    CatalogShow(
+                        id = item.col("id").intOrNullSafe() ?: return@mapNotNull null,
+                        title = item.col("title").strOrNull() ?: return@mapNotNull null,
+                        year = item.col("year").intOrNullSafe(),
+                        network = item.col("network").strOrNull(),
+                        contentRating = item.col("content_rating").strOrNull(),
+                        rating = item.col("rating").doubleOrNullSafe(),
+                        genres = parseGenreIds(item.col("genre_ids") ?: item.col("genres"), genreMap),
+                        addedAt = item.col("added_at").strOrNull(),
+                        hasPoster = item.col("has_poster").boolOrNull() ?: true,
+                        hasBackdrop = item.col("has_backdrop").boolOrNull() ?: false,
+                        episodeCount = epsCount,
+                        tmdbId = item.col("tmdb_id").intOrNullSafe(),
+                    )
+                }
                 is JsonObject -> CatalogShow(
-                    id = item["id"]?.jsonPrimitive?.intOrNull ?: return@mapNotNull null,
-                    title = item["title"]?.jsonPrimitive?.content ?: return@mapNotNull null,
-                    year = item["year"]?.jsonPrimitive?.intOrNull,
-                    network = item["network"]?.jsonPrimitive?.content,
-                    contentRating = item["content_rating"]?.jsonPrimitive?.content,
-                    rating = item["rating"]?.jsonPrimitive?.doubleOrNull,
-                    genres = (item["genres"] as? JsonArray)?.mapNotNull { it.jsonPrimitive.content } ?: emptyList(),
-                    addedAt = item["added_at"]?.jsonPrimitive?.content,
-                    hasPoster = item["has_poster"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: true,
-                    hasBackdrop = item["has_backdrop"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: false,
-                    episodeCount = item["episode_count"]?.jsonPrimitive?.intOrNull ?: 0,
-                    tmdbId = item["tmdb_id"]?.jsonPrimitive?.intOrNull,
+                    id = item["id"].intOrNullSafe() ?: return@mapNotNull null,
+                    title = item["title"].strOrNull() ?: return@mapNotNull null,
+                    year = item["year"].intOrNullSafe(),
+                    network = item["network"].strOrNull(),
+                    contentRating = item["content_rating"].strOrNull(),
+                    rating = item["rating"].doubleOrNullSafe(),
+                    genres = parseGenreIds(item["genres"] ?: item["genre_ids"], genreMap),
+                    addedAt = item["added_at"].strOrNull(),
+                    hasPoster = item["has_poster"].boolOrNull() ?: true,
+                    hasBackdrop = item["has_backdrop"].boolOrNull() ?: false,
+                    episodeCount = item["episode_count"].intOrNullSafe() ?: 0,
+                    tmdbId = item["tmdb_id"].intOrNullSafe(),
                 )
                 else -> null
             }
