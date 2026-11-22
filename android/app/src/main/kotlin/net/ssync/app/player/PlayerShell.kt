@@ -587,8 +587,17 @@ private fun PlayerContent(
     onDeviceRevoked: () -> Unit,
     onUnpair: () -> Unit,
 ) {
+    var openHomeEditor by remember { mutableStateOf(false) }
     when (current) {
-        PlayerDestination.Home -> HomeScreen(api, coordinator, onNavigate, onDeviceRevoked, onScrolledChanged)
+        PlayerDestination.Home -> HomeScreen(
+            api = api,
+            coordinator = coordinator,
+            onNavigate = onNavigate,
+            onDeviceRevoked = onDeviceRevoked,
+            onScrolledChanged = onScrolledChanged,
+            openEditorInitially = openHomeEditor,
+            onEditorConsumed = { openHomeEditor = false },
+        )
         PlayerDestination.Guide -> GuideScreen(api, coordinator, onDeviceRevoked)
         PlayerDestination.Movies -> MoviesScreen(api, { onNavigate(PlayerDestination.MovieDetail(it)) }, onDeviceRevoked)
         is PlayerDestination.MovieDetail -> MovieDetailScreen(current.movieId, api, coordinator, onNavigate, onDeviceRevoked)
@@ -608,7 +617,15 @@ private fun PlayerContent(
         PlayerDestination.Watchlist -> WatchlistScreen(api, onNavigate, onDeviceRevoked)
         PlayerDestination.WatchingNow -> WatchingNowScreen(api, onDeviceRevoked)
         PlayerDestination.Search -> SearchScreen(api, coordinator, onNavigate, onDeviceRevoked)
-        PlayerDestination.Settings -> SettingsScreen(record, api, onUnpair)
+        PlayerDestination.Settings -> SettingsScreen(
+            record = record,
+            api = api,
+            onCustomizeHome = {
+                openHomeEditor = true
+                onNavigate(PlayerDestination.Home)
+            },
+            onUnpair = onUnpair,
+        )
     }
 }
 

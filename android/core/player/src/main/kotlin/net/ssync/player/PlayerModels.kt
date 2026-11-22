@@ -566,14 +566,12 @@ data class MusicChannel(
 
 @Serializable
 data class PlayerSettings(
-    @SerialName("share_watching")
-    val shareWatching: Boolean = true,
+    @SerialName("share_activity")
+    val shareActivity: Boolean = true,
     @SerialName("autoplay_next")
     val autoplayNext: Boolean = true,
-    @SerialName("preferred_quality")
-    val preferredQuality: String = "auto",
-    @SerialName("subtitle_language")
-    val subtitleLanguage: String = "en",
+    @SerialName("still_watching_after")
+    val stillWatchingAfter: Int = 3,
 )
 
 // ── Customizable Home Layout (1:1 with core/player/home_layout.py) ───────────

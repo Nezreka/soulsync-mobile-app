@@ -61,6 +61,8 @@ fun HomeScreen(
     onNavigate: (PlayerDestination) -> Unit,
     onDeviceRevoked: () -> Unit,
     onScrolledChanged: (Boolean) -> Unit = {},
+    openEditorInitially: Boolean = false,
+    onEditorConsumed: () -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
     var isLoading by remember { mutableStateOf(true) }
@@ -72,7 +74,14 @@ fun HomeScreen(
     var books by remember { mutableStateOf<List<OwnedBook>>(emptyList()) }
     var homeLayout by remember { mutableStateOf(HomeLayout()) }
     var layoutShared by remember { mutableStateOf(true) }
-    var showEditor by remember { mutableStateOf(false) }
+    var showEditor by remember { mutableStateOf(openEditorInitially) }
+
+    LaunchedEffect(openEditorInitially) {
+        if (openEditorInitially) {
+            showEditor = true
+            onEditorConsumed()
+        }
+    }
 
     // Auto-rotating Netflix-style Billboard slide index
     var billboardIndex by remember { mutableIntStateOf(0) }

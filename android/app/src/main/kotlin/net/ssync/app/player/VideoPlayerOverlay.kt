@@ -22,6 +22,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -38,6 +41,7 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import net.ssync.pairing.theme.SoulSyncColors
 import net.ssync.pairing.ui.dpadFocusable
@@ -51,6 +55,15 @@ fun VideoPlayerOverlay(
     onClose: (positionMs: Long, durationMs: Long) -> Unit,
 ) {
     val context = LocalContext.current
+    LaunchedEffect(context) { PlayerDevicePrefs.init(context) }
+    val displayPrefs by PlayerDevicePrefs.state.collectAsState()
+    val resizeMode = when (displayPrefs.pictureFit) {
+        "fill" -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+        "stretch" -> AspectRatioFrameLayout.RESIZE_MODE_FILL
+        else -> AspectRatioFrameLayout.RESIZE_MODE_FIT
+    }
+    val dimAlpha = (1f - displayPrefs.brightness).coerceIn(0f, 0.85f)
+
     val exoPlayer = remember(item.streamUrl) {
         val dataSourceFactory = OkHttpDataSource.Factory(pinnedHttpClient)
         val audioAttributes = AudioAttributes.Builder()
@@ -90,14 +103,26 @@ fun VideoPlayerOverlay(
                 PlayerView(ctx).apply {
                     player = exoPlayer
                     useController = true
+                    this.resizeMode = resizeMode
                     layoutParams = FrameLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.MATCH_PARENT,
                     )
                 }
             },
+            update = { view ->
+                view.resizeMode = resizeMode
+            },
             modifier = Modifier.fillMaxSize(),
         )
+
+        if (dimAlpha > 0.01f) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = dimAlpha)),
+            )
+        }
 
         // Top overlay header with title, ±10s quick skip, and close
         Row(
