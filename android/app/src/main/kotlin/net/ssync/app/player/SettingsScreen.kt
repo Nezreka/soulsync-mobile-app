@@ -81,6 +81,7 @@ fun SettingsScreen(
     api: PlayerApiClient,
     onCustomizeHome: () -> Unit,
     onUnpair: () -> Unit,
+    onSettingsChanged: (PlayerSettings) -> Unit = {},
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -121,11 +122,13 @@ fun SettingsScreen(
 
     fun saveProfile(next: PlayerSettings) {
         profileSettings = next
+        onSettingsChanged(next)
         saveError = null
         scope.launch {
             when (val res = api.saveSettings(next)) {
                 is MusicApiResult.Success -> {
                     profileSettings = res.data
+                    onSettingsChanged(res.data)
                     flashSaved()
                 }
                 else -> {
@@ -195,6 +198,40 @@ fun SettingsScreen(
                         )
                     }
                 }
+            }
+        }
+
+        // 1b. Poster Cards (Synced across all screens)
+        item {
+            SettingsCard(
+                icon = Icons.Default.Tv,
+                title = "Poster cards",
+                scopeBadge = "ALL SCREENS",
+                subtitle = "Choose which badges and metadata appear on movie and TV cards.",
+            ) {
+                SettingsToggleRow(
+                    label = "Show movie ratings",
+                    help = "Display the star rating pill on movie poster cards.",
+                    checked = profileSettings.showMovieRatings,
+                    enabled = loadedProfile,
+                    onCheckedChange = { saveProfile(profileSettings.copy(showMovieRatings = it)) },
+                )
+                SettingsDivider()
+                SettingsToggleRow(
+                    label = "Show episode count on TV shows",
+                    help = "Display the episode count on TV show poster cards.",
+                    checked = profileSettings.showTvEpisodeCount,
+                    enabled = loadedProfile,
+                    onCheckedChange = { saveProfile(profileSettings.copy(showTvEpisodeCount = it)) },
+                )
+                SettingsDivider()
+                SettingsToggleRow(
+                    label = "Show release year on cards",
+                    help = "Display the release year beneath movie and TV posters.",
+                    checked = profileSettings.showYearOnCards,
+                    enabled = loadedProfile,
+                    onCheckedChange = { saveProfile(profileSettings.copy(showYearOnCards = it)) },
+                )
             }
         }
 

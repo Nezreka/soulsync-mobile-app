@@ -302,6 +302,10 @@ fun HeroSpotlight(
     }
 }
 
+val LocalPlayerSettings = androidx.compose.runtime.staticCompositionLocalOf {
+    net.ssync.player.PlayerSettings()
+}
+
 @Composable
 fun PosterCard(
     title: String,
@@ -312,6 +316,26 @@ fun PosterCard(
     width: Dp = 122.dp,
     onClick: () -> Unit,
 ) {
+    val cardPrefs = LocalPlayerSettings.current
+    val effectiveBadge = androidx.compose.runtime.remember(badge, cardPrefs) {
+        val raw = badge?.trim().orEmpty()
+        when {
+            raw.isEmpty() -> null
+            raw.matches(Regex("^★?\\s*\\d+(\\.\\d+)?$")) && !cardPrefs.showMovieRatings -> null
+            raw.matches(Regex("^\\d+\\s*eps?$", RegexOption.IGNORE_CASE)) && !cardPrefs.showTvEpisodeCount -> null
+            else -> raw
+        }
+    }
+    val effectiveSubtitle = androidx.compose.runtime.remember(subtitle, cardPrefs) {
+        val raw = subtitle?.trim().orEmpty()
+        when {
+            raw.isEmpty() -> null
+            !cardPrefs.showTvEpisodeCount && raw.matches(Regex("^\\d+\\s*episodes?$", RegexOption.IGNORE_CASE)) -> null
+            !cardPrefs.showYearOnCards && raw.matches(Regex("^\\d{4}$")) -> null
+            else -> raw
+        }
+    }
+
     Column(
         modifier = Modifier
             .width(width)
@@ -331,7 +355,8 @@ fun PosterCard(
                     fallbackIcon = Icons.Default.Movie,
                     modifier = Modifier.fillMaxSize(),
                 )
-                if (!badge.isNullOrBlank()) {
+                if (!effectiveBadge.isNullOrBlank()) {
+                    val isRating = effectiveBadge.matches(Regex("^★?\\s*\\d+(\\.\\d+)?$"))
                     Box(
                         modifier = Modifier
                             .align(Alignment.TopEnd)
@@ -340,7 +365,12 @@ fun PosterCard(
                             .border(1.dp, SoulSyncColors.Line, RoundedCornerShape(6.dp))
                             .padding(horizontal = 6.dp, vertical = 2.dp),
                     ) {
-                        Text(text = "★ $badge", color = SoulSyncColors.Warning, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        Text(
+                            text = if (isRating && !effectiveBadge.startsWith("★")) "★ $effectiveBadge" else effectiveBadge,
+                            color = if (isRating) SoulSyncColors.Warning else SoulSyncColors.AccentLight,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                        )
                     }
                 }
                 if (progress != null && progress > 0f) {
@@ -362,9 +392,9 @@ fun PosterCard(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
-        if (!subtitle.isNullOrBlank()) {
+        if (!effectiveSubtitle.isNullOrBlank()) {
             Text(
-                text = subtitle,
+                text = effectiveSubtitle,
                 color = SoulSyncColors.TextSecondary,
                 fontSize = 11.sp,
                 maxLines = 1,

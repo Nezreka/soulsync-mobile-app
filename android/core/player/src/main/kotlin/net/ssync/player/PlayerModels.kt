@@ -783,6 +783,12 @@ data class PlayerSettings(
     val autoplayNext: Boolean = true,
     @SerialName("still_watching_after")
     val stillWatchingAfter: Int = 3,
+    @SerialName("show_movie_ratings")
+    val showMovieRatings: Boolean = false,
+    @SerialName("show_tv_episode_count")
+    val showTvEpisodeCount: Boolean = true,
+    @SerialName("show_year_on_cards")
+    val showYearOnCards: Boolean = true,
 )
 
 data class DeviceProfileInfo(

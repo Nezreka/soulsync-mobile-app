@@ -122,6 +122,7 @@ fun PlayerShell(
     mediaController: MediaController?,
     onDeviceRevoked: () -> Unit,
     onUnpair: () -> Unit,
+    onSettingsChanged: (net.ssync.player.PlayerSettings) -> Unit = {},
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -277,9 +278,14 @@ fun PlayerShell(
             delay(1_000L)
         }
     }
+    var playerSettings by remember { mutableStateOf(net.ssync.player.PlayerSettings()) }
+
     LaunchedEffect(api) {
         (api.fetchPresence() as? MusicApiResult.Success)?.let { p ->
             watchingOthersCount = p.data.sessions.count { !it.you }
+        }
+        (api.fetchSettings() as? MusicApiResult.Success)?.let { s ->
+            playerSettings = s.data
         }
     }
 
@@ -288,7 +294,10 @@ fun PlayerShell(
         current is PlayerDestination.ShowDetail ||
         current is PlayerDestination.EpisodeDetail
 
-    CompositionLocalProvider(LocalSoulSyncImageLoader provides imageLoader) {
+    CompositionLocalProvider(
+        LocalSoulSyncImageLoader provides imageLoader,
+        LocalPlayerSettings provides playerSettings,
+    ) {
         BoxWithConstraints(
             modifier = Modifier
                 .fillMaxSize()
@@ -341,6 +350,7 @@ fun PlayerShell(
                                         onHasHeroChanged = { homeHasHero = it },
                                         onDeviceRevoked = onDeviceRevoked,
                                         onUnpair = onUnpair,
+                                        onSettingsChanged = { playerSettings = it },
                                     )
                                 }
                             }
@@ -1048,6 +1058,7 @@ private fun PlayerContent(
     onHasHeroChanged: (Boolean) -> Unit,
     onDeviceRevoked: () -> Unit,
     onUnpair: () -> Unit,
+    onSettingsChanged: (net.ssync.player.PlayerSettings) -> Unit = {},
 ) {
     when (current) {
         PlayerDestination.Home -> HomeScreen(
@@ -1091,6 +1102,7 @@ private fun PlayerContent(
             api = api,
             onCustomizeHome = onCustomizeHome,
             onUnpair = onUnpair,
+            onSettingsChanged = onSettingsChanged,
         )
     }
 }

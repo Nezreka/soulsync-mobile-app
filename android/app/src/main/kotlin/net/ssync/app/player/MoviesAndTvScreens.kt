@@ -1,5 +1,6 @@
 package net.ssync.app.player
 
+import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -37,6 +38,7 @@ import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -1433,13 +1435,29 @@ fun ShowDetailScreen(
                 }
             }
 
-            // 5. Apple TV+ / Infuse-Grade Episode Cards
+            // 5. Apple TV+ / Infuse-Grade Expandable Episode Cards
             items(activeEpisodes, key = { it.id }) { ep ->
                 ShowEpisodeCard(
                     episode = ep,
                     stillUrl = api.artwork.episodeStill(ep.id),
-                    onOpenDetail = { onNavigate(PlayerDestination.EpisodeDetail(show.id, ep.id)) },
                     onPlay = { playEpisode(activeSeason.seasonNumber, ep) },
+                    onStartWatchParty = {
+                        scope.launch {
+                            api.createWatchParty(
+                                title = "${show.title} · S${activeSeason.seasonNumber} E${ep.episodeNumber}",
+                                itemType = "episode",
+                                itemId = ep.id.toString(),
+                                meta = net.ssync.player.ProgressMeta(
+                                    title = show.title,
+                                    subtitle = "S${activeSeason.seasonNumber} E${ep.episodeNumber}" + (ep.title?.let { " · $it" } ?: ""),
+                                    artwork = if (show.hasPoster) "/api/video/artwork/show/${show.id}/poster" else null,
+                                    backdrop = if (show.hasBackdrop) "/api/video/artwork/show/${show.id}/backdrop" else null,
+                                ),
+                                showId = show.id,
+                            )
+                            onNavigate(PlayerDestination.WatchingNow)
+                        }
+                    },
                 )
             }
         }
@@ -1543,181 +1561,240 @@ fun ShowDetailScreen(
 private fun ShowEpisodeCard(
     episode: net.ssync.player.DetailEpisode,
     stillUrl: String,
-    onOpenDetail: () -> Unit,
     onPlay: () -> Unit,
+    onStartWatchParty: () -> Unit = {},
 ) {
+    var expanded by remember(episode.id) { mutableStateOf(false) }
+
     Surface(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp)
             .clip(RoundedCornerShape(14.dp))
-            .clickable(onClick = onOpenDetail)
+            .clickable { expanded = !expanded }
             .dpadFocusable(RoundedCornerShape(14.dp)),
         shape = RoundedCornerShape(14.dp),
-        color = if (episode.owned) SoulSyncColors.Card else SoulSyncColors.Card.copy(alpha = 0.55f),
+        color = when {
+            expanded -> SoulSyncColors.CardRaised
+            episode.owned -> SoulSyncColors.Card
+            else -> SoulSyncColors.Card.copy(alpha = 0.55f)
+        },
         border = BorderStroke(
             width = 1.dp,
-            color = if (episode.watched == true) SoulSyncColors.Accent.copy(alpha = 0.45f) else SoulSyncColors.Line,
+            color = when {
+                expanded -> SoulSyncColors.Accent.copy(alpha = 0.55f)
+                episode.watched == true -> SoulSyncColors.Accent.copy(alpha = 0.35f)
+                else -> SoulSyncColors.Line
+            },
         ),
     ) {
-        Row(
-            modifier = Modifier.padding(10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .animateContentSize()
+                .padding(10.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            // 16:9 Episode Still with Episode Number, Runtime, Watched Check, and Tap-to-Play Overlay
-            Box(
-                modifier = Modifier
-                    .width(146.dp)
-                    .aspectRatio(16f / 9f)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(SoulSyncColors.Surface)
-                    .clickable(enabled = episode.owned, onClick = onPlay),
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                SoulSyncArtwork(
-                    url = stillUrl,
-                    contentDescription = episode.title,
-                    fallbackIcon = Icons.Default.Movie,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .alpha(if (episode.owned) 1f else 0.45f),
-                )
+                // 16:9 Episode Still with Episode Number, Runtime, Watched Check, and Tap-to-Play Overlay
                 Box(
                     modifier = Modifier
-                        .fillMaxSize()
-                        .background(
-                            Brush.verticalGradient(
-                                listOf(Color.Black.copy(alpha = 0.25f), Color.Transparent, Color.Black.copy(alpha = 0.55f)),
+                        .width(146.dp)
+                        .aspectRatio(16f / 9f)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(SoulSyncColors.Surface)
+                        .clickable(enabled = episode.owned, onClick = onPlay),
+                ) {
+                    SoulSyncArtwork(
+                        url = stillUrl,
+                        contentDescription = episode.title,
+                        fallbackIcon = Icons.Default.Movie,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .alpha(if (episode.owned) 1f else 0.45f),
+                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(
+                                Brush.verticalGradient(
+                                    listOf(Color.Black.copy(alpha = 0.25f), Color.Transparent, Color.Black.copy(alpha = 0.55f)),
+                                ),
                             ),
-                        ),
-                )
-                // Top-left episode number pill
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .padding(6.dp)
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(Color.Black.copy(alpha = 0.72f))
-                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                    )
+                    // Top-left episode number pill
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .padding(6.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(Color.Black.copy(alpha = 0.72f))
+                            .padding(horizontal = 6.dp, vertical = 2.dp),
+                    ) {
+                        Text(
+                            text = "E${episode.episodeNumber.toString().padStart(2, '0')}",
+                            color = Color.White,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                        )
+                    }
+                    // Top-right watched badge
+                    if (episode.watched == true) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(6.dp)
+                                .size(18.dp)
+                                .clip(CircleShape)
+                                .background(SoulSyncColors.Accent),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Check,
+                                contentDescription = "Watched",
+                                tint = Color.Black,
+                                modifier = Modifier.size(12.dp),
+                            )
+                        }
+                    }
+                    // Center play affordance on owned episodes
+                    if (episode.owned) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.Center)
+                                .size(34.dp)
+                                .clip(CircleShape)
+                                .background(Color.Black.copy(alpha = 0.58f))
+                                .border(1.dp, Color.White.copy(alpha = 0.35f), CircleShape),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.PlayArrow,
+                                contentDescription = "Play episode",
+                                tint = Color.White,
+                                modifier = Modifier.size(20.dp),
+                            )
+                        }
+                    } else {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.Center)
+                                .clip(RoundedCornerShape(999.dp))
+                                .background(Color.Black.copy(alpha = 0.72f))
+                                .padding(horizontal = 8.dp, vertical = 3.dp),
+                        ) {
+                            Text(
+                                text = "MISSING",
+                                color = SoulSyncColors.TextSoft,
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold,
+                                letterSpacing = 0.5.sp,
+                            )
+                        }
+                    }
+                    // Bottom-right runtime pill
+                    episode.runtimeMinutes?.takeIf { it > 0 }?.let { mins ->
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.BottomEnd)
+                                .padding(6.dp)
+                                .clip(RoundedCornerShape(5.dp))
+                                .background(Color.Black.copy(alpha = 0.72f))
+                                .padding(horizontal = 5.dp, vertical = 2.dp),
+                        ) {
+                            Text(
+                                text = "${mins}m",
+                                color = Color.White.copy(alpha = 0.92f),
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
+                    }
+                }
+
+                // Right side: Title, Meta, Preview Overview
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(3.dp),
                 ) {
                     Text(
-                        text = "E${episode.episodeNumber.toString().padStart(2, '0')}",
-                        color = Color.White,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.ExtraBold,
+                        text = episode.title?.takeIf { it.isNotBlank() } ?: "Episode ${episode.episodeNumber}",
+                        color = if (episode.owned) Color.White else SoulSyncColors.TextSoft,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = if (expanded) 2 else 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
-                }
-                // Top-right watched badge
-                if (episode.watched == true) {
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(6.dp)
-                            .size(18.dp)
-                            .clip(CircleShape)
-                            .background(SoulSyncColors.Accent),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Check,
-                            contentDescription = "Watched",
-                            tint = Color.Black,
-                            modifier = Modifier.size(12.dp),
-                        )
-                    }
-                }
-                // Center play affordance on owned episodes
-                if (episode.owned) {
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.Center)
-                            .size(34.dp)
-                            .clip(CircleShape)
-                            .background(Color.Black.copy(alpha = 0.58f))
-                            .border(1.dp, Color.White.copy(alpha = 0.35f), CircleShape),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.PlayArrow,
-                            contentDescription = "Play episode",
-                            tint = Color.White,
-                            modifier = Modifier.size(20.dp),
-                        )
-                    }
-                } else {
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.Center)
-                            .clip(RoundedCornerShape(999.dp))
-                            .background(Color.Black.copy(alpha = 0.72f))
-                            .padding(horizontal = 8.dp, vertical = 3.dp),
-                    ) {
+                    val meta = listOfNotNull(
+                        episode.airDate?.takeIf { it.isNotBlank() },
+                        episode.rating?.takeIf { it > 0 }?.let { "★ ${"%.1f".format(it)}" },
+                        episode.resolution?.takeIf { it.isNotBlank() }?.uppercase(),
+                        if (!episode.owned) "Not in library" else null,
+                    ).joinToString(" • ")
+                    if (meta.isNotBlank()) {
                         Text(
-                            text = "MISSING",
+                            text = meta,
+                            color = SoulSyncColors.TextSecondary,
+                            fontSize = 11.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    if (!expanded && !episode.overview.isNullOrBlank()) {
+                        Text(
+                            text = episode.overview.orEmpty(),
                             color = SoulSyncColors.TextSoft,
-                            fontSize = 9.sp,
-                            fontWeight = FontWeight.Bold,
-                            letterSpacing = 0.5.sp,
-                        )
-                    }
-                }
-                // Bottom-right runtime pill
-                episode.runtimeMinutes?.takeIf { it > 0 }?.let { mins ->
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.BottomEnd)
-                            .padding(6.dp)
-                            .clip(RoundedCornerShape(5.dp))
-                            .background(Color.Black.copy(alpha = 0.72f))
-                            .padding(horizontal = 5.dp, vertical = 2.dp),
-                    ) {
-                        Text(
-                            text = "${mins}m",
-                            color = Color.White.copy(alpha = 0.92f),
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 12.sp,
+                            lineHeight = 16.sp,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
                         )
                     }
                 }
             }
 
-            // Right side: Title, Meta (air date / rating / quality), Overview
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(3.dp),
-            ) {
-                Text(
-                    text = episode.title?.takeIf { it.isNotBlank() } ?: "Episode ${episode.episodeNumber}",
-                    color = if (episode.owned) Color.White else SoulSyncColors.TextSoft,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                val meta = listOfNotNull(
-                    episode.airDate?.takeIf { it.isNotBlank() },
-                    episode.rating?.takeIf { it > 0 }?.let { "★ ${"%.1f".format(it)}" },
-                    episode.resolution?.takeIf { it.isNotBlank() }?.uppercase(),
-                    if (!episode.owned) "Not in library" else null,
-                ).joinToString(" • ")
-                if (meta.isNotBlank()) {
-                    Text(
-                        text = meta,
-                        color = SoulSyncColors.TextSecondary,
-                        fontSize = 11.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
+            // Expanded inline details: Full synopsis + Play + Watch Party
+            if (expanded) {
                 if (!episode.overview.isNullOrBlank()) {
                     Text(
                         text = episode.overview.orEmpty(),
                         color = SoulSyncColors.TextSoft,
-                        fontSize = 12.sp,
-                        lineHeight = 16.sp,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
+                        fontSize = 13.sp,
+                        lineHeight = 19.sp,
                     )
+                }
+                if (episode.owned) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Button(
+                            onClick = onPlay,
+                            shape = CircleShape,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = SoulSyncColors.Accent,
+                                contentColor = SoulSyncColors.OnAccent,
+                            ),
+                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
+                            modifier = Modifier.weight(1f).height(38.dp),
+                        ) {
+                            Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(17.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Play Episode", fontSize = 12.5.sp, fontWeight = FontWeight.Bold)
+                        }
+                        OutlinedButton(
+                            onClick = onStartWatchParty,
+                            shape = CircleShape,
+                            border = BorderStroke(1.dp, SoulSyncColors.Accent.copy(alpha = 0.55f)),
+                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+                            modifier = Modifier.height(38.dp),
+                        ) {
+                            Text("🍿 Watch Party", color = SoulSyncColors.AccentLight, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
                 }
             }
         }
