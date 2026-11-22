@@ -92,19 +92,19 @@ import kotlin.math.abs
 // ── Desktop-Parity Channel Model & Grouping (mirrors webui/.../channels.ts) ──
 
 private enum class ChannelKind(val groupLabel: String) {
-    TYPE("Everything"),
+    NETWORK("Networks"),
+    PICK("Picks"),
     SERVER("Channels for everyone"),
     RULE("Your channels"),
-    PLAYLIST("Your playlists"),
-    VIBE("Vibes"),
-    MUSIC("Music genres"),
-    PICK("Picks"),
-    KIDS("Kids"),
+    TYPE("Everything"),
     GENRE("Movie and TV genres"),
-    NETWORK("Networks"),
     STUDIO("Studios"),
     COLLECTION("Film series"),
     DECADE("Decades"),
+    KIDS("Kids"),
+    PLAYLIST("Your playlists"),
+    VIBE("Vibes"),
+    MUSIC("Music"),
 }
 
 private data class PoolItem(
@@ -445,7 +445,7 @@ private fun buildDesktopParityChannels(
         RawChannel(
             id = "type-music",
             name = "Music",
-            kind = ChannelKind.TYPE,
+            kind = ChannelKind.MUSIC,
             blurb = "songs from your library",
             pool = musicPoolSongs.map { songPoolItem(it, api) },
             isMusic = true,
