@@ -1,0 +1,33 @@
+/* SoulSync Google Cast Styled Media Receiver Skin
+ * Official Styled Media Receiver classes: .background, .logo, .progressBar, .splash, .watermark
+ */
+
+.background {
+  background: radial-gradient(circle at 50% 35%, #162235 0%, #0b0f17 68%, #070a10 100%);
+}
+
+.logo {
+  background-image: url("https://cdn.jsdelivr.net/gh/Nezreka/soulsync-mobile-app@main/docs/cast-logo.png");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: contain;
+}
+
+.splash {
+  background-image: url("https://cdn.jsdelivr.net/gh/Nezreka/soulsync-mobile-app@main/docs/cast-logo.png");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 360px auto;
+}
+
+.progressBar {
+  background-color: #10b981;
+}
+
+.watermark {
+  background-image: url("https://cdn.jsdelivr.net/gh/Nezreka/soulsync-mobile-app@main/docs/cast-logo.png");
+  background-size: 96px auto;
+  background-repeat: no-repeat;
+  background-position: bottom right;
+  opacity: 0.75;
+}
