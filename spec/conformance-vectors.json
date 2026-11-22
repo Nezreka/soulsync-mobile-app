@@ -1,0 +1,111 @@
+{
+  "spec": "DESIGN-CONNECT v0 (as amended Nov 21, 2026)",
+  "notes": "All inputs are fixed published test constants. An implementation conforms if, given the inputs, it reproduces every expected output byte-for-byte and rejects every negative case. HPKE info layout: the ASCII string 'soulsync-connect-hpke-info-v1\\n' followed by the code_hash lowercase hex.",
+  "identity": {
+    "root_secret_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "hkdf_label": "soulsync-connect-server-signing-v1",
+    "signing_seed_hex": "d21bbb8e7905de16861496a49879ca96e25136e5d6d094f5b1baf85acc17c458",
+    "public_key_hex": "dd036eab4c5a0e25de3e1ff8ee724a87b5ff3de5c942dddb713cbb3e56236a90",
+    "public_key_b64url": "3QNuq0xaDiXePh_47nJKh7X_PeXJQt3bcTy7PlYjapA",
+    "lookup_id": "ee767f6e8f8602fe277759e44a85cca92c1edcdfa62f789ac99a275b3c5234bd",
+    "fingerprint": "ee767f6e8f86"
+  },
+  "signing": {
+    "method": "POST",
+    "path": "/v1/presence/hello",
+    "timestamp": "1760000000",
+    "nonce_b64url": "ICEiIyQlJicoKSorLC0uLw",
+    "body_utf8": "{\"v\":1}",
+    "canonical_string": "POST\n/v1/presence/hello\n1760000000\nICEiIyQlJicoKSorLC0uLw\nafbf9d0f3560b0fd7795e81c42a0a79ee6b6fc67e064f77826aee642cad28d91",
+    "headers": {
+      "X-Server-Id": "ee767f6e8f8602fe277759e44a85cca92c1edcdfa62f789ac99a275b3c5234bd",
+      "X-Server-Signature": "At1gcP7QER-FdCX1INHYUQp0l9fIwbSvCGvRhlmUzzcLZn9yQwu16M613PLUIuXkZfs_o1alRDT-8uP1n7N2AQ",
+      "X-Server-Timestamp": "1760000000",
+      "X-Server-Nonce": "ICEiIyQlJicoKSorLC0uLw"
+    }
+  },
+  "code": {
+    "code": "K7M9P2X4Q8RTW3ZA",
+    "alphabet": "0123456789ABCDEFGHJKMNPQRSTVWXYZ",
+    "code_hash": "f6bae887878e96e428a1474ff1ce607b038e1a689dab35a7c72840b3fb610586",
+    "service_secret_utf8": "conformance-test-service-secret",
+    "lookup_key": "3b76d38b69ed2e25e5c837ef7e309a742b55792b16e079c40adac2301ecebeee"
+  },
+  "hpke_rfc9180_a21": {
+    "info_hex": "4f6465206f6e2061204772656369616e2055726e",
+    "sk_em_hex": "f4ec9b33b792c372c1d2c2063507b684ef925b8c75a42dbcbf57d63ccd381600",
+    "pk_rm_hex": "4310ee97d88cc1f088a5576c77ab0cf5c3ac797f3d95139c6c84b5429c59662a",
+    "sk_rm_hex": "8057991eef8f1f1af18f4a9491d16a1ce333f695d4db8e38da75975c4478e0fb",
+    "enc_hex": "1afa08d3dec047a643885163f1180476fa7ddb54c6a8029ea33f95796bf2ac4a",
+    "plaintext": "Beauty is truth, truth beauty",
+    "aad": "Count-0",
+    "ciphertext_hex": "1c5250d8034ec2b784ba2cfd69dbdb8af406cfe3ff938e131f0def8c8b60b4db21993c62ce81883d2dd1b51a28"
+  },
+  "sealed_answer": {
+    "app_private_hex": "101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f",
+    "app_public_hex": "d89e3bad79437dbed9f843418304f460ff05c7fe81fe4a9577a804cb9367ff66",
+    "seal_ephemeral_private_hex": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+    "code_hash": "f6bae887878e96e428a1474ff1ce607b038e1a689dab35a7c72840b3fb610586",
+    "addresses": [
+      "https://203-0-113-7.ee767f6e8f8602fe277759e44a85cca92c1edcdfa62f789ac99a275b3c5234bd.connect.ssync.net",
+      "https://192-168-1-50.ee767f6e8f8602fe277759e44a85cca92c1edcdfa62f789ac99a275b3c5234bd.connect.ssync.net",
+      "http://192.168.1.50:8008"
+    ],
+    "cert_fingerprint": "abababababababababababababababababababababababababababababababab",
+    "hpke_info_hex": "736f756c73796e632d636f6e6e6563742d68706b652d696e666f2d76310a66366261653838373837386539366534323861313437346666316365363037623033386531613638396461623335613763373238343062336662363130353836",
+    "sealed_hex": "79a631eede1bf9c98f12032cdeadd0e7a079398fc786b88cc846ec89af85a51a07eb4419c2827b51cdcb705b4e6cebe706180b40d171d23e8162c2f85aaf39d1aa2efc54081d4105b1bfd72fdc61bbb3b3e2f9b9445fc92600ffd1a508ed7dfc527db6f32b6537e94045f42b52563a6bb72d54687483a3b101ce081d484528b647192a7974049034de7437a91d3184231b808dcfba4d0d86d91fd182d59660bd0c1f37d9aa587e872d849596f5d867cea1479657d3399c7158b5cc9263ebe72f14f8080bad381f74d8f502aeb45ef75f57e4f1d772a3cb1f4162919c4930c81d2db482abc6a1f4b7c2670158979644341b1f573b2df5e5ee9f8c536d58fd0082ba6ed01b13e9f589626e441c2d77f5b58611d22c9896acd86f4716d4316a6319e7dd16f1f5f2c09b8df075e8cbd0ee61be9821dadd1e0882635e288441c2b42ecd766f9d8777bb51fe9272239533566f128bc107263801a33e91ffd8597d3667aacf2831ddad8aea83b9a0ff912c11861a00985990f0dca4b00ade34a790a6b17bb8d8252e2f036864c0bdef76f529b5d0169f98a4203f6b5f2fe360254fc26fcd7a26dce9dcf1a163324ff926c498011677dbbd631fb8177a95145398fb65b8fb8e5f27f3811f941c4c8d3dbf07215d0b59fe6f640b2629f74712267e1721799d90405133eb3050398046f6eaeebca87fa63d8334b44110c952144466108be72bdcb50e869e18d442ae76f9b1dfc9d412bfcc7e401c208c43812a2b91809cf372e8b414ecd112a86b1fb2e07a559b93e8c706399271dc6b78b9616346c823fe41288a12c6ebb24cd46c2c38aa65dee56e27205abbcdd0274b7b9244ada896e205cf69393b00c3b12e50a80250b4a5fd2afc1b15a2d6c3a769d700643b447febac80983e4a8b6bfa45f2d4dd063d9bc02079438dff9ebcdfef581ce2bc9d9d3a6baa9812c3b4f7d6b9edff4f9990165fb2a7c96e92508aef2c84f2f0dfce0079a6d0c79530c0d98fbcd18d38675dc7ebb356603728b8864433e32f9ad15597df334696d6502b37a6b66145444816f86118573b",
+    "expected_payload": {
+      "v": 1,
+      "lookup_id": "ee767f6e8f8602fe277759e44a85cca92c1edcdfa62f789ac99a275b3c5234bd",
+      "code_hash": "f6bae887878e96e428a1474ff1ce607b038e1a689dab35a7c72840b3fb610586",
+      "fingerprint": "ee767f6e8f86",
+      "server_pubkey": "3QNuq0xaDiXePh_47nJKh7X_PeXJQt3bcTy7PlYjapA",
+      "cert_fingerprint": "abababababababababababababababababababababababababababababababab",
+      "addresses": [
+        "https://203-0-113-7.ee767f6e8f8602fe277759e44a85cca92c1edcdfa62f789ac99a275b3c5234bd.connect.ssync.net",
+        "https://192-168-1-50.ee767f6e8f8602fe277759e44a85cca92c1edcdfa62f789ac99a275b3c5234bd.connect.ssync.net",
+        "http://192.168.1.50:8008"
+      ]
+    }
+  },
+  "dns_labels": {
+    "ipv4": [
+      {
+        "ip": "192.168.1.50",
+        "label": "192-168-1-50"
+      },
+      {
+        "ip": "203.0.113.7",
+        "label": "203-0-113-7"
+      },
+      {
+        "ip": "0.0.0.0",
+        "label": "0-0-0-0"
+      }
+    ],
+    "ipv6": [
+      {
+        "ip": "2001:db8::1",
+        "label": "20010db8000000000000000000000001"
+      },
+      {
+        "ip": "::1",
+        "label": "00000000000000000000000000000001"
+      },
+      {
+        "ip": "fe80::a634:d9ff:fe07:c5a8",
+        "label": "fe80000000000000a634d9fffe07c5a8"
+      }
+    ],
+    "malformed_labels": [
+      "192-168-01-50",
+      "192-168-1-256",
+      "192-168-1",
+      "192.168.1.50",
+      "20010DB8000000000000000000000001",
+      "gggggggggggggggggggggggggggggggg",
+      "",
+      "1-2-3-4-5"
+    ]
+  }
+}

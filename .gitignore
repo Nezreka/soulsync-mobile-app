@@ -1,0 +1,29 @@
+# Gradle / Android
+.gradle/
+**/build/
+android/local.properties
+*.iml
+.idea/
+captures/
+.externalNativeBuild/
+.cxx/
+*.apk
+*.aab
+*.ap_
+*.dex
+*.class
+*.jks
+*.keystore
+
+# iOS / Xcode
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+DerivedData/
+.swiftpm/
+
+# OS & Editors
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.vscode/
