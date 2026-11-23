@@ -37,6 +37,22 @@ class PlayerApiClient(
     fun streamUrl(itemType: String, itemId: String): String =
         "$base/api/player/stream/$itemType/$itemId"
 
+    fun transcodeUrl(
+        itemType: String,
+        itemId: String,
+        startSec: Double = 0.0,
+        screenId: String? = null,
+        quality: String = "original",
+    ): String = buildString {
+        append("$base/api/player/transcode/$itemType/$itemId?q=$quality")
+        if (startSec > 0.5) {
+            append("&t=${String.format(java.util.Locale.US, "%.1f", startSec)}")
+        }
+        if (!screenId.isNullOrBlank()) {
+            append("&ps=$screenId")
+        }
+    }
+
     // ── Home & Continue Watching ─────────────────────────────────────────────
 
     suspend fun fetchContinue(limit: Int = 30): MusicApiResult<List<ProgressRow>> =

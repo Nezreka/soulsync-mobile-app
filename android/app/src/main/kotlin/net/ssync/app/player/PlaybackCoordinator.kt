@@ -136,20 +136,32 @@ class PlaybackCoordinator(
         reportPresence(videoItem, paused = false)
     }
 
+    private fun toRelativeArtwork(url: String?): String? {
+        val raw = url?.trim().takeIf { !it.isNullOrBlank() } ?: return null
+        val base = api.baseUrl.trimEnd('/')
+        if (raw.startsWith(base, ignoreCase = true)) {
+            val rel = raw.substring(base.length)
+            if (rel.startsWith("/")) return rel
+        }
+        return raw
+    }
+
     private fun buildProgressMeta(item: ActivePlayable): net.ssync.player.ProgressMeta {
         val href = when (item.itemType) {
             "movie" -> "/player/movies/${item.itemId}"
             "show" -> "/player/tv/${item.itemId}"
+            "episode" -> item.parentId?.let { "/player/tv/$it" } ?: "/player/tv"
             "youtube" -> "/player/youtube"
             "audiobook" -> "/player/audiobooks/${item.itemId}"
             "podcast" -> "/player/podcasts"
             else -> "/player/music"
         }
+        val relArt = toRelativeArtwork(item.artworkUrl)
         return net.ssync.player.ProgressMeta(
             title = item.title.takeIf { it.isNotBlank() },
             subtitle = item.subtitle.takeIf { it.isNotBlank() },
-            artwork = item.artworkUrl,
-            backdrop = item.artworkUrl,
+            artwork = relArt,
+            backdrop = relArt,
             href = href,
         )
     }

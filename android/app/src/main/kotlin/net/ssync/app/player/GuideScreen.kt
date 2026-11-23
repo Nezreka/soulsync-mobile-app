@@ -295,6 +295,42 @@ private fun deterministicHash(seed: String): Long {
     return abs(h)
 }
 
+private fun deterministicSeed(text: String): Long {
+    var h = 2166136261L
+    for (ch in text) {
+        h = (h xor ch.code.toLong()) * 16777619L
+    }
+    return h
+}
+
+private fun <T> seededShuffleFast(items: List<T>, seed: Long): List<T> {
+    if (items.size <= 1) return items
+    val out = items.toMutableList()
+    val rng = java.util.Random(seed)
+    for (i in out.lastIndex downTo 1) {
+        val j = rng.nextInt(i + 1)
+        val tmp = out[i]
+        out[i] = out[j]
+        out[j] = tmp
+    }
+    return out
+}
+
+private fun isFilmHourEpochSec(epochSec: Long): Boolean {
+    val cal = java.util.Calendar.getInstance()
+    cal.timeInMillis = epochSec * 1000L
+    val h = cal.get(java.util.Calendar.HOUR_OF_DAY)
+    return h >= 18 || h < 2
+}
+
+/**
+ * Cable/satellite-style video scheduler:
+ * - O(distinctShows) instead of O(totalEpisodes log totalEpisodes) -> < 1ms per channel!
+ * - Rotates evenly across distinct shows (so a 200-episode show doesn't drown out a 10-episode show)
+ *   and never plays the same show back-to-back when >= 2 shows exist on the channel.
+ * - Dayparts mixed movie+TV channels: TV shows by day, movies in evening prime time (6pm–2am).
+ * - Ordered single-show/marathon channels play episodes strictly in order.
+ */
 private fun scheduleVideoPrograms(
     channelId: String,
     pool: List<PoolItem>,
@@ -303,38 +339,131 @@ private fun scheduleVideoPrograms(
     windowEndSec: Long,
 ): List<EpgProgram> {
     if (pool.isEmpty()) return emptyList()
-    val arranged = if (ordered) {
-        pool
-    } else {
-        pool.sortedBy { deterministicHash("$channelId|${it.key}") }
+    val cal = java.util.Calendar.getInstance().apply {
+        timeInMillis = windowStartSec * 1000L
+        set(java.util.Calendar.HOUR_OF_DAY, 0)
+        set(java.util.Calendar.MINUTE, 0)
+        set(java.util.Calendar.SECOND, 0)
+        set(java.util.Calendar.MILLISECOND, 0)
     }
-    val durations = arranged.map { it.seconds.coerceAtLeast(900).toLong() }
-    val total = durations.sum().coerceAtLeast(1L)
-    val anchor = (windowStartSec + deterministicHash(channelId) % 86400L) % total
-    var cursor = 0L
-    var idx = 0
-    while (idx < arranged.lastIndex && cursor + durations[idx] <= anchor) {
-        cursor += durations[idx]
-        idx++
+    val dayStartSec = cal.timeInMillis / 1000L
+    val dayStamp = "${cal.get(java.util.Calendar.YEAR)}-${cal.get(java.util.Calendar.MONTH) + 1}-${cal.get(java.util.Calendar.DAY_OF_MONTH)}"
+    val daySeed = deterministicSeed("$channelId|$dayStamp")
+
+    fun toProg(item: PoolItem, start: Long, dur: Long) = EpgProgram(
+        itemType = item.itemType,
+        itemId = item.itemId,
+        detailId = item.detailId,
+        title = item.title,
+        subtitle = item.subtitle,
+        artworkUrl = item.backdropUrl ?: item.posterUrl,
+        startEpochSec = start,
+        endEpochSec = start + dur,
+    )
+
+    if (ordered) {
+        val dayIdx = (dayStartSec / 86400L).toInt()
+        var idx = abs(((deterministicHash(channelId) + dayIdx * 7L) % pool.size)).toInt()
+        var t = dayStartSec
+        val progs = mutableListOf<EpgProgram>()
+        var guard = 0
+        while (t < windowEndSec && guard < 120) {
+            val item = pool[idx % pool.size]
+            val dur = item.seconds.coerceAtLeast(900).toLong()
+            if (t + dur > windowStartSec) progs += toProg(item, t, dur)
+            t += dur
+            idx++
+            guard++
+        }
+        return progs
     }
-    var t = windowStartSec - (anchor - cursor)
+
+    // Separate movies vs TV/other so mixed channels can daypart cleanly
+    val movies = pool.filter { it.itemType == "movie" }
+    val nonMovies = pool.filter { it.itemType != "movie" }
+    val hasDaypart = movies.isNotEmpty() && nonMovies.isNotEmpty()
+
+    // Lazy O(1)-per-draw movie selector (never sorts 5,000 movies!)
+    val movieRng = java.util.Random(daySeed xor 0x517cc1b7L)
+    val movieSwaps = HashMap<Int, Int>(32)
+    var movieCursor = 0
+    fun drawMovie(): PoolItem {
+        val n = movies.size
+        if (movieCursor >= n) {
+            movieCursor = 0
+            movieSwaps.clear()
+        }
+        val i = movieCursor++
+        val j = i + movieRng.nextInt(n - i)
+        val atJ = movieSwaps[j] ?: j
+        movieSwaps[j] = movieSwaps[i] ?: i
+        return movies[atJ]
+    }
+
+    // Group episodes by show (detailId/title) for balanced cable-style rotation
+    val showsMap = LinkedHashMap<String, MutableList<PoolItem>>()
+    val otherItems = mutableListOf<PoolItem>()
+    for (item in nonMovies) {
+        if (item.itemType == "episode") {
+            val sk = item.detailId?.toString() ?: item.title
+            showsMap.getOrPut(sk) { mutableListOf() } += item
+        } else {
+            otherItems += item
+        }
+    }
+    val showKeys = showsMap.keys.toMutableList()
+    val showIdx = HashMap<String, Int>(showKeys.size + 1)
+    for (sk in showKeys) {
+        val eps = showsMap[sk]!!
+        showIdx[sk] = (abs(deterministicSeed("$channelId|$sk|$dayStamp")) % eps.size).toInt()
+    }
+    if (otherItems.isNotEmpty()) {
+        val shuffledOther = seededShuffleFast(otherItems.take(200), daySeed xor 0x9e3779b9L)
+        showsMap["__other__"] = shuffledOther.toMutableList()
+        showKeys += "__other__"
+        showIdx["__other__"] = 0
+    }
+
+    var round = 0
+    var roundOrder = seededShuffleFast(showKeys, daySeed)
+    var roundPos = 0
+    var lastShow: String? = null
+
+    fun drawShowItem(): PoolItem {
+        if (roundOrder.isEmpty()) return drawMovie()
+        if (roundPos >= roundOrder.size) {
+            round++
+            val nextOrder = seededShuffleFast(showKeys, daySeed + round * 997L).toMutableList()
+            if (nextOrder.size > 1 && nextOrder[0] == lastShow) {
+                val tmp = nextOrder[0]
+                nextOrder[0] = nextOrder[1]
+                nextOrder[1] = tmp
+            }
+            roundOrder = nextOrder
+            roundPos = 0
+        }
+        val sk = roundOrder[roundPos++]
+        lastShow = sk
+        val eps = showsMap[sk]!!
+        val i = showIdx[sk] ?: 0
+        showIdx[sk] = (i + 1) % eps.size
+        return eps[i]
+    }
+
+    var t = dayStartSec
     val progs = mutableListOf<EpgProgram>()
     var guard = 0
-    while (t < windowEndSec && guard < 18) {
-        val item = arranged[idx % arranged.size]
-        val dur = durations[idx % arranged.size]
-        progs += EpgProgram(
-            itemType = item.itemType,
-            itemId = item.itemId,
-            detailId = item.detailId,
-            title = item.title,
-            subtitle = item.subtitle,
-            artworkUrl = item.backdropUrl ?: item.posterUrl,
-            startEpochSec = t,
-            endEpochSec = t + dur,
-        )
+    while (t < windowEndSec && guard < 120) {
+        val item = when {
+            hasDaypart -> if (isFilmHourEpochSec(t)) drawMovie() else drawShowItem()
+            movies.isNotEmpty() && nonMovies.isEmpty() -> drawMovie()
+            else -> drawShowItem()
+        }
+        val dur = item.seconds.coerceAtLeast(900).toLong()
+        if (t + dur > windowStartSec) {
+            progs += toProg(item, t, dur)
+        }
         t += dur
-        idx++
         guard++
     }
     return progs
@@ -865,11 +994,19 @@ fun GuideScreen(
     var channelQuery by remember { mutableStateOf("") }
     var picked by remember { mutableStateOf<Pair<EpgChannel, EpgProgram>?>(null) }
     var isLoading by remember { mutableStateOf(true) }
+    var allChannels by remember { mutableStateOf<List<EpgChannel>>(emptyList()) }
+
+    val nowSec = remember { System.currentTimeMillis() / 1000L }
+    val windowStartSec = remember(nowSec) { ((nowSec - 1800L) / 1800L) * 1800L }
+    val windowMinutes = 240
+    val windowEndSec = windowStartSec + windowMinutes * 60L
+    val nowOffsetMin = ((nowSec - windowStartSec).coerceAtLeast(0L) / 60f)
 
     LaunchedEffect(api) {
         isLoading = true
-        // Phase 1 (fast): load video catalog (cached), saved channels, lineup, and favorites.
-        // Dismiss the loading screen immediately once video channels are ready!
+        // Phase 1 (fast): load video catalog (cached), saved channels, lineup, and favorites,
+        // and build the initial channel lineup BEFORE dismissing the loading state so the user
+        // never sees a "0 of 0 channels" flash.
         val revoked = coroutineScope {
             val vDef = async { api.fetchVideoCatalog() }
             val sDef = async { api.fetchSavedGuideChannels() }
@@ -894,47 +1031,6 @@ fun GuideScreen(
             onDeviceRevoked()
             return@LaunchedEffect
         }
-        isLoading = false
-
-        // Phase 2 (progressive, non-blocking): stream in music channels, songs & playlists
-        // in the background so the Guide renders immediately without waiting on music DB scans.
-        launch {
-            (api.fetchMusicChannels() as? MusicApiResult.Success)?.let { musicChannels = it.data }
-        }
-        launch {
-            (api.fetchSongs(limit = 150, page = 1) as? MusicApiResult.Success)?.let { musicPoolSongs = it.data }
-        }
-        launch {
-            val pls = api.fetchPlaylists()
-            val candidatePlaylists = (pls as? MusicApiResult.Success)?.data
-                ?.filter { it.kind == "yours" && it.trackCount > 2 }
-                ?.take(8)
-                .orEmpty()
-            if (candidatePlaylists.isNotEmpty()) {
-                playlistDetails = coroutineScope {
-                    candidatePlaylists.mapNotNull { p ->
-                        p.idString.toIntOrNull()?.let { pid ->
-                            async { (api.fetchPlaylistDetail(pid) as? MusicApiResult.Success)?.data }
-                        }
-                    }.awaitAll().filterNotNull()
-                }
-            }
-        }
-    }
-
-    if (isLoading) {
-        LoadingBox()
-        return
-    }
-
-    val nowSec = remember { System.currentTimeMillis() / 1000L }
-    val windowStartSec = remember(nowSec) { ((nowSec - 1800L) / 1800L) * 1800L }
-    val windowMinutes = 240
-    val windowEndSec = windowStartSec + windowMinutes * 60L
-    val nowOffsetMin = ((nowSec - windowStartSec).coerceAtLeast(0L) / 60f)
-
-    var allChannels by remember { mutableStateOf<List<EpgChannel>>(emptyList()) }
-    LaunchedEffect(catalog, musicPoolSongs, playlistDetails, musicChannels, savedChannels, lineup, windowStartSec) {
         allChannels = withContext(Dispatchers.Default) {
             buildDesktopParityChannels(
                 catalog = catalog,
@@ -948,6 +1044,62 @@ fun GuideScreen(
                 windowEndSec = windowEndSec,
             )
         }
+        isLoading = false
+
+        // Phase 2 (progressive, non-blocking): stream in music channels, songs & playlists
+        // in parallel, then refresh once when ready so we don't rebuild 4 times.
+        val phase2 = coroutineScope {
+            val mcDef = async { (api.fetchMusicChannels() as? MusicApiResult.Success)?.data }
+            val songsDef = async { (api.fetchSongs(limit = 150, page = 1) as? MusicApiResult.Success)?.data }
+            val plsDef = async {
+                val pls = api.fetchPlaylists()
+                val candidatePlaylists = (pls as? MusicApiResult.Success)?.data
+                    ?.filter { it.kind == "yours" && it.trackCount > 2 }
+                    ?.take(8)
+                    .orEmpty()
+                if (candidatePlaylists.isNotEmpty()) {
+                    coroutineScope {
+                        candidatePlaylists.mapNotNull { p ->
+                            p.idString.toIntOrNull()?.let { pid ->
+                                async { (api.fetchPlaylistDetail(pid) as? MusicApiResult.Success)?.data }
+                            }
+                        }.awaitAll().filterNotNull()
+                    }
+                } else {
+                    emptyList()
+                }
+            }
+            Triple(mcDef.await(), songsDef.await(), plsDef.await())
+        }
+        phase2.first?.let { musicChannels = it }
+        phase2.second?.let { musicPoolSongs = it }
+        if (phase2.third.isNotEmpty()) playlistDetails = phase2.third
+        allChannels = withContext(Dispatchers.Default) {
+            buildDesktopParityChannels(
+                catalog = catalog,
+                musicPoolSongs = musicPoolSongs,
+                playlists = playlistDetails,
+                musicChannels = musicChannels,
+                savedChannels = savedChannels,
+                lineup = lineup,
+                api = api,
+                windowStartSec = windowStartSec,
+                windowEndSec = windowEndSec,
+            )
+        }
+    }
+
+    if (isLoading) {
+        Column(
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            LoadingBox()
+            Spacer(modifier = Modifier.height(10.dp))
+            Text("Tuning channels…", color = SoulSyncColors.TextSecondary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+        }
+        return
     }
 
     val groupedSections = remember(allChannels, filter, favoritesList, favorites, channelQuery) {

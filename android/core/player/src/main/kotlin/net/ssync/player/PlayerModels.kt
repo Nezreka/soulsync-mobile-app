@@ -443,6 +443,8 @@ data class CalendarEpisode(
     val showId: Int? = null,
     @SerialName("show_title")
     val showTitle: String = "",
+    @SerialName("show_tmdb_id")
+    val showTmdbId: Int? = null,
     @SerialName("tmdb_id")
     val tmdbId: Int? = null,
     @SerialName("season_number")
@@ -452,19 +454,34 @@ data class CalendarEpisode(
     val title: String? = null,
     @SerialName("air_date")
     val airDate: String = "",
+    @SerialName("airs_time")
+    val airsTime: String? = null,
+    val network: String? = null,
+    @SerialName("still_url")
+    val stillUrl: String? = null,
+    @SerialName("backdrop_url")
+    val backdropUrl: String? = null,
     @SerialName("poster_url")
     val posterUrl: String? = null,
-    val acq: String? = null,
+    @SerialName("not_in_library")
+    val notInLibrary: Boolean = false,
+    val acq: String = "upcoming",
     val progress: Double? = null,
-)
+) {
+    val resolvedTmdbId: Int? get() = showTmdbId ?: tmdbId
+}
 
 @Serializable
 data class CalendarMovie(
     val id: Int? = null,
+    @SerialName("movie_id")
+    val movieId: Int? = null,
     @SerialName("tmdb_id")
     val tmdbId: Int = 0,
     val title: String = "",
     val year: Int? = null,
+    val date: String? = null,
+    val type: String? = null,
     @SerialName("release_date")
     val releaseDate: String? = null,
     @SerialName("event_date")
@@ -475,8 +492,13 @@ data class CalendarMovie(
     val posterUrl: String? = null,
     @SerialName("library_id")
     val libraryId: Int? = null,
-    val acq: String? = null,
-)
+    val acq: String = "upcoming",
+    val progress: Double? = null,
+) {
+    val effectiveDate: String get() = date ?: eventDate ?: releaseDate ?: ""
+    val effectiveType: String get() = type ?: eventKind ?: "available"
+    val effectiveLibraryId: Int? get() = movieId ?: libraryId
+}
 
 @Serializable
 data class VideoCalendarResponse(

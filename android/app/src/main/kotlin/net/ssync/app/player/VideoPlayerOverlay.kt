@@ -150,7 +150,12 @@ fun VideoPlayerOverlay(
     var isPlaying by remember { mutableStateOf(true) }
     var isBuffering by remember { mutableStateOf(true) }
     var positionMs by remember { mutableLongStateOf(item.resumePositionMs) }
-    var durationMs by remember { mutableLongStateOf(0L) }
+    var durationMs by remember(item.streamUrl) { mutableLongStateOf(item.durationMs.coerceAtLeast(0L)) }
+    var usingTranscode by remember(item.streamUrl) { mutableStateOf(false) }
+    var transcodeOffsetMs by remember(item.streamUrl) { mutableLongStateOf(0L) }
+    val transcodeScreenId = remember(item.streamUrl) {
+        "and-" + java.util.UUID.randomUUID().toString().replace("-", "").take(12)
+    }
     var scrubbing by remember { mutableStateOf(false) }
     var scrubValue by remember { mutableFloatStateOf(0f) }
     var showHud by remember { mutableStateOf(true) }
@@ -158,6 +163,55 @@ fun VideoPlayerOverlay(
     var speedIndex by remember { mutableStateOf(1) }
     var showTracksSheet by remember { mutableStateOf(false) }
     var playbackError by remember { mutableStateOf<String?>(null) }
+
+    val canTranscode = item.itemType == "movie" || item.itemType == "episode" || item.itemType == "youtube"
+
+    fun effectivePositionMs(): Long {
+        val raw = exoPlayer.currentPosition.coerceAtLeast(0L)
+        return if (usingTranscode) transcodeOffsetMs + raw else raw
+    }
+
+    fun effectiveDurationMs(): Long {
+        val exoDur = exoPlayer.duration
+        return when {
+            !usingTranscode && exoDur > 0L -> exoDur
+            durationMs > 0L -> durationMs
+            exoDur > 0L -> exoDur
+            else -> 0L
+        }
+    }
+
+    fun startTranscodeAt(targetMs: Long) {
+        val clamped = targetMs.coerceAtLeast(0L).let {
+            if (durationMs > 0L) it.coerceAtMost((durationMs - 1000L).coerceAtLeast(0L)) else it
+        }
+        usingTranscode = true
+        transcodeOffsetMs = clamped
+        positionMs = clamped
+        playbackError = null
+        isBuffering = true
+        val url = api.transcodeUrl(
+            itemType = item.itemType,
+            itemId = item.itemId,
+            startSec = clamped / 1000.0,
+            screenId = transcodeScreenId,
+        )
+        exoPlayer.stop()
+        exoPlayer.setMediaItem(MediaItem.fromUri(url))
+        exoPlayer.prepare()
+        exoPlayer.playWhenReady = true
+    }
+
+    fun seekOrTranscode(targetMs: Long) {
+        val clamped = targetMs.coerceAtLeast(0L).let {
+            if (durationMs > 0L) it.coerceAtMost(durationMs) else it
+        }
+        if (usingTranscode) {
+            startTranscodeAt(clamped)
+        } else {
+            exoPlayer.seekTo(clamped)
+        }
+    }
 
     DisposableEffect(exoPlayer) {
         val listener = object : Player.Listener {
@@ -168,10 +222,29 @@ fun VideoPlayerOverlay(
 
             override fun onPlaybackStateChanged(playbackState: Int) {
                 isBuffering = playbackState == Player.STATE_BUFFERING
-                if (exoPlayer.duration > 0L) durationMs = exoPlayer.duration
+                if (!usingTranscode && exoPlayer.duration > 0L) {
+                    durationMs = exoPlayer.duration
+                }
             }
 
             override fun onPlayerError(error: PlaybackException) {
+                // Auto-fallback to server transcode when direct play hits a codec,
+                // audio renderer (e.g. Dolby E-AC-3 / Atmos 5.1, TrueHD, DTS), or
+                // container/parser error on this device.
+                val msg = error.localizedMessage.orEmpty()
+                val isCodecOrRendererError =
+                    error.errorCode in 3000..5999 ||
+                        msg.contains("MediaCodec", ignoreCase = true) ||
+                        msg.contains("AudioRenderer", ignoreCase = true) ||
+                        msg.contains("VideoRenderer", ignoreCase = true) ||
+                        msg.contains("audio/eac3", ignoreCase = true) ||
+                        msg.contains("audio/ac3", ignoreCase = true) ||
+                        msg.contains("Decoder", ignoreCase = true)
+                if (!usingTranscode && canTranscode && isCodecOrRendererError) {
+                    val resumeAt = effectivePositionMs().takeIf { it > 0L } ?: item.resumePositionMs
+                    startTranscodeAt(resumeAt)
+                    return
+                }
                 isBuffering = false
                 isPlaying = false
                 showHud = true
@@ -182,8 +255,8 @@ fun VideoPlayerOverlay(
         exoPlayer.addListener(listener)
         onDispose {
             exoPlayer.removeListener(listener)
-            val pos = exoPlayer.currentPosition.coerceAtLeast(0L)
-            val dur = exoPlayer.duration.coerceAtLeast(0L)
+            val pos = effectivePositionMs()
+            val dur = effectiveDurationMs()
             exoPlayer.release()
             onClose(pos, dur)
         }
@@ -192,8 +265,10 @@ fun VideoPlayerOverlay(
     LaunchedEffect(exoPlayer) {
         while (true) {
             if (!scrubbing) {
-                positionMs = exoPlayer.currentPosition.coerceAtLeast(0L)
-                if (exoPlayer.duration > 0L) durationMs = exoPlayer.duration
+                positionMs = effectivePositionMs()
+                if (!usingTranscode && exoPlayer.duration > 0L) {
+                    durationMs = exoPlayer.duration
+                }
             }
             delay(400L)
         }
@@ -291,16 +366,29 @@ fun VideoPlayerOverlay(
                         icon = Icons.Default.PlayArrow,
                         label = "Retry",
                         onClick = {
-                            playbackError = null
-                            isBuffering = true
-                            exoPlayer.prepare()
-                            exoPlayer.playWhenReady = true
+                            if (usingTranscode) {
+                                startTranscodeAt(effectivePositionMs().takeIf { it > 0L } ?: item.resumePositionMs)
+                            } else {
+                                playbackError = null
+                                isBuffering = true
+                                exoPlayer.prepare()
+                                exoPlayer.playWhenReady = true
+                            }
                         },
                     )
+                    if (!usingTranscode && canTranscode) {
+                        CinemaPill(
+                            icon = Icons.Default.Speed,
+                            label = "Transcode",
+                            onClick = {
+                                startTranscodeAt(effectivePositionMs().takeIf { it > 0L } ?: item.resumePositionMs)
+                            },
+                        )
+                    }
                     CinemaPill(
                         icon = Icons.Default.Close,
                         label = "Close",
-                        onClick = { onClose(positionMs, durationMs) },
+                        onClick = { onClose(effectivePositionMs(), effectiveDurationMs()) },
                     )
                 }
             }
@@ -334,9 +422,7 @@ fun VideoPlayerOverlay(
                 ) {
                     IconButton(
                         onClick = {
-                            val pos = exoPlayer.currentPosition.coerceAtLeast(0L)
-                            val dur = exoPlayer.duration.coerceAtLeast(0L)
-                            onClose(pos, dur)
+                            onClose(effectivePositionMs(), effectiveDurationMs())
                         },
                         modifier = Modifier
                             .size(40.dp)
@@ -349,14 +435,32 @@ fun VideoPlayerOverlay(
                     Spacer(modifier = Modifier.width(12.dp))
                     val canJumpToChannel = item.itemType == "youtube" && !item.parentId.isNullOrBlank() && onOpenChannel != null
                     Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = item.title,
-                            color = Color.White,
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Text(
+                                text = item.title,
+                                color = Color.White,
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f, fill = false),
+                            )
+                            if (usingTranscode) {
+                                Text(
+                                    text = "TRANSCODED",
+                                    color = SoulSyncColors.AccentLight,
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(4.dp))
+                                        .background(SoulSyncColors.Accent.copy(alpha = 0.22f))
+                                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                                )
+                            }
+                        }
                         if (item.subtitle.isNotBlank()) {
                             Text(
                                 text = if (canJumpToChannel) "${item.subtitle} ›" else item.subtitle,
@@ -412,7 +516,7 @@ fun VideoPlayerOverlay(
                 ) {
                     IconButton(
                         onClick = {
-                            exoPlayer.seekTo((exoPlayer.currentPosition - 10_000L).coerceAtLeast(0L))
+                            seekOrTranscode(effectivePositionMs() - 10_000L)
                             hudPoke++
                         },
                         modifier = Modifier
@@ -446,8 +550,7 @@ fun VideoPlayerOverlay(
 
                     IconButton(
                         onClick = {
-                            val target = exoPlayer.currentPosition + 10_000L
-                            exoPlayer.seekTo(if (durationMs > 0L) target.coerceAtMost(durationMs) else target)
+                            seekOrTranscode(effectivePositionMs() + 10_000L)
                             hudPoke++
                         },
                         modifier = Modifier
@@ -487,7 +590,7 @@ fun VideoPlayerOverlay(
                         },
                         onValueChangeFinished = {
                             if (durationMs > 0L) {
-                                exoPlayer.seekTo((scrubValue * durationMs).toLong())
+                                seekOrTranscode((scrubValue * durationMs).toLong())
                             }
                             scrubbing = false
                             hudPoke++
@@ -759,11 +862,15 @@ fun VideoPlayerOverlay(
                                                     when (val r = api.downloadSubtitle(item.itemType, idInt, subLang, cand.candidateId)) {
                                                         is MusicApiResult.Success -> {
                                                             subStatus = "Subtitle saved! Reloading stream…"
-                                                            val resumeAt = exoPlayer.currentPosition.coerceAtLeast(0L)
-                                                            exoPlayer.setMediaItem(MediaItem.fromUri(item.streamUrl))
-                                                            exoPlayer.seekTo(resumeAt)
-                                                            exoPlayer.prepare()
-                                                            exoPlayer.playWhenReady = true
+                                                            val resumeAt = effectivePositionMs()
+                                                            if (usingTranscode) {
+                                                                startTranscodeAt(resumeAt)
+                                                            } else {
+                                                                exoPlayer.setMediaItem(MediaItem.fromUri(item.streamUrl))
+                                                                exoPlayer.seekTo(resumeAt)
+                                                                exoPlayer.prepare()
+                                                                exoPlayer.playWhenReady = true
+                                                            }
                                                             showTracksSheet = false
                                                         }
                                                         is MusicApiResult.Error -> subStatus = r.message
