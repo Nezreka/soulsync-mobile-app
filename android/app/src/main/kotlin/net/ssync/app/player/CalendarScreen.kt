@@ -7,10 +7,12 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -29,7 +31,6 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Movie
-import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -82,33 +83,65 @@ private sealed class CalendarEntry {
 }
 
 private enum class CalViewMode(val label: String) {
-    WEEK("Week"),
+    SCHEDULE("Schedule"),
     CARDS("Cards"),
-    LIST("Agenda"),
 }
 
 private enum class CalendarFilter(val label: String) {
     ALL("All"),
     OWNED("In library"),
-    UPCOMING("Coming soon"),
+    WISHLIST("Wanted"),
     MISSING("Missing"),
-    WISHLIST("Wishlist"),
+    UPCOMING("Upcoming"),
 }
 
 private fun acqColor(acq: String): Color = when (acq) {
-    "owned" -> Color(0xFF10B981)
+    "owned" -> Color(0xFF22C55E)      // crisp manager green
     "downloading" -> Color(0xFF38BDF8)
-    "wishlist" -> Color(0xFF818CF8)
-    "missing" -> Color(0xFFF59E0B)
-    else -> Color(0xFF94A3B8)
+    "wishlist" -> Color(0xFF818CF8)   // crisp manager indigo
+    "missing" -> Color(0xFFF59E0B)    // crisp manager amber
+    else -> Color(0xFF94A3B8)         // muted slate for upcoming/auto
 }
 
 private fun acqLabel(acq: String, progress: Double? = null): String = when (acq) {
     "owned" -> "In library"
     "downloading" -> if (progress != null) "${progress.toInt()}%" else "Downloading"
-    "wishlist" -> "Wishlist"
+    "wishlist" -> "Wanted"
     "missing" -> "Missing"
     else -> "Upcoming"
+}
+
+/** Parse "HH:MM" into minutes since midnight for band grouping & friendly 12h formatting. */
+private fun parseAirMins(airsTime: String?): Int? {
+    val raw = airsTime?.trim().takeIf { !it.isNullOrBlank() } ?: return null
+    val parts = raw.split(":")
+    val h = parts.getOrNull(0)?.toIntOrNull() ?: return null
+    val m = parts.getOrNull(1)?.toIntOrNull() ?: 0
+    return h * 60 + m
+}
+
+private fun formatAirTime12h(airsTime: String?): String? {
+    val mins = parseAirMins(airsTime) ?: return null
+    val h24 = (mins / 60) % 24
+    val m = mins % 60
+    val ampm = if (h24 >= 12) "PM" else "AM"
+    val h12 = when {
+        h24 == 0 -> 12
+        h24 > 12 -> h24 - 12
+        else -> h24
+    }
+    return if (m == 0) "$h12 $ampm" else "$h12:%02d $ampm".format(m)
+}
+
+private fun timeBandLabel(airsTime: String?): String {
+    val mins = parseAirMins(airsTime) ?: return "ANYTIME"
+    val h = mins / 60
+    return when {
+        h < 12 -> "MORNING"
+        h < 17 -> "AFTERNOON"
+        h < 22 -> "PRIME TIME"
+        else -> "LATE NIGHT"
+    }
 }
 
 private fun addCalendarDays(isoDate: String, delta: Int): String {
@@ -123,7 +156,7 @@ private fun weekStartIso(isoDate: String): String {
     val fmt = SimpleDateFormat("yyyy-MM-dd", Locale.US)
     val cal = Calendar.getInstance()
     cal.time = runCatching { fmt.parse(isoDate) }.getOrNull() ?: Date()
-    val dow = cal.get(Calendar.DAY_OF_WEEK) // Sunday = 1
+    val dow = cal.get(Calendar.DAY_OF_WEEK)
     cal.add(Calendar.DAY_OF_YEAR, -(dow - Calendar.SUNDAY))
     return fmt.format(cal.time)
 }
@@ -139,14 +172,15 @@ private fun formatDayHeading(isoDate: String, todayIso: String): Pair<String, Bo
     return base to (isoDate == todayIso)
 }
 
-private fun formatShortDay(isoDate: String, todayIso: String): Pair<String, String> {
+private fun formatStripDay(isoDate: String, todayIso: String): Triple<String, String, Boolean> {
     val inFmt = SimpleDateFormat("yyyy-MM-dd", Locale.US)
     val wdFmt = SimpleDateFormat("EEE", Locale.US)
-    val mdFmt = SimpleDateFormat("MMM d", Locale.US)
+    val numFmt = SimpleDateFormat("d", Locale.US)
     val parsed = runCatching { inFmt.parse(isoDate) }.getOrNull()
-    val wd = if (isoDate == todayIso) "Today" else (parsed?.let { wdFmt.format(it) } ?: isoDate)
-    val md = parsed?.let { mdFmt.format(it) } ?: ""
-    return wd to md
+    val isToday = isoDate == todayIso
+    val wd = if (isToday) "Today" else (parsed?.let { wdFmt.format(it) } ?: isoDate)
+    val num = parsed?.let { numFmt.format(it) } ?: ""
+    return Triple(wd, num, isToday)
 }
 
 private fun formatRangeLabel(startIso: String, days: Int): String {
@@ -172,6 +206,14 @@ private fun calendarMovieArt(m: CalendarMovie, api: PlayerApiClient): String? {
     return null
 }
 
+/**
+ * Best-in-class Mobile Release Calendar inspired directly by the Manager Calendar:
+ * - Interactive 7-day selector strip with per-day item counts & color-coded StateBar
+ * - Clean manager-style monochrome filter chips (`All`, `● In library`, `● Wanted`, `● Missing`, `○ Upcoming`)
+ * - Full-width, ultra-readable schedule tiles with 3dp left status stripe, `MORNING / AFTERNOON / PRIME TIME / LATE NIGHT`
+ *   time-of-day dividers, and clean `● Status` indicators (zero visual clutter!)
+ * - Optional visual 16:9 **Cards** view with backdrop stills & 1-tap Request/Get buttons on aired missing items.
+ */
 @Composable
 fun CalendarScreen(
     api: PlayerApiClient,
@@ -180,10 +222,13 @@ fun CalendarScreen(
 ) {
     val onOpenShow: (Int) -> Unit = { id -> onNavigate(PlayerDestination.ShowDetail(id)) }
     val onOpenMovie: (Int) -> Unit = { id -> onNavigate(PlayerDestination.MovieDetail(id)) }
+
     val scope = rememberCoroutineScope()
     val todayDefault = remember { todayIsoString() }
-    var startDate by remember { mutableStateOf(weekStartIso(todayDefault)) }
-    var viewMode by remember { mutableStateOf(CalViewMode.CARDS) }
+    // Player 7-day window: 5 days look-behind + Today + 1 day look-ahead (Tomorrow)
+    var weekStart by remember { mutableStateOf(addCalendarDays(todayDefault, -5)) }
+    var selectedDay by remember { mutableStateOf<String?>(todayDefault) } // null = whole 7-day window
+    var viewMode by remember { mutableStateOf(CalViewMode.SCHEDULE) }
     var filter by remember { mutableStateOf(CalendarFilter.ALL) }
     var scopeMode by remember { mutableStateOf("watchlist") }
     var loading by remember { mutableStateOf(true) }
@@ -193,13 +238,11 @@ fun CalendarScreen(
     var requestMode by remember { mutableStateOf("none") }
     val requestedKeys = remember { mutableStateMapOf<String, String>() }
 
-    val days = if (viewMode == CalViewMode.WEEK) 7 else 14
-
-    LaunchedEffect(api, startDate, days, scopeMode) {
+    LaunchedEffect(api, weekStart, scopeMode) {
         loading = true
         coroutineScope {
-            val calDef = async { api.fetchVideoCalendar(start = startDate, days = days, scope = scopeMode) }
-            val folDef = async { api.fetchVideoCalendarFollowed(start = startDate, days = days) }
+            val calDef = async { api.fetchVideoCalendar(start = weekStart, days = 7, scope = scopeMode) }
+            val folDef = async { api.fetchVideoCalendarFollowed(start = weekStart, days = 7) }
             val modeDef = async { api.fetchVideoRequestOptions() }
 
             val calRes = calDef.await()
@@ -263,6 +306,8 @@ fun CalendarScreen(
         }
     }
 
+    val weekDays = remember(weekStart) { (0 until 7).map { addCalendarDays(weekStart, it) } }
+
     val allEntries = remember(episodes, movies) {
         (episodes.map { CalendarEntry.Episode(it) } + movies.map { CalendarEntry.Movie(it) })
             .sortedWith(compareBy<CalendarEntry> { it.dateKey })
@@ -272,40 +317,38 @@ fun CalendarScreen(
         when (filter) {
             CalendarFilter.ALL -> allEntries
             CalendarFilter.OWNED -> allEntries.filter { it.acq == "owned" }
-            CalendarFilter.UPCOMING -> allEntries.filter { it.acq == "upcoming" }
-            CalendarFilter.MISSING -> allEntries.filter { it.acq == "missing" }
             CalendarFilter.WISHLIST -> allEntries.filter { it.acq == "wishlist" || it.acq == "downloading" }
+            CalendarFilter.MISSING -> allEntries.filter { it.acq == "missing" }
+            CalendarFilter.UPCOMING -> allEntries.filter { it.acq == "upcoming" }
         }
     }
 
-    val groupedByDay = remember(filteredEntries) {
-        filteredEntries.groupBy { it.dateKey }.toSortedMap()
-    }
+    val entriesByDay = remember(filteredEntries) { filteredEntries.groupBy { it.dateKey } }
+    val allByDay = remember(allEntries) { allEntries.groupBy { it.dateKey } }
 
-    // Featured "Next Up" hero episodes (soonest upcoming or today's episodes)
-    val heroEpisodes = remember(episodes, todayIso) {
-        val upcoming = episodes.filter { it.airDate >= todayIso }
-            .sortedWith(compareBy<CalendarEpisode> { it.airDate }.thenBy { it.airsTime ?: "99:99" })
-        (if (upcoming.isNotEmpty()) upcoming else episodes.sortedByDescending { it.airDate }).take(3)
+    // Days shown below the strip: either the tapped day, or all 7 days if user tapped "All week"
+    val visibleDays = remember(weekDays, selectedDay, entriesByDay) {
+        if (selectedDay != null && selectedDay in weekDays) listOf(selectedDay!!)
+        else weekDays.filter { !entriesByDay[it].isNullOrEmpty() }
     }
 
     val countAll = allEntries.size
     val countOwned = allEntries.count { it.acq == "owned" }
-    val countUpcoming = allEntries.count { it.acq == "upcoming" }
-    val countMissing = allEntries.count { it.acq == "missing" }
     val countWish = allEntries.count { it.acq == "wishlist" || it.acq == "downloading" }
+    val countMissing = allEntries.count { it.acq == "missing" }
+    val countUpcoming = allEntries.count { it.acq == "upcoming" }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(bottom = 110.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        // 1. Premier Header + Navigation
+        // 1. Clean Header + Week Navigation
         item {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                    .padding(horizontal = 16.dp, vertical = 6.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Row(
@@ -315,53 +358,60 @@ fun CalendarScreen(
                 ) {
                     Column {
                         Text(
-                            text = if (startDate == weekStartIso(todayIso)) "This week" else "Calendar",
+                            text = if (weekStart == addCalendarDays(todayIso, -5)) "Recent & Tomorrow" else "Calendar",
                             color = Color.White,
-                            fontSize = 24.sp,
+                            fontSize = 22.sp,
                             fontWeight = FontWeight.ExtraBold,
                         )
                         Text(
-                            text = formatRangeLabel(startDate, days),
+                            text = formatRangeLabel(weekStart, 7),
                             color = SoulSyncColors.TextSecondary,
-                            fontSize = 12.sp,
+                            fontSize = 12.5.sp,
                         )
                     }
-
-                    // Prev / Today / Next segmented control
                     Row(
                         modifier = Modifier
                             .clip(CircleShape)
                             .background(Color.White.copy(alpha = 0.06f))
-                            .border(1.dp, SoulSyncColors.Line, CircleShape)
-                            .padding(horizontal = 4.dp, vertical = 2.dp),
+                            .border(1.dp, Color.White.copy(alpha = 0.1f), CircleShape)
+                            .padding(horizontal = 2.dp, vertical = 2.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         IconButton(
-                            onClick = { startDate = addCalendarDays(startDate, -7) },
-                            modifier = Modifier.size(32.dp),
+                            onClick = {
+                                weekStart = addCalendarDays(weekStart, -7)
+                                selectedDay = null
+                            },
+                            modifier = Modifier.size(34.dp),
                         ) {
-                            Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = "Previous", tint = Color.White)
+                            Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = "Prev week", tint = Color.White)
                         }
                         Text(
                             text = "Today",
                             color = SoulSyncColors.AccentLight,
-                            fontSize = 12.sp,
+                            fontSize = 12.5.sp,
                             fontWeight = FontWeight.Bold,
                             modifier = Modifier
                                 .clip(CircleShape)
-                                .clickable { startDate = weekStartIso(todayIso) }
+                                .clickable {
+                                    weekStart = addCalendarDays(todayIso, -5)
+                                    selectedDay = todayIso
+                                }
                                 .padding(horizontal = 8.dp, vertical = 4.dp),
                         )
                         IconButton(
-                            onClick = { startDate = addCalendarDays(startDate, 7) },
-                            modifier = Modifier.size(32.dp),
+                            onClick = {
+                                weekStart = addCalendarDays(weekStart, 7)
+                                selectedDay = null
+                            },
+                            modifier = Modifier.size(34.dp),
                         ) {
-                            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = "Next", tint = Color.White)
+                            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = "Next week", tint = Color.White)
                         }
                     }
                 }
 
-                // View mode switcher (Week | Cards | Agenda) + Watchlist/All toggle
+                // Schedule | Cards + Watchlist | All Library
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -370,23 +420,23 @@ fun CalendarScreen(
                     Row(
                         modifier = Modifier
                             .clip(CircleShape)
-                            .background(Color.Black.copy(alpha = 0.38f))
-                            .border(1.dp, SoulSyncColors.Line, CircleShape)
+                            .background(Color(0xFF141620))
+                            .border(1.dp, Color.White.copy(alpha = 0.1f), CircleShape)
                             .padding(3.dp),
                         horizontalArrangement = Arrangement.spacedBy(2.dp),
                     ) {
                         CalViewMode.entries.forEach { m ->
-                            val selected = viewMode == m
+                            val on = viewMode == m
                             Text(
                                 text = m.label,
-                                color = if (selected) Color.White else SoulSyncColors.TextSoft,
-                                fontSize = 12.sp,
-                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                                color = if (on) Color.White else SoulSyncColors.TextSecondary,
+                                fontSize = 12.5.sp,
+                                fontWeight = if (on) FontWeight.Bold else FontWeight.Medium,
                                 modifier = Modifier
                                     .clip(CircleShape)
-                                    .background(if (selected) SoulSyncColors.Accent.copy(alpha = 0.35f) else Color.Transparent)
+                                    .background(if (on) Color.White.copy(alpha = 0.14f) else Color.Transparent)
                                     .clickable { viewMode = m }
-                                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                                    .padding(horizontal = 14.dp, vertical = 6.dp),
                             )
                         }
                     }
@@ -394,483 +444,449 @@ fun CalendarScreen(
                     Row(
                         modifier = Modifier
                             .clip(CircleShape)
-                            .background(Color.Black.copy(alpha = 0.38f))
-                            .border(1.dp, SoulSyncColors.Line, CircleShape)
+                            .background(Color(0xFF141620))
+                            .border(1.dp, Color.White.copy(alpha = 0.1f), CircleShape)
                             .padding(3.dp),
                     ) {
-                        listOf("watchlist" to "Watchlist", "all" to "All").forEach { (key, lbl) ->
-                            val on = scopeMode == key
+                        listOf("watchlist" to "Watchlist", "all" to "All").forEach { (k, lbl) ->
+                            val on = scopeMode == k
                             Text(
                                 text = lbl,
-                                color = if (on) Color.White else SoulSyncColors.TextSoft,
-                                fontSize = 11.5.sp,
+                                color = if (on) Color.White else SoulSyncColors.TextSecondary,
+                                fontSize = 12.sp,
                                 fontWeight = if (on) FontWeight.Bold else FontWeight.Medium,
                                 modifier = Modifier
                                     .clip(CircleShape)
                                     .background(if (on) Color.White.copy(alpha = 0.14f) else Color.Transparent)
-                                    .clickable { scopeMode = key }
-                                    .padding(horizontal = 10.dp, vertical = 5.dp),
+                                    .clickable { scopeMode = k }
+                                    .padding(horizontal = 11.dp, vertical = 6.dp),
                             )
                         }
                     }
                 }
 
-                // State filter chips with live counts
+                // Manager-style Monochrome Filter Chips with Tiny Status Dots
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    val chipDefs = listOf(
-                        Triple(CalendarFilter.ALL, countAll, Color.White),
+                    val chips = listOf(
+                        Triple(CalendarFilter.ALL, countAll, null),
                         Triple(CalendarFilter.OWNED, countOwned, acqColor("owned")),
-                        Triple(CalendarFilter.UPCOMING, countUpcoming, acqColor("upcoming")),
-                        Triple(CalendarFilter.MISSING, countMissing, acqColor("missing")),
                         Triple(CalendarFilter.WISHLIST, countWish, acqColor("wishlist")),
+                        Triple(CalendarFilter.MISSING, countMissing, acqColor("missing")),
+                        Triple(CalendarFilter.UPCOMING, countUpcoming, acqColor("upcoming")),
                     )
-                    items(chipDefs) { (f, cnt, dotColor) ->
+                    items(chips) { (f, cnt, dotColor) ->
                         val active = filter == f
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(6.dp),
                             modifier = Modifier
                                 .clip(CircleShape)
-                                .background(if (active) SoulSyncColors.Accent.copy(alpha = 0.25f) else Color.White.copy(alpha = 0.05f))
+                                .background(if (active) Color.White.copy(alpha = 0.14f) else Color(0xFF12141E))
                                 .border(
                                     1.dp,
-                                    if (active) SoulSyncColors.Accent else SoulSyncColors.Line,
+                                    if (active) Color.White.copy(alpha = 0.35f) else Color.White.copy(alpha = 0.08f),
                                     CircleShape,
                                 )
-                                .clickable { filter = f }
-                                .padding(horizontal = 12.dp, vertical = 6.dp),
+                                .clickable { filter = if (filter == f && f != CalendarFilter.ALL) CalendarFilter.ALL else f }
+                                .padding(horizontal = 12.dp, vertical = 7.dp),
                         ) {
-                            if (f != CalendarFilter.ALL) {
+                            if (dotColor != null) {
                                 Box(
                                     modifier = Modifier
                                         .size(7.dp)
                                         .clip(CircleShape)
-                                        .background(dotColor),
+                                        .then(
+                                            if (f == CalendarFilter.UPCOMING) {
+                                                Modifier.border(1.5.dp, dotColor, CircleShape)
+                                            } else {
+                                                Modifier.background(dotColor)
+                                            },
+                                        ),
                                 )
                             }
                             Text(
-                                text = "${f.label} $cnt",
-                                color = if (active) Color.White else SoulSyncColors.TextSoft,
-                                fontSize = 12.sp,
+                                text = f.label,
+                                color = if (active) Color.White else Color.White.copy(alpha = 0.8f),
+                                fontSize = 12.5.sp,
                                 fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
                             )
-                        }
-                    }
-                }
-            }
-        }
-
-        // 2. Next Up Billboard Hero (matching Desktop CalendarHero)
-        if (!loading && heroEpisodes.isNotEmpty()) {
-            item {
-                LazyRow(
-                    contentPadding = PaddingValues(horizontal = 16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    items(heroEpisodes, key = { "hero-${it.id}-${it.showTmdbId}-${it.seasonNumber}-${it.episodeNumber}" }) { ep ->
-                        val art = calendarEpisodeArt(ep, api)
-                        val whenText = when {
-                            ep.airDate == todayIso -> "TODAY"
-                            ep.airDate == addCalendarDays(todayIso, 1) -> "TOMORROW"
-                            else -> ep.airDate
-                        }
-                        Box(
-                            modifier = Modifier
-                                .width(310.dp)
-                                .aspectRatio(16f / 9f)
-                                .clip(RoundedCornerShape(16.dp))
-                                .background(Color(0xFF151725))
-                                .border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(16.dp))
-                                .clickable { ep.showId?.let(onOpenShow) },
-                        ) {
-                            if (art != null) {
-                                AsyncImage(
-                                    model = art,
-                                    contentDescription = ep.showTitle,
-                                    contentScale = ContentScale.Crop,
-                                    modifier = Modifier.fillMaxSize(),
-                                )
-                            }
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .background(
-                                        Brush.verticalGradient(
-                                            listOf(
-                                                Color.Black.copy(alpha = 0.18f),
-                                                Color.Black.copy(alpha = 0.88f),
-                                            ),
-                                        ),
-                                    ),
+                            Text(
+                                text = "$cnt",
+                                color = SoulSyncColors.TextSecondary,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
                             )
-                            Column(
-                                modifier = Modifier
-                                    .align(Alignment.BottomStart)
-                                    .padding(14.dp),
-                                verticalArrangement = Arrangement.spacedBy(4.dp),
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(6.dp)
-                                            .clip(CircleShape)
-                                            .background(SoulSyncColors.AccentLight),
-                                    )
-                                    Text(
-                                        text = buildString {
-                                            append("NEXT UP · $whenText")
-                                            ep.network?.takeIf { it.isNotBlank() }?.let { append(" · ${it.uppercase()}") }
-                                        },
-                                        color = SoulSyncColors.AccentLight,
-                                        fontSize = 10.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                }
-                                Text(
-                                    text = ep.showTitle,
-                                    color = Color.White,
-                                    fontSize = 17.sp,
-                                    fontWeight = FontWeight.ExtraBold,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                ) {
-                                    Text(
-                                        text = "S${ep.seasonNumber} E${ep.episodeNumber}" +
-                                            (ep.title?.takeIf { it.isNotBlank() }?.let { " · $it" } ?: ""),
-                                        color = SoulSyncColors.TextSoft,
-                                        fontSize = 12.sp,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                        modifier = Modifier.weight(1f, fill = false),
-                                    )
-                                    CalendarStatusPill(acq = ep.acq, progress = ep.progress)
-                                }
-                            }
                         }
                     }
                 }
             }
         }
 
-        // 3. Content
+        // 2. Interactive 7-Day Strip (tap any day for crisp focused view, or "All" for the whole week!)
+        item {
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                item(key = "all-week") {
+                    val on = selectedDay == null
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                        modifier = Modifier
+                            .width(56.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(if (on) SoulSyncColors.Accent.copy(alpha = 0.24f) else Color(0xFF12141E))
+                            .border(1.dp, if (on) SoulSyncColors.Accent else Color.White.copy(alpha = 0.08f), RoundedCornerShape(12.dp))
+                            .clickable { selectedDay = null }
+                            .padding(vertical = 8.dp, horizontal = 6.dp),
+                    ) {
+                        Text("All", color = if (on) Color.White else SoulSyncColors.TextSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        Text("${filteredEntries.size}", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.ExtraBold)
+                        Spacer(modifier = Modifier.height(3.dp))
+                    }
+                }
+                items(weekDays, key = { "strip-$it" }) { day ->
+                    val (wd, num, isToday) = formatStripDay(day, todayIso)
+                    val on = selectedDay == day
+                    val dayAll = allByDay[day].orEmpty()
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                        modifier = Modifier
+                            .width(64.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(
+                                when {
+                                    on -> SoulSyncColors.Accent.copy(alpha = 0.24f)
+                                    isToday -> Color(0xFF191C2B)
+                                    else -> Color(0xFF12141E)
+                                },
+                            )
+                            .border(
+                                1.dp,
+                                when {
+                                    on -> SoulSyncColors.Accent
+                                    isToday -> SoulSyncColors.Accent.copy(alpha = 0.45f)
+                                    else -> Color.White.copy(alpha = 0.08f)
+                                },
+                                RoundedCornerShape(12.dp),
+                            )
+                            .clickable { selectedDay = if (selectedDay == day) null else day }
+                            .padding(vertical = 8.dp, horizontal = 8.dp),
+                    ) {
+                        Text(
+                            text = wd,
+                            color = if (isToday) SoulSyncColors.AccentLight else SoulSyncColors.TextSecondary,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            Text(num, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.ExtraBold)
+                            if (dayAll.isNotEmpty()) {
+                                Text("${dayAll.size}", color = SoulSyncColors.TextSecondary, fontSize = 10.sp)
+                            }
+                        }
+                        DayStateBar(items = dayAll)
+                    }
+                }
+            }
+        }
+
+        // 3. Body
         if (loading) {
             item { LoadingBox() }
-        } else if (groupedByDay.isEmpty()) {
+        } else if (visibleDays.isEmpty() || visibleDays.all { entriesByDay[it].isNullOrEmpty() }) {
             item {
                 Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 48.dp, horizontal = 24.dp),
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 48.dp, horizontal = 24.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Icon(
-                        Icons.Default.CalendarMonth,
-                        contentDescription = null,
-                        tint = SoulSyncColors.TextSecondary,
-                        modifier = Modifier.size(36.dp),
-                    )
-                    Text(
-                        text = "Nothing scheduled in this window",
-                        color = Color.White,
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    Text(
-                        text = "Try switching to All shows or stepping to another week.",
-                        color = SoulSyncColors.TextSecondary,
-                        fontSize = 12.sp,
-                    )
-                }
-            }
-        } else if (viewMode == CalViewMode.WEEK) {
-            // Horizontal 7-day cable-column Week View (mirrors Desktop WeekView!)
-            item {
-                val weekDays = remember(startDate) { (0 until 7).map { addCalendarDays(startDate, it) } }
-                LazyRow(
-                    contentPadding = PaddingValues(horizontal = 16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    items(weekDays, key = { it }) { day ->
-                        val itemsForDay = groupedByDay[day].orEmpty()
-                        val (wd, md) = formatShortDay(day, todayIso)
-                        val isToday = day == todayIso
-                        Surface(
-                            shape = RoundedCornerShape(14.dp),
-                            color = if (isToday) SoulSyncColors.Accent.copy(alpha = 0.08f) else Color.White.copy(alpha = 0.035f),
-                            border = BorderStroke(
-                                1.dp,
-                                if (isToday) SoulSyncColors.Accent.copy(alpha = 0.55f) else SoulSyncColors.Line,
-                            ),
-                            modifier = Modifier.width(210.dp),
-                        ) {
-                            Column(
-                                modifier = Modifier.padding(10.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp),
-                            ) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    Text(
-                                        text = wd,
-                                        color = if (isToday) SoulSyncColors.AccentLight else Color.White,
-                                        fontSize = 14.sp,
-                                        fontWeight = FontWeight.ExtraBold,
-                                    )
-                                    Text(
-                                        text = md,
-                                        color = SoulSyncColors.TextSecondary,
-                                        fontSize = 11.sp,
-                                    )
-                                }
-                                DayStateBar(items = itemsForDay)
-                                if (itemsForDay.isEmpty()) {
-                                    Text(
-                                        text = "Nothing airs",
-                                        color = SoulSyncColors.TextSecondary,
-                                        fontSize = 11.5.sp,
-                                        modifier = Modifier.padding(vertical = 12.dp),
-                                    )
-                                } else {
-                                    itemsForDay.forEach { entry ->
-                                        when (entry) {
-                                            is CalendarEntry.Episode -> {
-                                                val ep = entry.ep
-                                                val reqKey = "ep:${ep.resolvedTmdbId}:${ep.seasonNumber}:${ep.episodeNumber}"
-                                                val reqState = requestedKeys[reqKey]
-                                                val aired = ep.airDate <= todayIso
-                                                val showReq = canRequest && aired && ep.acq == "missing" && ep.resolvedTmdbId != null
-                                                Column(
-                                                    modifier = Modifier
-                                                        .fillMaxWidth()
-                                                        .clip(RoundedCornerShape(10.dp))
-                                                        .background(Color.White.copy(alpha = 0.05f))
-                                                        .border(1.dp, acqColor(ep.acq).copy(alpha = 0.35f), RoundedCornerShape(10.dp))
-                                                        .clickable { ep.showId?.let(onOpenShow) }
-                                                        .padding(8.dp),
-                                                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                                                ) {
-                                                    Text(
-                                                        text = ep.showTitle,
-                                                        color = Color.White,
-                                                        fontSize = 12.5.sp,
-                                                        fontWeight = FontWeight.Bold,
-                                                        maxLines = 1,
-                                                        overflow = TextOverflow.Ellipsis,
-                                                    )
-                                                    Row(
-                                                        modifier = Modifier.fillMaxWidth(),
-                                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                                        verticalAlignment = Alignment.CenterVertically,
-                                                    ) {
-                                                        Text(
-                                                            text = "S${ep.seasonNumber}E${ep.episodeNumber}",
-                                                            color = SoulSyncColors.TextSoft,
-                                                            fontSize = 11.sp,
-                                                        )
-                                                        CalendarStatusPill(
-                                                            acq = if (reqState == "done") "wishlist" else ep.acq,
-                                                            progress = ep.progress,
-                                                        )
-                                                    }
-                                                    if (showReq && reqState != "done") {
-                                                        Text(
-                                                            text = if (reqState == "loading") "…" else "+ $requestVerb",
-                                                            color = SoulSyncColors.AccentLight,
-                                                            fontSize = 11.sp,
-                                                            fontWeight = FontWeight.Bold,
-                                                            modifier = Modifier
-                                                                .clip(RoundedCornerShape(6.dp))
-                                                                .background(SoulSyncColors.Accent.copy(alpha = 0.18f))
-                                                                .clickable { requestEpisode(ep) }
-                                                                .padding(horizontal = 8.dp, vertical = 3.dp),
-                                                        )
-                                                    }
-                                                }
-                                            }
-                                            is CalendarEntry.Movie -> {
-                                                val m = entry.movie
-                                                val mLibId = m.effectiveLibraryId
-                                                Column(
-                                                    modifier = Modifier
-                                                        .fillMaxWidth()
-                                                        .clip(RoundedCornerShape(10.dp))
-                                                        .background(Color.White.copy(alpha = 0.05f))
-                                                        .border(1.dp, acqColor(m.acq).copy(alpha = 0.35f), RoundedCornerShape(10.dp))
-                                                        .clickable { mLibId?.let(onOpenMovie) }
-                                                        .padding(8.dp),
-                                                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                                                ) {
-                                                    Text(
-                                                        text = "🎬 ${m.title}",
-                                                        color = Color.White,
-                                                        fontSize = 12.5.sp,
-                                                        fontWeight = FontWeight.Bold,
-                                                        maxLines = 1,
-                                                        overflow = TextOverflow.Ellipsis,
-                                                    )
-                                                    CalendarStatusPill(acq = m.acq, progress = m.progress)
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    Icon(Icons.Default.CalendarMonth, contentDescription = null, tint = SoulSyncColors.TextSecondary, modifier = Modifier.size(36.dp))
+                    Text("Nothing airs", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                    Text("Try selecting All week or another filter.", color = SoulSyncColors.TextSecondary, fontSize = 12.5.sp)
                 }
             }
         } else {
-            // CARDS view or AGENDA list view grouped by day with per-day StateBar
-            groupedByDay.forEach { (dateKey, dayItems) ->
-                item(key = "hdr-$dateKey") {
-                    val (label, isToday) = formatDayHeading(dateKey, todayIso)
+            visibleDays.forEach { day ->
+                val dayItems = entriesByDay[day].orEmpty()
+                if (dayItems.isEmpty()) return@forEach
+                val dayMovies = dayItems.filterIsInstance<CalendarEntry.Movie>().map { it.movie }
+                val dayEpisodes = dayItems.filterIsInstance<CalendarEntry.Episode>()
+                    .map { it.ep }
+                    .sortedBy { parseAirMins(it.airsTime) ?: 9999 }
+
+                // Day Header + StateBar
+                item(key = "hdr-$day") {
+                    val (label, isToday) = formatDayHeading(day, todayIso)
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 2.dp),
+                            .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 2.dp),
                         verticalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
                         Row(
+                            modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
                         ) {
-                            Text(
-                                text = label,
-                                color = Color.White,
-                                fontSize = 16.sp,
-                                fontWeight = FontWeight.Bold,
-                            )
-                            if (isToday) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Text(
-                                    text = "TODAY",
-                                    color = SoulSyncColors.AccentLight,
-                                    fontSize = 10.sp,
+                                    text = label,
+                                    color = if (isToday) SoulSyncColors.AccentLight else Color.White,
+                                    fontSize = 17.sp,
                                     fontWeight = FontWeight.ExtraBold,
-                                    modifier = Modifier
-                                        .clip(CircleShape)
-                                        .background(SoulSyncColors.Accent.copy(alpha = 0.22f))
-                                        .padding(horizontal = 8.dp, vertical = 2.dp),
                                 )
+                                if (isToday) {
+                                    Text(
+                                        text = "TODAY",
+                                        color = SoulSyncColors.AccentLight,
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        modifier = Modifier
+                                            .clip(CircleShape)
+                                            .background(SoulSyncColors.Accent.copy(alpha = 0.2f))
+                                            .padding(horizontal = 8.dp, vertical = 2.dp),
+                                    )
+                                }
                             }
-                            Spacer(modifier = Modifier.weight(1f))
                             Text(
-                                text = "${dayItems.size} ${if (dayItems.size == 1) "item" else "items"}",
+                                text = "${dayItems.size}",
                                 color = SoulSyncColors.TextSecondary,
-                                fontSize = 11.sp,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
                             )
                         }
                         DayStateBar(items = dayItems)
                     }
                 }
 
-                items(
-                    items = dayItems,
-                    key = { e ->
-                        when (e) {
-                            is CalendarEntry.Episode -> "ep-${e.ep.id}-${e.ep.resolvedTmdbId}-${e.ep.seasonNumber}-${e.ep.episodeNumber}"
-                            is CalendarEntry.Movie -> "mv-${e.movie.tmdbId}-${e.movie.effectiveType}"
-                        }
-                    },
-                ) { entry ->
-                    when (entry) {
-                        is CalendarEntry.Episode -> {
-                            val ep = entry.ep
-                            val epShowId = ep.showId
-                            val reqKey = "ep:${ep.resolvedTmdbId}:${ep.seasonNumber}:${ep.episodeNumber}"
-                            val reqState = requestedKeys[reqKey]
-                            val aired = ep.airDate <= todayIso
-                            val showRequest = canRequest && aired && ep.acq == "missing" && ep.resolvedTmdbId != null
-                            if (viewMode == CalViewMode.CARDS) {
-                                CalendarVisualCard(
-                                    title = ep.showTitle,
-                                    subtitle = "S${ep.seasonNumber} E${ep.episodeNumber}" +
-                                        (ep.title?.takeIf { it.isNotBlank() }?.let { " · $it" } ?: ""),
-                                    meta = listOfNotNull(ep.airsTime?.takeIf { it.isNotBlank() }, ep.network?.takeIf { it.isNotBlank() })
-                                        .joinToString(" · "),
-                                    codeBadge = "S${ep.seasonNumber}E${ep.episodeNumber}",
-                                    artUrl = calendarEpisodeArt(ep, api),
-                                    acq = if (reqState == "done") "wishlist" else ep.acq,
-                                    progress = ep.progress,
-                                    showRequest = showRequest,
-                                    requestVerb = requestVerb,
-                                    requestState = reqState,
-                                    onRequest = { requestEpisode(ep) },
-                                    onClick = if (epShowId != null && !ep.notInLibrary) ({ onOpenShow(epShowId) }) else null,
-                                )
-                            } else {
-                                CalendarAgendaRow(
-                                    title = ep.showTitle,
-                                    subtitle = "S${ep.seasonNumber} E${ep.episodeNumber}" +
-                                        (ep.title?.takeIf { it.isNotBlank() }?.let { " · $it" } ?: ""),
-                                    meta = listOfNotNull(ep.airsTime?.takeIf { it.isNotBlank() }, ep.network?.takeIf { it.isNotBlank() })
-                                        .joinToString(" · "),
-                                    artUrl = calendarEpisodeArt(ep, api),
-                                    isMovie = false,
-                                    acq = if (reqState == "done") "wishlist" else ep.acq,
-                                    progress = ep.progress,
-                                    showRequest = showRequest,
-                                    requestVerb = requestVerb,
-                                    requestState = reqState,
-                                    onRequest = { requestEpisode(ep) },
-                                    onClick = if (epShowId != null && !ep.notInLibrary) ({ onOpenShow(epShowId) }) else null,
-                                )
-                            }
-                        }
+                // Movies first (matching Manager Calendar!)
+                items(dayMovies, key = { "m-$day-${it.tmdbId}-${it.effectiveType}" }) { m ->
+                    val libId = m.effectiveLibraryId
+                    val reqKey = "movie:${m.tmdbId}"
+                    val reqState = requestedKeys[reqKey]
+                    val aired = m.effectiveDate <= todayIso
+                    val showReq = canRequest && aired && m.acq == "missing" && m.tmdbId > 0
+                    val effectiveAcq = if (reqState == "done") "wishlist" else m.acq
+                    val sub = listOfNotNull(
+                        if (m.effectiveType == "cinema") "In cinemas" else "Home release",
+                        m.year?.toString(),
+                    ).joinToString(" · ")
 
-                        is CalendarEntry.Movie -> {
-                            val m = entry.movie
-                            val mLibId = m.effectiveLibraryId
-                            val reqKey = "movie:${m.tmdbId}"
-                            val reqState = requestedKeys[reqKey]
-                            val aired = m.effectiveDate <= todayIso
-                            val showRequest = canRequest && aired && m.acq == "missing" && m.tmdbId > 0
-                            val releaseMeta = listOfNotNull(
-                                if (m.effectiveType == "cinema") "In cinemas" else "Home release",
-                                m.year?.toString(),
-                            ).joinToString(" · ")
-                            if (viewMode == CalViewMode.CARDS) {
-                                CalendarVisualCard(
-                                    title = "🎬 ${m.title}",
-                                    subtitle = releaseMeta,
-                                    meta = "",
-                                    codeBadge = "MOVIE",
-                                    artUrl = calendarMovieArt(m, api),
-                                    acq = if (reqState == "done") "wishlist" else m.acq,
-                                    progress = m.progress,
-                                    showRequest = showRequest,
-                                    requestVerb = requestVerb,
-                                    requestState = reqState,
-                                    onRequest = { requestMovie(m) },
-                                    onClick = if (mLibId != null) ({ onOpenMovie(mLibId) }) else null,
-                                )
-                            } else {
-                                CalendarAgendaRow(
-                                    title = m.title,
-                                    subtitle = releaseMeta,
-                                    meta = "",
-                                    artUrl = calendarMovieArt(m, api),
-                                    isMovie = true,
-                                    acq = if (reqState == "done") "wishlist" else m.acq,
-                                    progress = m.progress,
-                                    showRequest = showRequest,
-                                    requestVerb = requestVerb,
-                                    requestState = reqState,
-                                    onRequest = { requestMovie(m) },
-                                    onClick = if (mLibId != null) ({ onOpenMovie(mLibId) }) else null,
-                                )
-                            }
+                    if (viewMode == CalViewMode.CARDS) {
+                        CalendarVisualCard(
+                            title = m.title,
+                            subtitle = sub,
+                            meta = "",
+                            codeBadge = "MOVIE",
+                            artUrl = calendarMovieArt(m, api),
+                            acq = effectiveAcq,
+                            progress = m.progress,
+                            showRequest = showReq,
+                            requestVerb = requestVerb,
+                            requestState = reqState,
+                            onRequest = { requestMovie(m) },
+                            onClick = if (libId != null) ({ onOpenMovie(libId) }) else null,
+                        )
+                    } else {
+                        ManagerStyleTile(
+                            title = m.title,
+                            meta = sub,
+                            isMovie = true,
+                            acq = effectiveAcq,
+                            progress = m.progress,
+                            showRequest = showReq,
+                            requestVerb = requestVerb,
+                            requestState = reqState,
+                            onRequest = { requestMovie(m) },
+                            onClick = if (libId != null) ({ onOpenMovie(libId) }) else null,
+                        )
+                    }
+                }
+
+                // Episodes grouped by time band (MORNING / AFTERNOON / PRIME TIME / LATE NIGHT)
+                val banded = dayEpisodes.groupBy { timeBandLabel(it.airsTime) }
+                val bandOrder = listOf("MORNING", "AFTERNOON", "PRIME TIME", "LATE NIGHT", "ANYTIME")
+                bandOrder.forEach { band ->
+                    val bandEps = banded[band].orEmpty()
+                    if (bandEps.isEmpty()) return@forEach
+
+                    if (viewMode == CalViewMode.SCHEDULE) {
+                        item(key = "band-$day-$band") {
+                            Text(
+                                text = band,
+                                color = SoulSyncColors.TextSecondary,
+                                fontSize = 10.5.sp,
+                                fontWeight = FontWeight.Bold,
+                                letterSpacing = 1.1.sp,
+                                modifier = Modifier.padding(start = 18.dp, top = 6.dp, bottom = 0.dp),
+                            )
+                        }
+                    }
+
+                    items(bandEps, key = { "ep-$day-${it.id}-${it.resolvedTmdbId}-${it.seasonNumber}-${it.episodeNumber}" }) { ep ->
+                        val epShowId = ep.showId
+                        val reqKey = "ep:${ep.resolvedTmdbId}:${ep.seasonNumber}:${ep.episodeNumber}"
+                        val reqState = requestedKeys[reqKey]
+                        val aired = ep.airDate <= todayIso
+                        val showReq = canRequest && aired && ep.acq == "missing" && ep.resolvedTmdbId != null
+                        val effectiveAcq = if (reqState == "done") "wishlist" else ep.acq
+                        val time12 = formatAirTime12h(ep.airsTime)
+                        val metaLine = listOfNotNull(
+                            "S${ep.seasonNumber} · E${ep.episodeNumber}",
+                            time12,
+                            ep.network?.takeIf { it.isNotBlank() },
+                        ).joinToString(" · ")
+
+                        if (viewMode == CalViewMode.CARDS) {
+                            CalendarVisualCard(
+                                title = ep.showTitle,
+                                subtitle = "S${ep.seasonNumber} E${ep.episodeNumber}" +
+                                    (ep.title?.takeIf { it.isNotBlank() }?.let { " · $it" } ?: ""),
+                                meta = listOfNotNull(time12, ep.network?.takeIf { it.isNotBlank() }).joinToString(" · "),
+                                codeBadge = "S${ep.seasonNumber}E${ep.episodeNumber}",
+                                artUrl = calendarEpisodeArt(ep, api),
+                                acq = effectiveAcq,
+                                progress = ep.progress,
+                                showRequest = showReq,
+                                requestVerb = requestVerb,
+                                requestState = reqState,
+                                onRequest = { requestEpisode(ep) },
+                                onClick = if (epShowId != null && !ep.notInLibrary) ({ onOpenShow(epShowId) }) else null,
+                            )
+                        } else {
+                            ManagerStyleTile(
+                                title = ep.showTitle,
+                                meta = metaLine,
+                                isMovie = false,
+                                acq = effectiveAcq,
+                                progress = ep.progress,
+                                showRequest = showReq,
+                                requestVerb = requestVerb,
+                                requestState = reqState,
+                                onRequest = { requestEpisode(ep) },
+                                onClick = if (epShowId != null && !ep.notInLibrary) ({ onOpenShow(epShowId) }) else null,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Exact Manager-Calendar tile aesthetic for mobile:
+ * - Matte dark card with crisp 3dp left status stripe
+ * - Generous 15sp bold title, clean dot-separated metadata on left, subtle `● Status` on right
+ */
+@Composable
+private fun ManagerStyleTile(
+    title: String,
+    meta: String,
+    isMovie: Boolean,
+    acq: String,
+    progress: Double?,
+    showRequest: Boolean,
+    requestVerb: String,
+    requestState: String?,
+    onRequest: () -> Unit,
+    onClick: (() -> Unit)?,
+) {
+    val accent = acqColor(acq)
+    val bgColor = if (isMovie) Color(0xFF1A192D) else Color(0xFF141620)
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = bgColor,
+        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp)
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier),
+    ) {
+        Row(
+            modifier = Modifier.height(IntrinsicSize.Min),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            // Signature 3.5dp left vertical accent stripe
+            Box(
+                modifier = Modifier
+                    .width(3.5.dp)
+                    .fillMaxHeight()
+                    .background(if (acq == "upcoming") Color.White.copy(alpha = 0.14f) else accent),
+            )
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(5.dp),
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    if (isMovie) {
+                        Icon(
+                            Icons.Default.Movie,
+                            contentDescription = null,
+                            tint = Color(0xFF818CF8),
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
+                    Text(
+                        text = title,
+                        color = Color.White,
+                        fontSize = 15.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = meta,
+                        color = SoulSyncColors.TextSecondary,
+                        fontSize = 12.5.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f).padding(end = 8.dp),
+                    )
+                    ManagerStatusInline(acq = acq, progress = progress)
+                }
+                if (showRequest) {
+                    Spacer(modifier = Modifier.height(2.dp))
+                    if (requestState == "done") {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            Icon(Icons.Default.Check, contentDescription = null, tint = Color(0xFF22C55E), modifier = Modifier.size(14.dp))
+                            Text("Added to wishlist", color = Color(0xFF22C55E), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                    } else {
+                        Button(
+                            onClick = onRequest,
+                            enabled = requestState != "loading",
+                            colors = ButtonDefaults.buttonColors(containerColor = SoulSyncColors.Accent),
+                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 0.dp),
+                            modifier = Modifier.height(32.dp),
+                        ) {
+                            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(14.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = if (requestState == "loading") "…" else "$requestVerb now",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                            )
                         }
                     }
                 }
@@ -880,9 +896,34 @@ fun CalendarScreen(
 }
 
 @Composable
+private fun ManagerStatusInline(acq: String, progress: Double?) {
+    val c = acqColor(acq)
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(6.5.dp)
+                .clip(CircleShape)
+                .then(
+                    if (acq == "upcoming") Modifier.border(1.5.dp, c, CircleShape)
+                    else Modifier.background(c),
+                ),
+        )
+        Text(
+            text = acqLabel(acq, progress),
+            color = if (acq == "upcoming") SoulSyncColors.TextSecondary else c,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.SemiBold,
+        )
+    }
+}
+
+@Composable
 private fun DayStateBar(items: List<CalendarEntry>) {
     val total = items.size.coerceAtLeast(1)
-    val order = listOf("owned", "downloading", "wishlist", "upcoming", "missing")
+    val order = listOf("owned", "downloading", "wishlist", "missing", "upcoming")
     val counts = order.mapNotNull { st ->
         val c = items.count { it.acq == st }
         if (c > 0) st to c else null
@@ -892,14 +933,14 @@ private fun DayStateBar(items: List<CalendarEntry>) {
             .fillMaxWidth()
             .height(3.dp)
             .clip(CircleShape)
-            .background(Color.White.copy(alpha = 0.08f)),
+            .background(Color.White.copy(alpha = 0.1f)),
     ) {
         counts.forEach { (st, c) ->
             Box(
                 modifier = Modifier
                     .weight(c.toFloat() / total.toFloat())
                     .fillMaxSize()
-                    .background(acqColor(st)),
+                    .background(if (st == "upcoming") Color.White.copy(alpha = 0.18f) else acqColor(st)),
             )
         }
     }
@@ -922,7 +963,7 @@ private fun CalendarVisualCard(
 ) {
     Surface(
         shape = RoundedCornerShape(16.dp),
-        color = Color.White.copy(alpha = 0.045f),
+        color = Color(0xFF141620),
         border = BorderStroke(1.dp, Color.White.copy(alpha = 0.1f)),
         modifier = Modifier
             .fillMaxWidth()
@@ -934,7 +975,7 @@ private fun CalendarVisualCard(
                 modifier = Modifier
                     .fillMaxWidth()
                     .aspectRatio(16f / 9f)
-                    .background(Color(0xFF141622)),
+                    .background(Color(0xFF0E1018)),
             ) {
                 if (artUrl != null) {
                     AsyncImage(
@@ -949,28 +990,31 @@ private fun CalendarVisualCard(
                         .fillMaxSize()
                         .background(
                             Brush.verticalGradient(
-                                listOf(Color.Black.copy(alpha = 0.1f), Color.Black.copy(alpha = 0.55f)),
+                                listOf(Color.Black.copy(alpha = 0.12f), Color.Black.copy(alpha = 0.65f)),
                             ),
                         ),
                 )
                 Text(
                     text = codeBadge,
                     color = Color.White,
-                    fontSize = 10.5.sp,
+                    fontSize = 11.sp,
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier
                         .align(Alignment.TopStart)
                         .padding(10.dp)
                         .clip(RoundedCornerShape(6.dp))
-                        .background(Color.Black.copy(alpha = 0.65f))
+                        .background(Color.Black.copy(alpha = 0.7f))
                         .padding(horizontal = 8.dp, vertical = 3.dp),
                 )
                 Box(
                     modifier = Modifier
                         .align(Alignment.TopEnd)
-                        .padding(10.dp),
+                        .padding(10.dp)
+                        .clip(CircleShape)
+                        .background(Color.Black.copy(alpha = 0.7f))
+                        .padding(horizontal = 10.dp, vertical = 4.dp),
                 ) {
-                    CalendarStatusPill(acq = acq, progress = progress)
+                    ManagerStatusInline(acq = acq, progress = progress)
                 }
             }
             Row(
@@ -981,183 +1025,26 @@ private fun CalendarVisualCard(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text(
-                        text = title,
-                        color = Color.White,
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(
-                        text = subtitle,
-                        color = SoulSyncColors.TextSoft,
-                        fontSize = 12.5.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+                    Text(title, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(subtitle, color = SoulSyncColors.TextSoft, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     if (meta.isNotBlank()) {
-                        Text(
-                            text = meta,
-                            color = SoulSyncColors.TextSecondary,
-                            fontSize = 11.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
+                        Text(meta, color = SoulSyncColors.TextSecondary, fontSize = 11.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
-                if (showRequest) {
-                    if (requestState == "done") {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp),
-                            modifier = Modifier
-                                .clip(CircleShape)
-                                .background(Color(0xFF10B981).copy(alpha = 0.2f))
-                                .padding(horizontal = 10.dp, vertical = 6.dp),
-                        ) {
-                            Icon(Icons.Default.Check, contentDescription = null, tint = Color(0xFF6EE7B7), modifier = Modifier.size(14.dp))
-                            Text("Requested", color = Color(0xFF6EE7B7), fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                        }
-                    } else {
-                        Button(
-                            onClick = onRequest,
-                            enabled = requestState != "loading",
-                            colors = ButtonDefaults.buttonColors(containerColor = SoulSyncColors.Accent),
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
-                            modifier = Modifier.height(32.dp),
-                        ) {
-                            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(14.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                text = if (requestState == "loading") "…" else requestVerb,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold,
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun CalendarAgendaRow(
-    title: String,
-    subtitle: String,
-    meta: String,
-    artUrl: String?,
-    isMovie: Boolean,
-    acq: String,
-    progress: Double?,
-    showRequest: Boolean,
-    requestVerb: String,
-    requestState: String?,
-    onRequest: () -> Unit,
-    onClick: (() -> Unit)?,
-) {
-    Surface(
-        shape = RoundedCornerShape(14.dp),
-        color = Color.White.copy(alpha = 0.04f),
-        border = BorderStroke(1.dp, SoulSyncColors.Line),
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp)
-            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier),
-    ) {
-        Row(
-            modifier = Modifier.padding(10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Box(
-                modifier = Modifier
-                    .width(76.dp)
-                    .height(48.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(Color.White.copy(alpha = 0.08f)),
-                contentAlignment = Alignment.Center,
-            ) {
-                if (artUrl != null) {
-                    AsyncImage(
-                        model = artUrl,
-                        contentDescription = title,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                } else {
-                    Icon(
-                        imageVector = if (isMovie) Icons.Default.Movie else Icons.Default.Tv,
-                        contentDescription = null,
-                        tint = SoulSyncColors.TextSecondary,
-                        modifier = Modifier.size(20.dp),
-                    )
-                }
-            }
-
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(
-                    text = title,
-                    color = Color.White,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    text = subtitle,
-                    color = SoulSyncColors.TextSoft,
-                    fontSize = 12.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                if (meta.isNotBlank()) {
-                    Text(
-                        text = meta,
-                        color = SoulSyncColors.TextSecondary,
-                        fontSize = 11.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            }
-
-            Column(
-                horizontalAlignment = Alignment.End,
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                CalendarStatusPill(acq = acq, progress = progress)
                 if (showRequest && requestState != "done") {
-                    Text(
-                        text = if (requestState == "loading") "…" else "+ $requestVerb",
-                        color = SoulSyncColors.AccentLight,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier
-                            .clip(CircleShape)
-                            .background(SoulSyncColors.Accent.copy(alpha = 0.2f))
-                            .clickable(onClick = onRequest)
-                            .padding(horizontal = 10.dp, vertical = 4.dp),
-                    )
+                    Button(
+                        onClick = onRequest,
+                        enabled = requestState != "loading",
+                        colors = ButtonDefaults.buttonColors(containerColor = SoulSyncColors.Accent),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
+                        modifier = Modifier.height(34.dp),
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(14.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(if (requestState == "loading") "…" else requestVerb, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
                 }
             }
         }
     }
-}
-
-@Composable
-private fun CalendarStatusPill(acq: String, progress: Double?) {
-    val c = acqColor(acq)
-    Text(
-        text = acqLabel(acq, progress),
-        color = c,
-        fontSize = 10.sp,
-        fontWeight = FontWeight.Bold,
-        modifier = Modifier
-            .clip(CircleShape)
-            .background(Color.Black.copy(alpha = 0.6f))
-            .border(1.dp, c.copy(alpha = 0.5f), CircleShape)
-            .padding(horizontal = 8.dp, vertical = 3.dp),
-    )
 }

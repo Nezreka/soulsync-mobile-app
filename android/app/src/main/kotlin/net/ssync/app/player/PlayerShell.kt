@@ -395,9 +395,15 @@ fun PlayerShell(
                     // Persistent Mini Transport Bar (only when local audio is active)
                     val active = coordinator.activeItem
                     if (!castController.isCastingMedia && active != null && !active.isVideo) {
+                        val frac = if (coordinator.durationMs > 0L) {
+                            (coordinator.positionMs.toFloat() / coordinator.durationMs.toFloat()).coerceIn(0f, 1f)
+                        } else {
+                            0f
+                        }
                         MiniTransportBar(
                             item = active,
                             isPlaying = coordinator.isPlaying,
+                            progressFraction = frac,
                             onExpand = { coordinator.showAudioSheet = true },
                             onTogglePlayPause = { coordinator.togglePlayPause() },
                             onNext = { coordinator.skipNext() },
@@ -495,6 +501,9 @@ fun PlayerShell(
             if (coordinator.showAudioSheet) {
                 AudioNowPlayingSheet(
                     coordinator = coordinator,
+                    api = api,
+                    castConnected = castController.isConnected,
+                    onOpenCast = { showCastSheet = true },
                     onDismiss = { coordinator.showAudioSheet = false },
                 )
             }
@@ -988,9 +997,6 @@ private fun PlayerSidebar(
         SidebarItem(Icons.Default.LiveTv, "Live Guide", current is PlayerDestination.Guide, collapsed) { onNavigate(PlayerDestination.Guide) }
         SidebarItem(Icons.Default.CalendarMonth, "Calendar", current is PlayerDestination.Calendar, collapsed) { onNavigate(PlayerDestination.Calendar) }
         SidebarItem(Icons.Default.Download, "Downloads", current is PlayerDestination.Downloads, collapsed) { onNavigate(PlayerDestination.Downloads) }
-        if (isAdmin) {
-            SidebarItem(Icons.Default.AdminPanelSettings, "Users & DL", current is PlayerDestination.AdminUsers, collapsed) { onNavigate(PlayerDestination.AdminUsers) }
-        }
         SidebarItem(Icons.Default.Bookmark, "Watchlist", current is PlayerDestination.Watchlist, collapsed) { onNavigate(PlayerDestination.Watchlist) }
         SidebarItem(
             icon = Icons.Default.Group,
@@ -1012,6 +1018,9 @@ private fun PlayerSidebar(
         Spacer(modifier = Modifier.weight(1f))
         HorizontalDivider(color = SoulSyncColors.Line, modifier = Modifier.padding(vertical = 10.dp))
 
+        if (isAdmin) {
+            SidebarItem(Icons.Default.AdminPanelSettings, "Users & Downloads", current is PlayerDestination.AdminUsers, collapsed) { onNavigate(PlayerDestination.AdminUsers) }
+        }
         SidebarItem(Icons.Default.Settings, "Player Settings", current is PlayerDestination.Settings, collapsed) { onNavigate(PlayerDestination.Settings) }
         if (showCollapseToggle) {
             SidebarItem(
@@ -1142,54 +1151,83 @@ private fun PlayerContent(
 private fun MiniTransportBar(
     item: ActivePlayable,
     isPlaying: Boolean,
+    progressFraction: Float = 0f,
     onExpand: () -> Unit,
     onTogglePlayPause: () -> Unit,
     onNext: () -> Unit,
     onStop: () -> Unit,
 ) {
     Surface(
-        color = SoulSyncColors.PanelSolid,
-        border = BorderStroke(1.dp, SoulSyncColors.LineStrong),
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onExpand),
+        shape = RoundedCornerShape(16.dp),
+        color = Color(0xEE151724),
+        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.12f)),
+        shadowElevation = 12.dp,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 10.dp, vertical = 6.dp)
+            .clickable(onClick = onExpand),
     ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Box(modifier = Modifier.size(44.dp).clip(RoundedCornerShape(8.dp))) {
-                SoulSyncArtwork(url = item.artworkUrl, contentDescription = item.title, modifier = Modifier.fillMaxSize())
-            }
-            Spacer(modifier = Modifier.width(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = item.title,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = Color.White,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+        Column {
+            // Iconic Plexamp top hairline progress bar
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(2.5.dp)
+                    .background(Color.White.copy(alpha = 0.08f)),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(progressFraction.coerceIn(0f, 1f))
+                        .fillMaxHeight()
+                        .background(SoulSyncColors.AccentLight),
                 )
-                if (item.subtitle.isNotBlank()) {
+            }
+            Row(
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(modifier = Modifier.size(44.dp).clip(RoundedCornerShape(10.dp))) {
+                    SoulSyncArtwork(url = item.artworkUrl, contentDescription = item.title, modifier = Modifier.fillMaxSize())
+                }
+                Spacer(modifier = Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = item.subtitle,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = SoulSyncColors.TextSecondary,
+                        text = item.title,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
+                    if (item.subtitle.isNotBlank()) {
+                        Text(
+                            text = item.subtitle,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = SoulSyncColors.TextSecondary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
                 }
-            }
-            IconButton(onClick = onTogglePlayPause, modifier = Modifier.dpadFocusable()) {
-                Icon(
-                    imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                    contentDescription = if (isPlaying) "Pause" else "Play",
-                    tint = Color.White,
-                )
-            }
-            IconButton(onClick = onNext, modifier = Modifier.dpadFocusable()) {
-                Icon(Icons.Default.SkipNext, contentDescription = "Next", tint = Color.White)
-            }
-            IconButton(onClick = onStop, modifier = Modifier.dpadFocusable()) {
-                Icon(Icons.Default.Close, contentDescription = "Stop playback", tint = SoulSyncColors.TextSoft)
+                IconButton(
+                    onClick = onTogglePlayPause,
+                    modifier = Modifier
+                        .size(38.dp)
+                        .clip(CircleShape)
+                        .background(Color.White)
+                        .dpadFocusable(CircleShape),
+                ) {
+                    Icon(
+                        imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                        contentDescription = if (isPlaying) "Pause" else "Play",
+                        tint = Color.Black,
+                        modifier = Modifier.size(22.dp),
+                    )
+                }
+                Spacer(modifier = Modifier.width(4.dp))
+                IconButton(onClick = onNext, modifier = Modifier.size(38.dp).dpadFocusable()) {
+                    Icon(Icons.Default.SkipNext, contentDescription = "Next", tint = Color.White, modifier = Modifier.size(24.dp))
+                }
             }
         }
     }

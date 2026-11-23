@@ -549,26 +549,15 @@ fun AdminUsersScreen(
                             )
                         }
                         if (!u.isAdmin) {
-                            Button(
-                                onClick = {
+                            androidx.compose.material3.Switch(
+                                checked = u.allowDownloads,
+                                onCheckedChange = { allow ->
                                     scope.launch {
-                                        api.setAdminUserDownloadPerm(u.id, !u.allowDownloads)
+                                        api.setAdminUserDownloadPerm(u.id, allow)
                                         refreshTick++
                                     }
                                 },
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = if (u.allowDownloads) Color(0xFF10B981).copy(alpha = 0.25f) else Color(0xFFF43F5E).copy(alpha = 0.25f),
-                                ),
-                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
-                                modifier = Modifier.height(30.dp),
-                            ) {
-                                Text(
-                                    text = if (u.allowDownloads) "DL: ON" else "DL: OFF",
-                                    color = if (u.allowDownloads) Color(0xFF6EE7B7) else Color(0xFFFDA4AF),
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold,
-                                )
-                            }
+                            )
                         }
                     }
                 }
