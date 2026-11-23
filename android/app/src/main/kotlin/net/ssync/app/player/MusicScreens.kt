@@ -67,6 +67,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import net.ssync.pairing.theme.SoulSyncColors
 import net.ssync.pairing.ui.dpadFocusable
@@ -78,17 +80,19 @@ import net.ssync.player.LibArtistDetail
 import net.ssync.player.LibSong
 import net.ssync.player.LibTrack
 import net.ssync.player.MusicApiResult
+import net.ssync.player.MusicChannel
 import net.ssync.player.MusicPlaylist
 import net.ssync.player.MusicTrackRequestResult
 import net.ssync.player.PlayerApiClient
 import net.ssync.player.PlaylistDetail
+import net.ssync.player.SongRefPayload
 
 private enum class MusicSubTab(val label: String) {
-    ALBUMS("Albums"),
+    FOR_YOU("For you"),
     ARTISTS("Artists"),
+    ALBUMS("Albums"),
     SONGS("Tracks"),
     PLAYLISTS("Playlists"),
-    DISCOVER("Discover"),
 }
 
 private fun formatTrackDuration(raw: Long?): String? {
@@ -118,7 +122,7 @@ fun MusicScreen(
     onDeviceRevoked: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
-    var tab by remember { mutableStateOf(MusicSubTab.ALBUMS) }
+    var tab by remember { mutableStateOf(MusicSubTab.FOR_YOU) }
     var isLoading by remember { mutableStateOf(true) }
     var loadingMore by remember { mutableStateOf(false) }
     var albumsPage by remember { mutableStateOf(1) }
@@ -133,12 +137,43 @@ fun MusicScreen(
     var songs by remember { mutableStateOf<List<LibSong>>(emptyList()) }
     var playlists by remember { mutableStateOf<List<MusicPlaylist>>(emptyList()) }
     var discoverPlaylists by remember { mutableStateOf<List<DiscoverPlaylistSummary>>(emptyList()) }
+    var musicStations by remember { mutableStateOf<List<MusicChannel>>(emptyList()) }
+    var playlistPickerSong by remember { mutableStateOf<SongRefPayload?>(null) }
+    val likedState = rememberLikedTracksState(api)
 
     val activeTrackId = coordinator.activeItem?.takeIf { it.itemType == "track" }?.itemId
 
     LaunchedEffect(tab, api) {
         isLoading = true
         when (tab) {
+            MusicSubTab.FOR_YOU -> {
+                coroutineScope {
+                    val alDef = if (albums.isEmpty()) async { api.fetchAlbums(limit = 40, page = 1) } else null
+                    val arDef = if (artists.isEmpty()) async { api.fetchArtists(limit = 40, page = 1) } else null
+                    val plDef = if (playlists.isEmpty()) async { api.fetchPlaylists() } else null
+                    val dDef = if (discoverPlaylists.isEmpty()) async { api.fetchDiscoverPlaylists() } else null
+                    val sDef = if (songs.isEmpty()) async { api.fetchSongs(limit = 100, page = 1) } else null
+
+                    alDef?.await()?.let { r ->
+                        if (r is MusicApiResult.DeviceRevoked) { onDeviceRevoked(); return@coroutineScope }
+                        (r as? MusicApiResult.Success)?.let { albums = it.data; hasMoreAlbums = it.data.size >= 40 }
+                    }
+                    arDef?.await()?.let { r ->
+                        (r as? MusicApiResult.Success)?.let { artists = it.data; hasMoreArtists = it.data.size >= 40 }
+                    }
+                    plDef?.await()?.let { r -> (r as? MusicApiResult.Success)?.let { playlists = it.data } }
+                    dDef?.await()?.let { r -> (r as? MusicApiResult.Success)?.let { discoverPlaylists = it.data } }
+                    sDef?.await()?.let { r -> (r as? MusicApiResult.Success)?.let { songs = it.data; hasMoreSongs = it.data.size >= 100 } }
+                }
+                isLoading = false
+                // Stream in genre/mood radio stations progressively without blocking
+                if (musicStations.isEmpty()) {
+                    launch {
+                        (api.fetchMusicChannels() as? MusicApiResult.Success)?.let { musicStations = it.data }
+                    }
+                }
+                return@LaunchedEffect
+            }
             MusicSubTab.ALBUMS -> if (albums.isEmpty()) {
                 when (val r = api.fetchAlbums(limit = 80, page = 1)) {
                     is MusicApiResult.Success -> {
@@ -177,11 +212,6 @@ fun MusicScreen(
                 MusicApiResult.DeviceRevoked -> onDeviceRevoked()
                 is MusicApiResult.Error -> Unit
             }
-            MusicSubTab.DISCOVER -> when (val r = api.fetchDiscoverPlaylists()) {
-                is MusicApiResult.Success -> discoverPlaylists = r.data
-                MusicApiResult.DeviceRevoked -> onDeviceRevoked()
-                is MusicApiResult.Error -> Unit
-            }
         }
         isLoading = false
     }
@@ -201,11 +231,11 @@ fun MusicScreen(
 
         // Compact utility bar (count + Grid/List toggle or Play/Shuffle pills)
         val countLabel = when (tab) {
+            MusicSubTab.FOR_YOU -> null
             MusicSubTab.ALBUMS -> if (albums.isEmpty()) null else "${albums.size}${if (hasMoreAlbums) "+" else ""} albums"
             MusicSubTab.ARTISTS -> if (artists.isEmpty()) null else "${artists.size}${if (hasMoreArtists) "+" else ""} artists"
             MusicSubTab.SONGS -> if (songs.isEmpty()) null else "${songs.size}${if (hasMoreSongs) "+" else ""} tracks"
             MusicSubTab.PLAYLISTS -> if (playlists.isEmpty()) null else "${playlists.size} playlists"
-            MusicSubTab.DISCOVER -> if (discoverPlaylists.isEmpty()) null else "${discoverPlaylists.size} mixes"
         }
 
         if (countLabel != null) {
@@ -437,6 +467,30 @@ fun MusicScreen(
                                 duration = formatTrackDuration(song.duration),
                                 isActive = isPlayingThis,
                                 showDivider = idx < songs.lastIndex,
+                                trailingActions = {
+                                    val songRef = SongRefPayload(
+                                        title = song.title,
+                                        artist = song.artistName ?: "Unknown Artist",
+                                        album = song.albumTitle,
+                                        durationMs = song.duration,
+                                        lib2TrackId = song.id,
+                                    )
+                                    val playable = ActivePlayable(
+                                        itemType = "track",
+                                        itemId = song.id.toString(),
+                                        title = song.title,
+                                        subtitle = song.artistName ?: "Unknown Artist",
+                                        artworkUrl = api.artwork.albumArtwork(song.albumId),
+                                        streamUrl = api.streamUrl("track", song.id.toString()),
+                                    )
+                                    TrackRowActionIcons(
+                                        song = songRef,
+                                        playable = playable,
+                                        likedState = likedState,
+                                        coordinator = coordinator,
+                                        onAddToPlaylist = { playlistPickerSong = it },
+                                    )
+                                },
                                 onClick = {
                                     val playables = songs.drop(idx).toPlayables(api)
                                     if (playables.isNotEmpty()) {
@@ -494,29 +548,202 @@ fun MusicScreen(
                 }
             }
 
-            MusicSubTab.DISCOVER -> {
-                if (discoverPlaylists.isEmpty()) {
-                    EmptyBox("No Discover playlists generated for your profile yet.")
-                } else {
-                    LazyVerticalGrid(
-                        columns = GridCells.Adaptive(152.dp),
-                        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 28.dp),
-                        horizontalArrangement = Arrangement.spacedBy(14.dp),
-                        verticalArrangement = Arrangement.spacedBy(18.dp),
-                    ) {
-                        items(discoverPlaylists, key = { it.key }) { dp ->
-                            AlbumGridTile(
-                                title = dp.title,
-                                subtitle = dp.subtitle ?: "${dp.trackCount} tracks",
-                                artworkUrl = api.artwork.resolve(dp.coverUrl),
-                                tracksPresent = 0,
-                                trackCount = 0,
-                                onClick = {},
+            MusicSubTab.FOR_YOU -> {
+                LazyColumn(
+                    contentPadding = PaddingValues(top = 8.dp, bottom = 32.dp),
+                    verticalArrangement = Arrangement.spacedBy(20.dp),
+                ) {
+                    // 1. Stations & Instant Mixes (Plexamp-grade 1-tap listening)
+                    item {
+                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Text(
+                                text = "Stations & Instant Mixes",
+                                color = Color.White,
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 16.dp),
                             )
+                            LazyRow(
+                                contentPadding = PaddingValues(horizontal = 16.dp),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            ) {
+                                item(key = "station-shuffle") {
+                                    Surface(
+                                        modifier = Modifier
+                                            .width(172.dp)
+                                            .height(92.dp)
+                                            .clip(RoundedCornerShape(16.dp))
+                                            .clickable {
+                                                val shuffled = songs.toPlayables(api).shuffled()
+                                                if (shuffled.isNotEmpty()) {
+                                                    coordinator.playAudio(shuffled.first(), shuffled.drop(1))
+                                                }
+                                            },
+                                        shape = RoundedCornerShape(16.dp),
+                                        color = SoulSyncColors.Accent.copy(alpha = 0.22f),
+                                        border = BorderStroke(1.dp, SoulSyncColors.Accent.copy(alpha = 0.55f)),
+                                    ) {
+                                        Column(
+                                            modifier = Modifier.fillMaxSize().padding(12.dp),
+                                            verticalArrangement = Arrangement.SpaceBetween,
+                                        ) {
+                                            Text("INSTANT RADIO", color = SoulSyncColors.AccentLight, fontSize = 9.5.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 0.8.sp)
+                                            Column {
+                                                Text("Library Shuffle", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                                                Text("Shuffle your music", color = SoulSyncColors.TextSoft, fontSize = 11.5.sp, maxLines = 1)
+                                            }
+                                        }
+                                    }
+                                }
+                                items(musicStations.take(8), key = { it.id }) { st ->
+                                    val isVibe = st.kind.equals("vibe", ignoreCase = true)
+                                    Surface(
+                                        modifier = Modifier
+                                            .width(164.dp)
+                                            .height(92.dp)
+                                            .clip(RoundedCornerShape(16.dp))
+                                            .clickable {
+                                                val queue = st.trackItems.shuffled().take(100).map { t ->
+                                                    ActivePlayable(
+                                                        itemType = "track",
+                                                        itemId = t.id.toString(),
+                                                        title = t.title,
+                                                        subtitle = t.artist,
+                                                        artworkUrl = api.artwork.albumArtwork(t.albumId),
+                                                        streamUrl = api.streamUrl("track", t.id.toString()),
+                                                    )
+                                                }
+                                                if (queue.isNotEmpty()) coordinator.playAudio(queue.first(), queue.drop(1))
+                                            },
+                                        shape = RoundedCornerShape(16.dp),
+                                        color = if (isVibe) Color(0x2EA855F7) else SoulSyncColors.Card,
+                                        border = BorderStroke(1.dp, if (isVibe) Color(0x66A855F7) else SoulSyncColors.Line),
+                                    ) {
+                                        Column(
+                                            modifier = Modifier.fillMaxSize().padding(12.dp),
+                                            verticalArrangement = Arrangement.SpaceBetween,
+                                        ) {
+                                            Text(
+                                                text = if (isVibe) "MOOD RADIO" else "GENRE RADIO",
+                                                color = if (isVibe) Color(0xFFD8B4FE) else SoulSyncColors.AccentLight,
+                                                fontSize = 9.5.sp,
+                                                fontWeight = FontWeight.ExtraBold,
+                                                letterSpacing = 0.8.sp,
+                                            )
+                                            Column {
+                                                Text(st.name, color = Color.White, fontSize = 14.5.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                                Text("${st.count} songs", color = SoulSyncColors.TextSecondary, fontSize = 11.5.sp)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // 2. Made for you (Discover mixes — now actually playable!)
+                    if (discoverPlaylists.isNotEmpty()) {
+                        item {
+                            MediaRail(title = "Made for you") {
+                                items(discoverPlaylists.take(12), key = { it.key }) { dp ->
+                                    AlbumGridTile(
+                                        title = dp.title,
+                                        subtitle = dp.subtitle ?: "${dp.trackCount} tracks",
+                                        artworkUrl = api.artwork.resolve(dp.coverUrl),
+                                        tracksPresent = 0,
+                                        trackCount = 0,
+                                        modifier = Modifier.width(142.dp),
+                                        onClick = {
+                                            scope.launch {
+                                                (api.fetchDiscoverPlaylistDetail(dp.key) as? MusicApiResult.Success)?.let { res ->
+                                                    val q = res.data.songs.filter { it.trackId != null }.map { t ->
+                                                        ActivePlayable(
+                                                            itemType = "track",
+                                                            itemId = t.trackId.toString(),
+                                                            title = t.title,
+                                                            subtitle = t.artist,
+                                                            artworkUrl = api.artwork.albumArtwork(t.albumId),
+                                                            streamUrl = api.streamUrl("track", t.trackId.toString()),
+                                                        )
+                                                    }
+                                                    if (q.isNotEmpty()) coordinator.playAudio(q.first(), q.drop(1))
+                                                }
+                                            }
+                                        },
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // 3. Recently added albums
+                    if (albums.isNotEmpty()) {
+                        item {
+                            MediaRail(title = "Recently added albums") {
+                                items(albums.take(18), key = { "fy-al-${it.id}" }) { album ->
+                                    AlbumGridTile(
+                                        title = album.title,
+                                        subtitle = listOfNotNull(album.artistName, album.year?.toString()).joinToString(" · "),
+                                        artworkUrl = api.artwork.resolve(album.imageUrl ?: album.remoteImageUrl),
+                                        tracksPresent = album.tracksPresent,
+                                        trackCount = album.trackCount,
+                                        modifier = Modifier.width(142.dp),
+                                        onClick = { onNavigate(PlayerDestination.AlbumDetail(album.id)) },
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // 4. Artists in your library
+                    if (artists.isNotEmpty()) {
+                        item {
+                            MediaRail(title = "Artists in your library") {
+                                items(artists.take(18), key = { "fy-ar-${it.id}" }) { artist ->
+                                    Box(modifier = Modifier.width(106.dp)) {
+                                        ArtistCircleTile(
+                                            name = artist.name,
+                                            subtitle = formatArtistMeta(artist.albumCount, artist.trackCount),
+                                            artworkUrl = api.artwork.resolve(artist.imageUrl ?: artist.remoteImageUrl),
+                                            onClick = { onNavigate(PlayerDestination.ArtistDetail(artist.id)) },
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // 5. Your playlists
+                    if (playlists.isNotEmpty()) {
+                        item {
+                            MediaRail(title = "Your playlists") {
+                                items(playlists.take(14), key = { "fy-pl-${it.idString}" }) { pl ->
+                                    AlbumGridTile(
+                                        title = pl.name,
+                                        subtitle = "${pl.trackCount} tracks",
+                                        artworkUrl = api.artwork.resolve(pl.imageUrl),
+                                        tracksPresent = 0,
+                                        trackCount = 0,
+                                        modifier = Modifier.width(142.dp),
+                                        onClick = {
+                                            pl.idString.toIntOrNull()?.let { pid ->
+                                                onNavigate(PlayerDestination.PlaylistDetail(pid))
+                                            }
+                                        },
+                                    )
+                                }
+                            }
                         }
                     }
                 }
             }
+        }
+        if (playlistPickerSong != null) {
+            AddToPlaylistSheet(
+                song = playlistPickerSong!!,
+                api = api,
+                onDismiss = { playlistPickerSong = null },
+            )
         }
     }
 }
@@ -932,6 +1159,7 @@ private fun MusicTrackRow(
     duration: String?,
     isActive: Boolean,
     showDivider: Boolean,
+    trailingActions: (@Composable () -> Unit)? = null,
     onClick: () -> Unit,
 ) {
     Column(
@@ -1000,8 +1228,12 @@ private fun MusicTrackRow(
                     )
                 }
             }
+            if (trailingActions != null) {
+                Spacer(modifier = Modifier.width(4.dp))
+                trailingActions()
+            }
             if (!duration.isNullOrBlank()) {
-                Spacer(modifier = Modifier.width(10.dp))
+                Spacer(modifier = Modifier.width(6.dp))
                 Text(
                     text = duration,
                     color = SoulSyncColors.TextSecondary,
@@ -1335,6 +1567,8 @@ fun AlbumDetailScreen(
 ) {
     var album by remember { mutableStateOf<LibAlbumDetail?>(null) }
     var isLoading by remember { mutableStateOf(true) }
+    var playlistPickerSong by remember { mutableStateOf<SongRefPayload?>(null) }
+    val likedState = rememberLikedTracksState(api)
 
     LaunchedEffect(albumId, api) {
         isLoading = true
@@ -1628,6 +1862,34 @@ fun AlbumDetailScreen(
                 isActive = isActive,
                 requestStatus = if (playable) null else st,
                 showDivider = idx < al.tracks.lastIndex,
+                trailingActions = if (playable) {
+                    {
+                        val songRef = SongRefPayload(
+                            title = t.title,
+                            artist = al.primaryArtist?.name ?: "Unknown Artist",
+                            album = al.title,
+                            durationMs = t.duration,
+                            lib2TrackId = t.id,
+                        )
+                        val pItem = ActivePlayable(
+                            itemType = "track",
+                            itemId = t.id.toString(),
+                            title = t.title,
+                            subtitle = al.primaryArtist?.name ?: al.title,
+                            artworkUrl = api.artwork.resolve(al.imageUrl),
+                            streamUrl = api.streamUrl("track", t.id.toString()),
+                        )
+                        TrackRowActionIcons(
+                            song = songRef,
+                            playable = pItem,
+                            likedState = likedState,
+                            coordinator = coordinator,
+                            onAddToPlaylist = { playlistPickerSong = it },
+                        )
+                    }
+                } else {
+                    null
+                },
                 onClick = {
                     if (playable) {
                         val pIdx = playableTracks.indexOfFirst { it.itemId == t.id?.toString() }
@@ -1640,6 +1902,13 @@ fun AlbumDetailScreen(
                 },
             )
         }
+    }
+    if (playlistPickerSong != null) {
+        AddToPlaylistSheet(
+            song = playlistPickerSong!!,
+            api = api,
+            onDismiss = { playlistPickerSong = null },
+        )
     }
 }
 
@@ -1654,6 +1923,7 @@ private fun AlbumTrackRow(
     isActive: Boolean,
     requestStatus: String?,
     showDivider: Boolean,
+    trailingActions: (@Composable () -> Unit)? = null,
     onClick: () -> Unit,
 ) {
     Column(
@@ -1744,8 +2014,11 @@ private fun AlbumTrackRow(
             if (playable) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
+                    if (trailingActions != null) {
+                        trailingActions()
+                    }
                     if (!format.isNullOrBlank()) {
                         val isLossless = format == "FLAC" || format == "ALAC" || format == "WAV"
                         Surface(
@@ -1820,6 +2093,8 @@ fun PlaylistDetailScreen(
 ) {
     var playlist by remember { mutableStateOf<PlaylistDetail?>(null) }
     var isLoading by remember { mutableStateOf(true) }
+    var playlistPickerSong by remember { mutableStateOf<SongRefPayload?>(null) }
+    val likedState = rememberLikedTracksState(api)
 
     LaunchedEffect(playlistId, api) {
         isLoading = true
@@ -1924,12 +2199,45 @@ fun PlaylistDetailScreen(
                 duration = formatTrackDuration(item.durationMs),
                 isActive = activeTrackId == item.trackId?.toString(),
                 showDivider = idx < pl.tracks.lastIndex,
+                trailingActions = {
+                    val songRef = SongRefPayload(
+                        title = item.title,
+                        artist = item.artist,
+                        album = item.album,
+                        durationMs = item.durationMs,
+                        lib2TrackId = item.trackId,
+                    )
+                    val pItem = item.trackId?.let { tid ->
+                        ActivePlayable(
+                            itemType = "track",
+                            itemId = tid.toString(),
+                            title = item.title,
+                            subtitle = item.artist,
+                            artworkUrl = api.artwork.albumArtwork(item.albumId),
+                            streamUrl = api.streamUrl("track", tid.toString()),
+                        )
+                    }
+                    TrackRowActionIcons(
+                        song = songRef,
+                        playable = pItem,
+                        likedState = likedState,
+                        coordinator = coordinator,
+                        onAddToPlaylist = { playlistPickerSong = it },
+                    )
+                },
                 onClick = {
                     val pIdx = playable.indexOfFirst { it.itemId == item.trackId?.toString() }
                     if (pIdx >= 0) coordinator.playAudio(playable[pIdx], playable.drop(pIdx + 1))
                 },
             )
         }
+    }
+    if (playlistPickerSong != null) {
+        AddToPlaylistSheet(
+            song = playlistPickerSong!!,
+            api = api,
+            onDismiss = { playlistPickerSong = null },
+        )
     }
 }
 

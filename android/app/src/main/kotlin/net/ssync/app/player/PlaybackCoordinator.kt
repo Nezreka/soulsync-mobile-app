@@ -77,6 +77,16 @@ class PlaybackCoordinator(
         startLocalAudio(item)
     }
 
+    /** Append a track to the active playback queue (or start playing if nothing is active). */
+    fun enqueueAudio(item: ActivePlayable) {
+        if (activeItem == null) {
+            playAudio(item)
+            return
+        }
+        queue = queue + item
+        controllerProvider()?.addMediaItem(toMediaItem(item))
+    }
+
     private fun startLocalAudio(item: ActivePlayable) {
         val controller = controllerProvider()
         if (controller != null) {

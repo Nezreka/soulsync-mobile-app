@@ -400,9 +400,40 @@ data class PlaylistDetail(
     val name: String,
     val description: String? = null,
     val kind: String = "yours",
+    val liked: Boolean = false,
     @SerialName("image_url")
     val imageUrl: String? = null,
+    @SerialName("songs")
     val tracks: List<PlaylistTrackItem> = emptyList(),
+)
+
+@Serializable
+data class SongRefPayload(
+    val title: String,
+    val artist: String,
+    val album: String? = null,
+    @SerialName("duration_ms")
+    val durationMs: Long? = null,
+    @SerialName("lib2_track_id")
+    val lib2TrackId: Int? = null,
+)
+
+@Serializable
+internal data class PlaylistTracksWriteRequest(
+    val tracks: List<SongRefPayload>,
+)
+
+@Serializable
+data class DiscoverPlaylistDetail(
+    val key: String = "",
+    val name: String = "",
+    val blurb: String? = null,
+    val songs: List<PlaylistTrackItem> = emptyList(),
+)
+
+@Serializable
+internal data class DiscoverPlaylistDetailEnvelope(
+    val playlist: DiscoverPlaylistDetail? = null,
 )
 
 @Serializable

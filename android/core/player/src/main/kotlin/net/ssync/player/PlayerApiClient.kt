@@ -137,6 +137,41 @@ class PlayerApiClient(
             }
         }
 
+    suspend fun fetchDiscoverPlaylistDetail(key: String): MusicApiResult<DiscoverPlaylistDetail> =
+        getJson("$base/api/player/discover-playlists/${encodeSeg(key)}") { body ->
+            requireNotNull(json.decodeFromString<DiscoverPlaylistDetailEnvelope>(body).playlist) {
+                "Discover playlist not found"
+            }
+        }
+
+    suspend fun likeTrack(song: SongRefPayload): MusicApiResult<Unit> = withContext(Dispatchers.IO) {
+        val payload = PlaylistTracksWriteRequest(listOf(song))
+        val req = Request.Builder()
+            .url("$base/api/user-playlists/liked")
+            .post(json.encodeToString(PlaylistTracksWriteRequest.serializer(), payload).toRequestBody(JSON_MEDIA_TYPE))
+            .build()
+        execute(req) { }
+    }
+
+    suspend fun unlikeTrack(song: SongRefPayload): MusicApiResult<Unit> = withContext(Dispatchers.IO) {
+        val payload = PlaylistTracksWriteRequest(listOf(song))
+        val req = Request.Builder()
+            .url("$base/api/user-playlists/liked/remove")
+            .post(json.encodeToString(PlaylistTracksWriteRequest.serializer(), payload).toRequestBody(JSON_MEDIA_TYPE))
+            .build()
+        execute(req) { }
+    }
+
+    suspend fun addTrackToPlaylist(playlistId: Int, song: SongRefPayload): MusicApiResult<Unit> =
+        withContext(Dispatchers.IO) {
+            val payload = PlaylistTracksWriteRequest(listOf(song))
+            val req = Request.Builder()
+                .url("$base/api/user-playlists/$playlistId/tracks")
+                .post(json.encodeToString(PlaylistTracksWriteRequest.serializer(), payload).toRequestBody(JSON_MEDIA_TYPE))
+                .build()
+            execute(req) { }
+        }
+
     suspend fun fetchTrackLyrics(trackId: String): MusicApiResult<String?> =
         getJson("$base/api/player/lyrics/track/$trackId") { body ->
             val parsed = json.decodeFromString<LyricsResponse>(body)
