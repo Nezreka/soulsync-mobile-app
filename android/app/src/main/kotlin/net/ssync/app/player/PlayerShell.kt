@@ -371,9 +371,17 @@ fun PlayerShell(
                         }
                     }
 
-                    // Persistent Mini Transport Bar (only when audio is active)
+                    // Persistent Live Cast Mini-Bar (when casting to TV)
+                    if (castController.isCastingMedia) {
+                        CastMiniBar(
+                            castController = castController,
+                            onExpand = { showCastSheet = true },
+                        )
+                    }
+
+                    // Persistent Mini Transport Bar (only when local audio is active)
                     val active = coordinator.activeItem
-                    if (active != null && !active.isVideo) {
+                    if (!castController.isCastingMedia && active != null && !active.isVideo) {
                         MiniTransportBar(
                             item = active,
                             isPlaying = coordinator.isPlaying,

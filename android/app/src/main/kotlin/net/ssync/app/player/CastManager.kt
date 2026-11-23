@@ -13,6 +13,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -23,23 +25,38 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Cast
 import androidx.compose.material.icons.filled.CastConnected
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Forward30
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Replay10
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Tv
+import androidx.compose.material.icons.filled.VolumeOff
+import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -47,7 +64,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -55,9 +74,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.mediarouter.media.MediaRouteSelector
 import androidx.mediarouter.media.MediaRouter
+import coil.compose.AsyncImage
 import com.google.android.gms.cast.CastMediaControlIntent
 import com.google.android.gms.cast.MediaInfo
 import com.google.android.gms.cast.MediaLoadRequestData
+import com.google.android.gms.cast.MediaSeekOptions
+import kotlinx.coroutines.delay
 import com.google.android.gms.cast.MediaMetadata
 import com.google.android.gms.cast.framework.CastContext
 import com.google.android.gms.cast.framework.CastOptions
@@ -103,6 +125,20 @@ class SoulSyncCastController(private val appContext: Context) {
     var isCastingMedia by mutableStateOf(false)
         private set
     var remoteIsPlaying by mutableStateOf(false)
+        private set
+    var castingTitle by mutableStateOf<String?>(null)
+        private set
+    var castingSubtitle by mutableStateOf<String?>(null)
+        private set
+    var castingArtworkUrl by mutableStateOf<String?>(null)
+        private set
+    var remotePositionMs by mutableLongStateOf(0L)
+        private set
+    var remoteDurationMs by mutableLongStateOf(0L)
+        private set
+    var remoteVolume by mutableFloatStateOf(0.8f)
+        private set
+    var remoteMuted by mutableStateOf(false)
         private set
     var statusMessage by mutableStateOf<String?>(null)
         private set
@@ -297,8 +333,64 @@ class SoulSyncCastController(private val appContext: Context) {
         remote.load(loadReq)
         isCastingMedia = true
         remoteIsPlaying = true
+        castingTitle = item.title
+        castingSubtitle = item.subtitle.takeIf { it.isNotBlank() }
+        castingArtworkUrl = item.artworkUrl
+        remotePositionMs = positionMs.coerceAtLeast(0L)
         statusMessage = "Casting \"${item.title}\" to ${connectedDeviceName ?: "TV"}"
         return true
+    }
+
+    fun refreshRemoteState() {
+        val session = activeSession ?: castContext?.sessionManager?.currentCastSession ?: return
+        runCatching {
+            remoteVolume = session.volume.toFloat().coerceIn(0f, 1f)
+            remoteMuted = session.isMute
+        }
+        val remote = session.remoteMediaClient ?: return
+        val hasMedia = remote.hasMediaSession()
+        if (hasMedia) {
+            isCastingMedia = true
+            remoteIsPlaying = remote.isPlaying
+            remotePositionMs = remote.approximateStreamPosition.coerceAtLeast(0L)
+            val dur = remote.streamDuration
+            if (dur > 0L) remoteDurationMs = dur
+        }
+    }
+
+    fun seekTo(positionMs: Long) {
+        val remote = activeSession?.remoteMediaClient ?: return
+        val clamped = positionMs.coerceAtLeast(0L)
+        remote.seek(MediaSeekOptions.Builder().setPosition(clamped).build())
+        remotePositionMs = clamped
+    }
+
+    fun skipBy(deltaMs: Long) {
+        val target = (remotePositionMs + deltaMs).coerceAtLeast(0L)
+        val clamped = if (remoteDurationMs > 0L) target.coerceAtMost(remoteDurationMs) else target
+        seekTo(clamped)
+    }
+
+    fun setVolume(volume: Float) {
+        val session = activeSession ?: return
+        val v = volume.coerceIn(0f, 1f)
+        runCatching {
+            session.setVolume(v.toDouble())
+            remoteVolume = v
+            if (v > 0f && remoteMuted) {
+                session.setMute(false)
+                remoteMuted = false
+            }
+        }
+    }
+
+    fun toggleMute() {
+        val session = activeSession ?: return
+        runCatching {
+            val next = !session.isMute
+            session.setMute(next)
+            remoteMuted = next
+        }
     }
 
     fun toggleRemotePlayPause() {
@@ -316,6 +408,11 @@ class SoulSyncCastController(private val appContext: Context) {
         activeSession?.remoteMediaClient?.stop()
         isCastingMedia = false
         remoteIsPlaying = false
+        castingTitle = null
+        castingSubtitle = null
+        castingArtworkUrl = null
+        remotePositionMs = 0L
+        remoteDurationMs = 0L
         statusMessage = "Connected to ${connectedDeviceName ?: "TV"}"
     }
 }
@@ -328,7 +425,112 @@ fun rememberCastController(): SoulSyncCastController {
         controller.startDiscovery()
         onDispose { controller.stopDiscovery() }
     }
+    LaunchedEffect(controller.isConnected) {
+        while (controller.isConnected) {
+            controller.refreshRemoteState()
+            delay(500L)
+        }
+    }
     return controller
+}
+
+private fun formatCastTime(ms: Long): String {
+    val sec = (ms / 1000L).coerceAtLeast(0L)
+    val h = sec / 3600L
+    val m = (sec % 3600L) / 60L
+    val s = sec % 60L
+    return if (h > 0) "$h:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}"
+    else "$m:${s.toString().padStart(2, '0')}"
+}
+
+@Composable
+fun CastMiniBar(
+    castController: SoulSyncCastController,
+    onExpand: () -> Unit,
+) {
+    val frac = if (castController.remoteDurationMs > 0L) {
+        (castController.remotePositionMs.toFloat() / castController.remoteDurationMs.toFloat()).coerceIn(0f, 1f)
+    } else {
+        0f
+    }
+    Surface(
+        color = SoulSyncColors.CardRaised,
+        border = BorderStroke(1.dp, SoulSyncColors.Accent.copy(alpha = 0.45f)),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onExpand),
+    ) {
+        Column {
+            if (frac > 0f) {
+                LinearProgressIndicator(
+                    progress = { frac },
+                    color = SoulSyncColors.AccentLight,
+                    trackColor = Color.White.copy(alpha = 0.1f),
+                    modifier = Modifier.fillMaxWidth().height(2.5.dp),
+                )
+            }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(42.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(SoulSyncColors.Surface),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (!castController.castingArtworkUrl.isNullOrBlank()) {
+                        AsyncImage(
+                            model = castController.castingArtworkUrl,
+                            imageLoader = LocalSoulSyncImageLoader.current,
+                            contentDescription = castController.castingTitle,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    } else {
+                        Icon(Icons.Default.CastConnected, contentDescription = null, tint = SoulSyncColors.AccentLight)
+                    }
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "CASTING TO ${(castController.connectedDeviceName ?: "TV").uppercase()}",
+                        color = SoulSyncColors.AccentLight,
+                        fontSize = 9.5.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        text = castController.castingTitle ?: "Playing on TV",
+                        color = Color.White,
+                        fontSize = 13.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                IconButton(onClick = { castController.toggleRemotePlayPause() }) {
+                    Icon(
+                        imageVector = if (castController.remoteIsPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                        contentDescription = if (castController.remoteIsPlaying) "Pause TV" else "Play TV",
+                        tint = Color.White,
+                    )
+                }
+                IconButton(onClick = { castController.stopRemote() }) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Stop casting",
+                        tint = SoulSyncColors.TextSecondary,
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
+            }
+        }
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -417,33 +619,194 @@ fun CastDeviceSheet(
                 }
 
                 if (castController.isCastingMedia) {
+                    // ── Best-in-Class On-Screen Cast Remote ──
+                    var scrubbing by remember { mutableStateOf(false) }
+                    var scrubPosMs by remember { mutableLongStateOf(0L) }
+                    val durMs = castController.remoteDurationMs.coerceAtLeast(1L)
+                    val shownPosMs = if (scrubbing) scrubPosMs else castController.remotePositionMs
+
+                    // Hero artwork + title
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .aspectRatio(16f / 9f)
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(SoulSyncColors.CardRaised)
+                            .border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(16.dp)),
+                    ) {
+                        if (!castController.castingArtworkUrl.isNullOrBlank()) {
+                            AsyncImage(
+                                model = castController.castingArtworkUrl,
+                                imageLoader = LocalSoulSyncImageLoader.current,
+                                contentDescription = castController.castingTitle,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        }
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(
+                                    Brush.verticalGradient(
+                                        listOf(Color(0x44070A10), Color(0x99070A10), Color(0xEE070A10)),
+                                    ),
+                                ),
+                        )
+                        Surface(
+                            shape = CircleShape,
+                            color = Color(0xBA070A10),
+                            border = BorderStroke(0.75.dp, SoulSyncColors.Accent.copy(alpha = 0.5f)),
+                            modifier = Modifier.align(Alignment.TopStart).padding(10.dp),
+                        ) {
+                            Text(
+                                text = "● ON ${(castController.connectedDeviceName ?: "TV").uppercase()}",
+                                color = SoulSyncColors.AccentLight,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                            )
+                        }
+                        Column(
+                            modifier = Modifier.align(Alignment.BottomStart).padding(14.dp),
+                        ) {
+                            Text(
+                                text = castController.castingTitle ?: "Playing on TV",
+                                color = Color.White,
+                                fontSize = 17.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            castController.castingSubtitle?.let { sub ->
+                                Text(
+                                    text = sub,
+                                    color = SoulSyncColors.TextSoft,
+                                    fontSize = 12.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        }
+                    }
+
+                    // Live Timeline Scrubber
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Slider(
+                            value = (shownPosMs.toFloat() / durMs.toFloat()).coerceIn(0f, 1f),
+                            onValueChange = { frac ->
+                                scrubbing = true
+                                scrubPosMs = (frac * durMs).toLong()
+                            },
+                            onValueChangeFinished = {
+                                castController.seekTo(scrubPosMs)
+                                scrubbing = false
+                            },
+                            enabled = castController.remoteDurationMs > 0L,
+                            colors = SliderDefaults.colors(
+                                thumbColor = Color.White,
+                                activeTrackColor = SoulSyncColors.AccentLight,
+                                inactiveTrackColor = Color.White.copy(alpha = 0.18f),
+                            ),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Text(formatCastTime(shownPosMs), color = SoulSyncColors.TextSecondary, fontSize = 11.5.sp)
+                            Text(
+                                text = if (castController.remoteDurationMs > 0L) formatCastTime(castController.remoteDurationMs) else "Live",
+                                color = SoulSyncColors.TextSecondary,
+                                fontSize = 11.5.sp,
+                            )
+                        }
+                    }
+
+                    // Transport Controls: -10s · Play/Pause · +30s
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        horizontalArrangement = Arrangement.SpaceEvenly,
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        OutlinedButton(
+                        IconButton(
+                            onClick = { castController.skipBy(-10_000L) },
+                            modifier = Modifier.size(48.dp),
+                        ) {
+                            Icon(Icons.Default.Replay10, contentDescription = "Rewind 10s", tint = Color.White, modifier = Modifier.size(30.dp))
+                        }
+
+                        FilledIconButton(
                             onClick = { castController.toggleRemotePlayPause() },
-                            modifier = Modifier.weight(1f),
-                            border = BorderStroke(1.dp, SoulSyncColors.LineStrong),
+                            colors = IconButtonDefaults.filledIconButtonColors(
+                                containerColor = SoulSyncColors.Accent,
+                                contentColor = SoulSyncColors.OnAccent,
+                            ),
+                            modifier = Modifier.size(62.dp),
                         ) {
                             Icon(
                                 imageVector = if (castController.remoteIsPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                contentDescription = null,
-                                tint = Color.White,
-                                modifier = Modifier.size(18.dp),
+                                contentDescription = if (castController.remoteIsPlaying) "Pause TV" else "Play TV",
+                                modifier = Modifier.size(34.dp),
                             )
-                            Spacer(Modifier.width(6.dp))
-                            Text(if (castController.remoteIsPlaying) "Pause TV" else "Resume TV", color = Color.White)
                         }
-                        OutlinedButton(
-                            onClick = { castController.stopRemote() },
-                            modifier = Modifier.weight(1f),
-                            border = BorderStroke(1.dp, SoulSyncColors.LineStrong),
+
+                        IconButton(
+                            onClick = { castController.skipBy(30_000L) },
+                            modifier = Modifier.size(48.dp),
                         ) {
-                            Icon(Icons.Default.Stop, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text("Stop", color = Color.White)
+                            Icon(Icons.Default.Forward30, contentDescription = "Forward 30s", tint = Color.White, modifier = Modifier.size(30.dp))
                         }
+                    }
+
+                    // Hardware TV Volume Slider + Mute
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(Color.White.copy(alpha = 0.05f))
+                            .padding(horizontal = 10.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        IconButton(onClick = { castController.toggleMute() }, modifier = Modifier.size(36.dp)) {
+                            Icon(
+                                imageVector = if (castController.remoteMuted || castController.remoteVolume <= 0.01f) {
+                                    Icons.Default.VolumeOff
+                                } else {
+                                    Icons.Default.VolumeUp
+                                },
+                                contentDescription = "Mute TV",
+                                tint = if (castController.remoteMuted) SoulSyncColors.TextSecondary else Color.White,
+                                modifier = Modifier.size(20.dp),
+                            )
+                        }
+                        Slider(
+                            value = if (castController.remoteMuted) 0f else castController.remoteVolume,
+                            onValueChange = { castController.setVolume(it) },
+                            colors = SliderDefaults.colors(
+                                thumbColor = Color.White,
+                                activeTrackColor = Color.White,
+                                inactiveTrackColor = Color.White.copy(alpha = 0.18f),
+                            ),
+                            modifier = Modifier.weight(1f),
+                        )
+                        Text(
+                            text = "${(if (castController.remoteMuted) 0 else (castController.remoteVolume * 100).toInt())}%",
+                            color = SoulSyncColors.TextSecondary,
+                            fontSize = 11.5.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.width(34.dp),
+                        )
+                    }
+
+                    OutlinedButton(
+                        onClick = { castController.stopRemote() },
+                        modifier = Modifier.fillMaxWidth(),
+                        border = BorderStroke(1.dp, SoulSyncColors.LineStrong),
+                    ) {
+                        Icon(Icons.Default.Stop, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Stop Casting Media", color = Color.White, fontWeight = FontWeight.SemiBold)
                     }
                 }
 
