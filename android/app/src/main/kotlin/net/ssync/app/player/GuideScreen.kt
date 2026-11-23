@@ -1282,6 +1282,26 @@ fun GuideScreen(
                 0L
             }
             val progDurMs = ((active.endEpochSec - active.startEpochSec).coerceAtLeast(0L)) * 1000L
+            val upcoming = ch.programs
+                .filter { it.startEpochSec >= active.endEpochSec }
+                .take(12)
+                .map { p ->
+                    ActivePlayable(
+                        itemType = p.itemType,
+                        itemId = p.itemId,
+                        title = p.title,
+                        subtitle = "CH ${ch.number} · ${ch.name}",
+                        artworkUrl = p.artworkUrl,
+                        streamUrl = api.streamUrl(p.itemType, p.itemId),
+                        isVideo = true,
+                        resumePositionMs = 0L,
+                        durationMs = ((p.endEpochSec - p.startEpochSec).coerceAtLeast(0L)) * 1000L,
+                        isLiveGuide = true,
+                        channelId = ch.id,
+                        channelName = ch.name,
+                        channelNumber = ch.number,
+                    )
+                }
             coordinator.playVideo(
                 ActivePlayable(
                     itemType = active.itemType,
@@ -1298,6 +1318,7 @@ fun GuideScreen(
                     channelName = ch.name,
                     channelNumber = ch.number,
                 ),
+                upcoming = upcoming,
             )
         }
     }

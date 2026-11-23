@@ -421,59 +421,13 @@ private fun CreditPosterCard(
                         ),
                     ),
             )
-            // Top-left status pill: vibrant emerald checkmark for owned, frosted glass Request pill for unowned
-            if (isOwned) {
-                Row(
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .padding(6.dp)
-                        .clip(RoundedCornerShape(999.dp))
-                        .background(SoulSyncColors.Accent)
-                        .padding(horizontal = 7.dp, vertical = 3.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(3.dp),
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Check,
-                        contentDescription = "In Library",
-                        tint = Color.Black,
-                        modifier = Modifier.size(11.dp),
-                    )
-                    Text(
-                        text = "IN LIBRARY",
-                        color = Color.Black,
-                        fontSize = 9.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        letterSpacing = 0.4.sp,
-                    )
-                }
-            } else {
-                Row(
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .padding(6.dp)
-                        .clip(RoundedCornerShape(999.dp))
-                        .background(Color.Black.copy(alpha = 0.72f))
-                        .border(1.dp, Color.White.copy(alpha = 0.18f), RoundedCornerShape(999.dp))
-                        .padding(horizontal = 7.dp, vertical = 3.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(3.dp),
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Download,
-                        contentDescription = "Request",
-                        tint = Color.White.copy(alpha = 0.9f),
-                        modifier = Modifier.size(11.dp),
-                    )
-                    Text(
-                        text = "REQUEST",
-                        color = Color.White.copy(alpha = 0.9f),
-                        fontSize = 9.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 0.4.sp,
-                    )
-                }
-            }
+            // Always-visible top-right status badge: emerald green ✓ for owned, amber + for not in library
+            LibraryCornerBadge(
+                inLibrary = isOwned,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(6.dp),
+            )
         }
         Spacer(Modifier.height(6.dp))
         Text(

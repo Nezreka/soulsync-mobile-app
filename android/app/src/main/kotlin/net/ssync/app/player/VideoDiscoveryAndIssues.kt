@@ -586,7 +586,7 @@ internal fun LazyListScope.relatedDiscoveryRails(
                             title = card.title,
                             subtitle = card.subtitle ?: "Request",
                             artworkUrl = card.artworkUrl,
-                            badge = "REQUEST",
+                            inLibrary = false,
                             width = 122.dp,
                             onClick = { onRequestUnowned(card) },
                         )

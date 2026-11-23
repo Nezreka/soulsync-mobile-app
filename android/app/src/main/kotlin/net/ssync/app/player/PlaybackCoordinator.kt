@@ -50,6 +50,8 @@ class PlaybackCoordinator(
         private set
     var queue by mutableStateOf<List<ActivePlayable>>(emptyList())
         private set
+    var videoQueue by mutableStateOf<List<ActivePlayable>>(emptyList())
+        private set
     var isPlaying by mutableStateOf(false)
     var positionMs by mutableLongStateOf(0L)
     var durationMs by mutableLongStateOf(0L)
@@ -124,12 +126,13 @@ class PlaybackCoordinator(
         reportPresence(item, paused = false)
     }
 
-    fun playVideo(item: ActivePlayable) {
+    fun playVideo(item: ActivePlayable, upcoming: List<ActivePlayable> = emptyList()) {
         // Pause background audio when starting video
         controllerProvider()?.pause()
         showAudioSheet = false
         isVideoMinimized = false
         val videoItem = resolveOffline(item).copy(isVideo = true)
+        videoQueue = listOf(videoItem) + upcoming.map { resolveOffline(it).copy(isVideo = true) }
         activeItem = videoItem
         positionMs = videoItem.resumePositionMs.coerceAtLeast(0L)
         durationMs = videoItem.durationMs.coerceAtLeast(0L)
@@ -152,6 +155,26 @@ class PlaybackCoordinator(
         showVideoOverlay = true
         isPlaying = true
         reportPresence(videoItem, paused = false, overridePositionMs = positionMs, overrideDurationMs = durationMs)
+    }
+
+    /** Advance to the next queued video (e.g., next scheduled program on a Live Guide channel). */
+    fun playNextVideo(): Boolean {
+        if (videoQueue.size <= 1) return false
+        val finished = activeItem
+        if (finished != null && finished.isLiveGuide && finished.itemType == "movie") {
+            scope.launch {
+                api.markWatched(itemType = "movie", itemId = finished.itemId)
+            }
+        }
+        val remaining = videoQueue.drop(1)
+        val next = remaining.first().copy(resumePositionMs = 0L)
+        videoQueue = remaining
+        activeItem = next
+        positionMs = 0L
+        durationMs = next.durationMs.coerceAtLeast(0L)
+        isPlaying = true
+        reportPresence(next, paused = false, overridePositionMs = 0L, overrideDurationMs = durationMs)
+        return true
     }
 
     private fun toRelativeArtwork(url: String?): String? {
@@ -214,6 +237,7 @@ class PlaybackCoordinator(
         isPlaying = false
         if (current?.isVideo == true) {
             activeItem = null
+            videoQueue = emptyList()
         }
         if (current != null) {
             scope.launch {
@@ -276,6 +300,7 @@ class PlaybackCoordinator(
         isPlaying = false
         activeItem = null
         queue = emptyList()
+        videoQueue = emptyList()
         positionMs = 0L
         durationMs = 0L
         lyricsText = null

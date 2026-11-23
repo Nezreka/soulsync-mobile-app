@@ -126,6 +126,8 @@ fun VideoPlayerOverlay(
     onMinimize: ((positionMs: Long, durationMs: Long) -> Unit)? = null,
     onExpand: (() -> Unit)? = null,
     onLeaveParty: (() -> Unit)? = null,
+    nextVideoTitle: String? = null,
+    onVideoEnded: (() -> Unit)? = null,
     onClose: (positionMs: Long, durationMs: Long) -> Unit,
 ) {
     val context = LocalContext.current
@@ -297,6 +299,9 @@ fun VideoPlayerOverlay(
                 isBuffering = playbackState == Player.STATE_BUFFERING
                 if (!usingTranscode && exoPlayer.duration > 0L) {
                     durationMs = exoPlayer.duration
+                }
+                if (playbackState == Player.STATE_ENDED && item.isLiveGuide && nextVideoTitle != null) {
+                    onVideoEnded?.invoke()
                 }
             }
 

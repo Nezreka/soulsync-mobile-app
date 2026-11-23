@@ -26,8 +26,10 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.BookmarkAdd
 import androidx.compose.material.icons.filled.BookmarkAdded
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.MusicNote
@@ -243,7 +245,7 @@ fun HeroSpotlight(
             }
             Spacer(modifier = Modifier.height(16.dp))
             Row(
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Button(
@@ -253,12 +255,12 @@ fun HeroSpotlight(
                         containerColor = Color.White,
                         contentColor = Color.Black,
                     ),
-                    contentPadding = PaddingValues(horizontal = 22.dp, vertical = 12.dp),
-                    modifier = Modifier.dpadFocusable(RoundedCornerShape(999.dp)),
+                    contentPadding = PaddingValues(horizontal = 18.dp, vertical = 9.dp),
+                    modifier = Modifier.height(38.dp).dpadFocusable(RoundedCornerShape(999.dp)),
                 ) {
-                    Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(20.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Play", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                    Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(5.dp))
+                    Text("Play", fontWeight = FontWeight.Bold, fontSize = 14.sp)
                 }
                 if (onDetails != null) {
                     OutlinedButton(
@@ -269,18 +271,18 @@ fun HeroSpotlight(
                             contentColor = SoulSyncColors.TextPrimary,
                         ),
                         border = BorderStroke(1.dp, SoulSyncColors.LineStrong),
-                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-                        modifier = Modifier.dpadFocusable(RoundedCornerShape(999.dp)),
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 9.dp),
+                        modifier = Modifier.height(38.dp).dpadFocusable(RoundedCornerShape(999.dp)),
                     ) {
-                        Icon(Icons.Default.Info, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Details", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                        Icon(Icons.Default.Info, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(5.dp))
+                        Text("Details", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
                     }
                 }
                 if (onToggleWatchlist != null) {
                     Box(
                         modifier = Modifier
-                            .size(44.dp)
+                            .size(38.dp)
                             .clip(CircleShape)
                             .background(
                                 if (inWatchlist) SoulSyncColors.Accent.copy(alpha = 0.22f)
@@ -299,7 +301,7 @@ fun HeroSpotlight(
                             imageVector = if (inWatchlist) Icons.Default.BookmarkAdded else Icons.Default.BookmarkAdd,
                             contentDescription = if (inWatchlist) "In Watchlist" else "Add to Watchlist",
                             tint = if (inWatchlist) SoulSyncColors.AccentLight else Color.White,
-                            modifier = Modifier.size(20.dp),
+                            modifier = Modifier.size(18.dp),
                         )
                     }
                 }
@@ -320,6 +322,7 @@ fun PosterCard(
     artworkUrl: String?,
     badge: String? = null,
     progress: Float? = null,
+    inLibrary: Boolean? = true,
     width: Dp = 122.dp,
     contextItem: MediaContextItem? = null,
     onClick: () -> Unit,
@@ -373,12 +376,23 @@ fun PosterCard(
                     fallbackIcon = Icons.Default.Movie,
                     modifier = Modifier.fillMaxSize(),
                 )
+                if (inLibrary != null) {
+                    LibraryCornerBadge(
+                        inLibrary = inLibrary,
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(6.dp),
+                    )
+                }
                 if (!effectiveBadge.isNullOrBlank()) {
                     val isRating = effectiveBadge.matches(Regex("^★?\\s*\\d+(\\.\\d+)?$"))
                     Box(
                         modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(6.dp)
+                            .align(Alignment.BottomEnd)
+                            .padding(
+                                end = 6.dp,
+                                bottom = if (progress != null && progress > 0f) 8.dp else 6.dp,
+                            )
                             .background(SoulSyncColors.BgPrimary.copy(alpha = 0.84f), RoundedCornerShape(6.dp))
                             .border(1.dp, SoulSyncColors.Line, RoundedCornerShape(6.dp))
                             .padding(horizontal = 6.dp, vertical = 2.dp),
@@ -560,6 +574,28 @@ fun WideMediaCard(
                 overflow = TextOverflow.Ellipsis,
             )
         }
+    }
+}
+
+@Composable
+fun LibraryCornerBadge(
+    inLibrary: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .size(21.dp)
+            .clip(CircleShape)
+            .background(if (inLibrary) Color(0xFF22C55E) else Color(0xFFF59E0B))
+            .border(1.5.dp, Color.Black.copy(alpha = 0.45f), CircleShape),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = if (inLibrary) Icons.Default.Check else Icons.Default.Add,
+            contentDescription = if (inLibrary) "In your library" else "Not in library",
+            tint = if (inLibrary) Color.White else Color(0xFF14110A),
+            modifier = Modifier.size(if (inLibrary) 13.dp else 14.dp),
+        )
     }
 }
 
