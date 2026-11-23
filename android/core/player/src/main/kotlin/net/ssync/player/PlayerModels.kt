@@ -891,6 +891,17 @@ data class WatchPartyMessage(
 )
 
 @Serializable
+data class WatchPartyPeeBreak(
+    @SerialName("profile_id")
+    val profileId: Int = 0,
+    val profile: SocialProfileRef? = null,
+    @SerialName("started_at")
+    val startedAt: Double = 0.0,
+    @SerialName("ends_at")
+    val endsAt: Double = 0.0,
+)
+
+@Serializable
 data class WatchParty(
     val id: String,
     @SerialName("host_profile_id")
@@ -903,12 +914,20 @@ data class WatchParty(
     val isMember: Boolean = false,
     @SerialName("can_control")
     val canControl: Boolean = false,
+    @SerialName("majority_ready")
+    val majorityReady: Boolean = false,
     val title: String = "Watch Party",
     @SerialName("item_type")
     val itemType: String = "movie",
     @SerialName("item_id")
     val itemId: String = "",
     val meta: ProgressMeta? = null,
+    @SerialName("pee_break")
+    val peeBreak: WatchPartyPeeBreak? = null,
+    @SerialName("resume_at")
+    val resumeAt: Double? = null,
+    @SerialName("pee_cooldown_remaining")
+    val peeCooldownRemaining: Int = 0,
     @SerialName("show_id")
     val showId: Int? = null,
     val status: String = "lobby", // "scheduled" | "lobby" | "playing" | "paused" | "ended"
@@ -916,8 +935,11 @@ data class WatchParty(
     val scheduledFor: Double? = null,
     @SerialName("control_mode")
     val controlMode: String = "host",
+    val position: Double = 0.0,
     @SerialName("live_position")
     val livePosition: Double = 0.0,
+    @SerialName("server_now")
+    val serverNow: Double = 0.0,
     @SerialName("lobby_track")
     val lobbyTrack: WatchPartyLobbyTrack? = null,
     val members: List<WatchPartyMember> = emptyList(),

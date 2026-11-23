@@ -12,6 +12,7 @@ import androidx.annotation.OptIn
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -21,11 +22,13 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -433,17 +436,6 @@ fun VideoPlayerOverlay(
             )
         }
 
-        // Live full-screen Watch Party floating emoji reactions (visible to all guests)
-        if (!item.partyId.isNullOrBlank()) {
-            WatchPartyFullscreenReactions(
-                partyId = item.partyId,
-                api = api,
-                hudVisible = showHud,
-                onInteract = { hudPoke++ },
-                modifier = Modifier.fillMaxSize(),
-            )
-        }
-
         if (isBuffering && playbackError == null) {
             CircularProgressIndicator(
                 color = SoulSyncColors.AccentLight,
@@ -644,7 +636,24 @@ fun VideoPlayerOverlay(
 
                     IconButton(
                         onClick = {
-                            if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
+                            val pid = item.partyId
+                            if (!pid.isNullOrBlank()) {
+                                val wasPlaying = exoPlayer.isPlaying
+                                val posSec = effectivePositionMs() / 1000.0
+                                if (wasPlaying) {
+                                    exoPlayer.pause()
+                                    scope.launch {
+                                        api.updateWatchPartyState(pid, action = "pause", position = posSec)
+                                    }
+                                } else {
+                                    // Trigger 5-second synchronized resume countdown across all party screens
+                                    scope.launch {
+                                        api.updateWatchPartyState(pid, action = "resume", position = posSec)
+                                    }
+                                }
+                            } else {
+                                if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
+                            }
                             hudPoke++
                         },
                         modifier = Modifier
@@ -801,6 +810,21 @@ fun VideoPlayerOverlay(
                     }
                 }
             }
+        }
+
+        // Fullscreen Watch Party Curtain Unfurl, Live Sync, Pee Break Alert, 5s Resume Countdown & Dual-Side Emoji Reactions
+        if (!item.partyId.isNullOrBlank()) {
+            WatchPartyFullscreenReactions(
+                partyId = item.partyId,
+                movieTitle = item.title,
+                api = api,
+                exoPlayer = exoPlayer,
+                currentPositionMs = { effectivePositionMs() },
+                onSeekMs = { seekOrTranscode(it) },
+                hudVisible = showHud,
+                onInteract = { hudPoke++ },
+                modifier = Modifier.fillMaxSize(),
+            )
         }
 
         if (showTracksSheet) {
@@ -1085,32 +1109,104 @@ private data class FloatingPartyEmoji(
     val uid: String,
     val emoji: String,
     val sender: String,
-    val rightOffsetDp: Float,
+    val isLeft: Boolean,
+    val edgeOffsetDp: Float,
     val swayDp: Float,
 )
 
 @Composable
 private fun WatchPartyFullscreenReactions(
     partyId: String,
+    movieTitle: String,
     api: PlayerApiClient,
+    exoPlayer: ExoPlayer,
+    currentPositionMs: () -> Long,
+    onSeekMs: (Long) -> Unit,
     hudVisible: Boolean,
     onInteract: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val scope = rememberCoroutineScope()
+    var party by remember(partyId) { mutableStateOf<net.ssync.player.WatchParty?>(null) }
     var bubbles by remember(partyId) { mutableStateOf<List<FloatingPartyEmoji>>(emptyList()) }
     var muted by remember(partyId) { mutableStateOf(false) }
+    var nowMs by remember(partyId) { mutableLongStateOf(System.currentTimeMillis()) }
+    var serverOffsetSec by remember(partyId) { mutableStateOf(0.0) }
+    var lastLocalActionMs by remember(partyId) { mutableLongStateOf(0L) }
+    var rateLimitedUntilMs by remember(partyId) { mutableLongStateOf(0L) }
+    var toastMsg by remember(partyId) { mutableStateOf<String?>(null) }
+
+    // Full-viewport velvet theater curtain unfurl directly over the video player
+    var curtainMounted by remember(partyId) { mutableStateOf(true) }
+    var curtainOpen by remember(partyId) { mutableStateOf(false) }
+
     val seenIds = remember(partyId) { HashSet<Int>() }
     var initialized by remember(partyId) { mutableStateOf(false) }
+    val reactionTimestamps = remember(partyId) { mutableListOf<Long>() }
+
+    fun showToast(msg: String) {
+        toastMsg = msg
+        scope.launch {
+            delay(3000L)
+            if (toastMsg == msg) toastMsg = null
+        }
+    }
+
+    LaunchedEffect(partyId) {
+        curtainMounted = true
+        curtainOpen = false
+        delay(420L)
+        curtainOpen = true
+        delay(2200L)
+        curtainMounted = false
+    }
+
+    LaunchedEffect(partyId) {
+        while (true) {
+            delay(200L)
+            nowMs = System.currentTimeMillis()
+        }
+    }
 
     fun spawn(uid: String, emoji: String, sender: String, seed: Int) {
-        val rightDp = 18f + ((kotlin.math.abs(seed) * 23) % 64)
-        val sway = (if (seed % 2 == 0) 1f else -1f) * (10f + (kotlin.math.abs(seed) % 14))
-        val bubble = FloatingPartyEmoji(uid, emoji, sender, rightDp, sway)
-        bubbles = (bubbles.takeLast(14)) + bubble
+        val isLeft = (seed % 2 == 0)
+        val edgeDp = 18f + ((kotlin.math.abs(seed) * 23) % 62)
+        val sway = (if (seed % 3 == 0) 1f else -1f) * (11f + (kotlin.math.abs(seed) % 15))
+        val bubble = FloatingPartyEmoji(uid, emoji, sender, isLeft, edgeDp, sway)
+        bubbles = (bubbles.takeLast(18)) + bubble
         scope.launch {
             delay(3300L)
             bubbles = bubbles.filterNot { it.uid == uid }
+        }
+    }
+
+    fun applyPartySync(p: net.ssync.player.WatchParty) {
+        party = p
+        if (p.serverNow > 0.0) {
+            serverOffsetSec = p.serverNow - (System.currentTimeMillis() / 1000.0)
+        }
+        val estServerNow = (System.currentTimeMillis() / 1000.0) + serverOffsetSec
+        val recentlyActed = (System.currentTimeMillis() - lastLocalActionMs) < 1500L
+        val inResumeCountdown = (p.resumeAt ?: 0.0) > estServerNow
+        val localPosSec = currentPositionMs() / 1000.0
+
+        if (p.status == "paused" || inResumeCountdown) {
+            if (exoPlayer.isPlaying && !recentlyActed) {
+                exoPlayer.pause()
+            }
+            val targetSec = if (p.position > 0.0) p.position else p.livePosition
+            if (kotlin.math.abs(localPosSec - targetSec) > 2.5 && !recentlyActed) {
+                onSeekMs((targetSec * 1000.0).toLong())
+            }
+        } else if (p.status == "playing" && !inResumeCountdown) {
+            if (!exoPlayer.isPlaying && !recentlyActed) {
+                if (kotlin.math.abs(localPosSec - p.livePosition) > 2.5) {
+                    onSeekMs((p.livePosition * 1000.0).toLong())
+                }
+                exoPlayer.play()
+            } else if (exoPlayer.isPlaying && kotlin.math.abs(localPosSec - p.livePosition) > 4.5 && !recentlyActed) {
+                onSeekMs((p.livePosition * 1000.0).toLong())
+            }
         }
     }
 
@@ -1118,7 +1214,9 @@ private fun WatchPartyFullscreenReactions(
         while (true) {
             val res = api.fetchWatchParty(partyId)
             if (res is MusicApiResult.Success) {
-                val msgs = res.data.messages
+                val fetched = res.data
+                applyPartySync(fetched)
+                val msgs = fetched.messages
                 if (!initialized) {
                     initialized = true
                     msgs.forEach { seenIds += it.id }
@@ -1126,7 +1224,7 @@ private fun WatchPartyFullscreenReactions(
                     for (m in msgs) {
                         if (seenIds.add(m.id)) {
                             val body = m.body.trim()
-                            val isReaction = m.kind == "reaction" || body in PARTY_REACTION_EMOJIS
+                            val isReaction = m.kind == "reaction" || body in PARTY_REACTION_EMOJIS || body.startsWith("🚽")
                             if (isReaction && !muted) {
                                 spawn("srv-${m.id}", body, m.profile?.name.orEmpty(), m.id)
                             }
@@ -1134,24 +1232,236 @@ private fun WatchPartyFullscreenReactions(
                     }
                 }
             }
-            delay(2000L)
+            delay(1800L)
+        }
+    }
+
+    val estServerNow = (nowMs / 1000.0) + serverOffsetSec
+    val resumeRemainingSec = party?.resumeAt?.let { ra ->
+        if (ra > estServerNow) kotlin.math.ceil(ra - estServerNow).toInt().coerceAtLeast(1) else null
+    }
+
+    // Automatically start playback the exact moment the 5-second countdown hits 0
+    var prevResumeRemaining by remember(partyId) { mutableStateOf<Int?>(null) }
+    LaunchedEffect(resumeRemainingSec, party?.status) {
+        if (prevResumeRemaining != null && resumeRemainingSec == null && party?.status == "playing") {
+            if (!exoPlayer.isPlaying) {
+                exoPlayer.play()
+            }
+        }
+        prevResumeRemaining = resumeRemainingSec
+    }
+
+    val me = party?.members?.firstOrNull { it.you }
+    val peeBreak = party?.peeBreak
+    val peeEndsRemainingSec = peeBreak?.let { pb ->
+        if (pb.endsAt > estServerNow) kotlin.math.ceil(pb.endsAt - estServerNow).toInt().coerceAtLeast(0) else 0
+    } ?: 0
+    val isMyPeeBreak = peeBreak != null && me?.profileId == peeBreak.profileId
+    val canResumePeeBreak = isMyPeeBreak || (party?.isHost == true)
+    val peeCooldownSec = party?.peeCooldownRemaining ?: 0
+    val isRateLimited = nowMs < rateLimitedUntilMs
+
+    fun triggerTogglePauseResume() {
+        val p = party ?: return
+        lastLocalActionMs = System.currentTimeMillis()
+        val posSec = currentPositionMs() / 1000.0
+        scope.launch {
+            if (p.status == "playing" && resumeRemainingSec == null) {
+                exoPlayer.pause()
+                val r = api.updateWatchPartyState(p.id, action = "pause", position = posSec)
+                if (r is MusicApiResult.Success) applyPartySync(r.data)
+            } else {
+                val r = api.updateWatchPartyState(p.id, action = "resume", position = posSec)
+                if (r is MusicApiResult.Success) applyPartySync(r.data)
+            }
+        }
+    }
+
+    fun triggerPeeBreak() {
+        val p = party ?: return
+        lastLocalActionMs = System.currentTimeMillis()
+        val posSec = currentPositionMs() / 1000.0
+        exoPlayer.pause()
+        scope.launch {
+            when (val r = api.updateWatchPartyState(p.id, action = "pee_break", position = posSec)) {
+                is MusicApiResult.Success -> {
+                    applyPartySync(r.data)
+                    spawn("pee-L-${System.nanoTime()}", "🚽💨", "You", 2)
+                    spawn("pee-R-${System.nanoTime()}", "🚽💨", "You", 3)
+                    api.postWatchPartyChat(p.id, "reaction", "🚽💨")
+                }
+                is MusicApiResult.Error -> showToast(r.message)
+                MusicApiResult.DeviceRevoked -> Unit
+            }
+        }
+    }
+
+    fun sendEmojiReaction(emoji: String) {
+        val now = System.currentTimeMillis()
+        reactionTimestamps.removeAll { now - it >= 4_000L }
+        if (reactionTimestamps.size >= 5) {
+            rateLimitedUntilMs = now + 2_800L
+            showToast("Whoa! Emoji cooldown (3s)…")
+            return
+        }
+        reactionTimestamps += now
+        if (reactionTimestamps.size >= 5) {
+            rateLimitedUntilMs = now + 2_500L
+        }
+        val seed = (now.toInt() + reactionTimestamps.size * 19)
+        spawn("local-$now-${reactionTimestamps.size}", emoji, "You", seed)
+        scope.launch {
+            val r = api.postWatchPartyChat(partyId, "reaction", emoji)
+            if (r is MusicApiResult.Success) seenIds += r.data.id
         }
     }
 
     Box(modifier = modifier) {
+        // 1. Dual-Side (Left + Right Edge) Floating Emoji Reaction Lanes
         if (!muted) {
             bubbles.forEach { b ->
                 key(b.uid) {
                     FloatingReactionBubble(
                         bubble = b,
                         modifier = Modifier
-                            .align(Alignment.BottomEnd)
-                            .padding(end = b.rightOffsetDp.dp, bottom = 104.dp),
+                            .align(if (b.isLeft) Alignment.BottomStart else Alignment.BottomEnd)
+                            .padding(
+                                start = if (b.isLeft) b.edgeOffsetDp.dp else 0.dp,
+                                end = if (!b.isLeft) b.edgeOffsetDp.dp else 0.dp,
+                                bottom = 104.dp,
+                            ),
                     )
                 }
             }
         }
 
+        // 2. 🚽 5-Minute Pee Break Intermission Banner at Top-Center
+        if (peeBreak != null) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .statusBarsPadding()
+                    .padding(top = 64.dp, start = 16.dp, end = 16.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(Color(0xEE1F1408))
+                    .border(1.5.dp, Color(0xFFFBBF24).copy(alpha = 0.65f), RoundedCornerShape(16.dp))
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+            ) {
+                Text(text = "🚽", fontSize = 26.sp)
+                Column(modifier = Modifier.weight(1f, fill = false)) {
+                    Text(
+                        text = "${peeBreak.profile?.name ?: "Someone"} needs a 5-min pee break!",
+                        color = Color(0xFFFEF3C7),
+                        fontSize = 13.5.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                    )
+                    Text(
+                        text = if (peeEndsRemainingSec > 0) {
+                            "Stream paused · ${formatVideoTime(peeEndsRemainingSec * 1000L)} remaining"
+                        } else {
+                            "5 minutes up — ready to resume!"
+                        },
+                        color = Color(0xFFFCD34D),
+                        fontSize = 11.5.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+                if (canResumePeeBreak) {
+                    Box(
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .background(Color(0xFF10B981))
+                            .clickable {
+                                onInteract()
+                                triggerTogglePauseResume()
+                            }
+                            .padding(horizontal = 14.dp, vertical = 7.dp),
+                    ) {
+                        Text(
+                            text = if (isMyPeeBreak) "✓ I'm Back (5s)" else "Resume (5s)",
+                            color = Color(0xFF041B11),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                        )
+                    }
+                }
+            }
+        }
+
+        // 3. Synchronized 5-Second Resume Countdown Overlay in Center
+        if (resumeRemainingSec != null) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color(0x77060910)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(22.dp))
+                        .background(Color(0xEB0B0F19))
+                        .border(1.5.dp, Color.White.copy(alpha = 0.2f), RoundedCornerShape(22.dp))
+                        .padding(horizontal = 32.dp, vertical = 22.dp),
+                ) {
+                    Text(
+                        text = "EVERYONE READY · SYNCHRONIZED RESUME",
+                        color = Color(0xFFA5B4FC),
+                        fontSize = 10.5.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        letterSpacing = 1.4.sp,
+                    )
+                    Box(
+                        modifier = Modifier
+                            .size(84.dp)
+                            .clip(CircleShape)
+                            .background(Color(0x384F46E5))
+                            .border(3.dp, Color(0xFF818CF8), CircleShape),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = "$resumeRemainingSec",
+                            color = Color.White,
+                            fontSize = 42.sp,
+                            fontWeight = FontWeight.Black,
+                        )
+                    }
+                    Text(
+                        text = "Resuming together…",
+                        color = Color.White.copy(alpha = 0.85f),
+                        fontSize = 12.5.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+            }
+        }
+
+        // Toast alert for cooldowns
+        if (toastMsg != null) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .navigationBarsPadding()
+                    .padding(end = 18.dp, bottom = 156.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xEA0F121C))
+                    .border(1.dp, Color(0xFFFBBF24).copy(alpha = 0.5f), CircleShape)
+                    .padding(horizontal = 14.dp, vertical = 6.dp),
+            ) {
+                Text(
+                    text = toastMsg.orEmpty(),
+                    color = Color(0xFFFDE68A),
+                    fontSize = 11.5.sp,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+        }
+
+        // 4. Sleek Frosted Watch Party Social & Control Dock inside the Cinema HUD
         AnimatedVisibility(
             visible = hudVisible,
             enter = fadeIn(),
@@ -1159,49 +1469,196 @@ private fun WatchPartyFullscreenReactions(
             modifier = Modifier
                 .align(Alignment.BottomEnd)
                 .navigationBarsPadding()
-                .padding(end = 18.dp, bottom = 108.dp),
+                .padding(end = 14.dp, bottom = 104.dp),
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(2.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
                 modifier = Modifier
                     .clip(CircleShape)
-                    .background(Color(0xBB0C0E16))
-                    .border(1.dp, Color.White.copy(alpha = 0.16f), CircleShape)
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                    .background(Color(0xD80A0D16))
+                    .border(1.dp, Color.White.copy(alpha = 0.18f), CircleShape)
+                    .padding(horizontal = 9.dp, vertical = 5.dp),
             ) {
+                // Party Pause / 5s Countdown Resume button
+                val isPaused = party?.status == "paused"
+                val pauseDisabled = peeBreak != null && !canResumePeeBreak
+                Box(
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .background(
+                            if (isPaused) Color(0x3834D399) else Color.White.copy(alpha = 0.10f),
+                        )
+                        .border(1.dp, Color.White.copy(alpha = 0.16f), CircleShape)
+                        .clickable(enabled = !pauseDisabled) {
+                            onInteract()
+                            triggerTogglePauseResume()
+                        }
+                        .padding(horizontal = 10.dp, vertical = 5.dp),
+                ) {
+                    Text(
+                        text = if (isPaused) "▶ Resume (5s)" else "⏸ Pause",
+                        color = if (isPaused) Color(0xFF6EE7B7) else Color.White,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                    )
+                }
+
+                // 🚽 5-Minute Pee Break Button (10m per-user cooldown)
+                val cooldownMin = ((peeCooldownSec + 59) / 60).coerceAtLeast(1)
+                val peeDisabled = peeCooldownSec > 0 || peeBreak != null
+                Box(
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .background(
+                            if (peeCooldownSec > 0) Color.White.copy(alpha = 0.05f) else Color(0x33F59E0B),
+                        )
+                        .border(1.dp, Color(0xFFFBBF24).copy(alpha = 0.38f), CircleShape)
+                        .clickable(enabled = !peeDisabled) {
+                            onInteract()
+                            triggerPeeBreak()
+                        }
+                        .padding(horizontal = 10.dp, vertical = 5.dp),
+                ) {
+                    Text(
+                        text = if (peeCooldownSec > 0) "🚽 ${cooldownMin}m" else "🚽 Pee",
+                        color = if (peeCooldownSec > 0) Color.White.copy(alpha = 0.45f) else Color(0xFFFDE68A),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                    )
+                }
+
                 PARTY_REACTION_EMOJIS.forEach { emoji ->
                     Box(
                         modifier = Modifier
-                            .size(34.dp)
+                            .size(32.dp)
                             .clip(CircleShape)
-                            .clickable {
+                            .clickable(enabled = !isRateLimited) {
                                 onInteract()
-                                spawn("local-${System.nanoTime()}", emoji, "You", System.currentTimeMillis().toInt())
-                                scope.launch {
-                                    api.postWatchPartyChat(partyId, "reaction", emoji)
-                                }
+                                sendEmojiReaction(emoji)
                             },
                         contentAlignment = Alignment.Center,
                     ) {
-                        Text(text = emoji, fontSize = 18.sp)
+                        Text(
+                            text = emoji,
+                            fontSize = 17.sp,
+                            color = Color.White.copy(alpha = if (isRateLimited) 0.35f else 1f),
+                        )
                     }
                 }
                 Text(
                     text = if (muted) "Off" else "Live",
                     color = Color.White,
-                    fontSize = 10.5.sp,
+                    fontSize = 10.sp,
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier
-                        .padding(start = 4.dp)
+                        .padding(start = 2.dp)
                         .clip(CircleShape)
                         .background(if (muted) Color(0x44F43F5E) else Color.White.copy(alpha = 0.12f))
                         .clickable {
                             onInteract()
                             muted = !muted
                         }
-                        .padding(horizontal = 9.dp, vertical = 4.dp),
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
                 )
+            }
+        }
+
+        // 5. Full-Viewport Velvet Theater Curtain Unfurl directly over the Video Player
+        if (curtainMounted) {
+            val openFrac by androidx.compose.animation.core.animateFloatAsState(
+                targetValue = if (curtainOpen) 1f else 0f,
+                animationSpec = androidx.compose.animation.core.tween(
+                    durationMillis = 1900,
+                    easing = androidx.compose.animation.core.FastOutSlowInEasing,
+                ),
+                label = "fullscreen_velvet_curtains",
+            )
+            val velvetPleats = remember {
+                Brush.horizontalGradient(
+                    listOf(
+                        Color(0xFF6B0714),
+                        Color(0xFFA81226),
+                        Color(0xFF4A030D),
+                        Color(0xFF960E20),
+                        Color(0xFF590511),
+                        Color(0xFFA81226),
+                        Color(0xFF6B0714),
+                    ),
+                )
+            }
+            androidx.compose.foundation.layout.BoxWithConstraints(
+                modifier = Modifier.fillMaxSize(),
+            ) {
+                val halfW = maxWidth * 0.53f
+                val slideOffset = halfW * 0.96f * openFrac
+
+                // Left Pleated Velvet Curtain
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.CenterStart)
+                        .width(halfW)
+                        .fillMaxHeight()
+                        .offset(x = -slideOffset)
+                        .background(velvetPleats)
+                        .border(BorderStroke(2.dp, Color(0xAAF6C978))),
+                )
+
+                // Right Pleated Velvet Curtain
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.CenterEnd)
+                        .width(halfW)
+                        .fillMaxHeight()
+                        .offset(x = slideOffset)
+                        .background(velvetPleats)
+                        .border(BorderStroke(2.dp, Color(0xAAF6C978))),
+                )
+
+                // Top Crimson & Gold Valance
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .fillMaxWidth()
+                        .height(28.dp)
+                        .offset(y = (-32f * openFrac).dp)
+                        .background(velvetPleats)
+                        .border(BorderStroke(2.dp, Color(0xCCF6C978))),
+                )
+
+                // Feature Presentation Center Plaque (fades out as curtains sweep open)
+                if (openFrac < 0.75f) {
+                    val plaqueAlpha = (1f - (openFrac / 0.65f)).coerceIn(0f, 1f)
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .graphicsLayer {
+                                alpha = plaqueAlpha
+                                scaleX = 1f + openFrac * 0.08f
+                                scaleY = 1f + openFrac * 0.08f
+                            }
+                            .clip(RoundedCornerShape(18.dp))
+                            .background(Color(0xD80A060C))
+                            .border(1.5.dp, Color(0x99F6C978), RoundedCornerShape(18.dp))
+                            .padding(horizontal = 28.dp, vertical = 18.dp),
+                    ) {
+                        Text(
+                            text = "★ FEATURE PRESENTATION ★",
+                            color = Color(0xFFF6C978),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            letterSpacing = 2.sp,
+                        )
+                        Text(
+                            text = party?.title ?: movieTitle,
+                            color = Color.White,
+                            fontSize = 22.sp,
+                            fontWeight = FontWeight.Black,
+                        )
+                    }
+                }
             }
         }
     }

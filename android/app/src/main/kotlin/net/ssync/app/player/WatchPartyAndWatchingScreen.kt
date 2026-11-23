@@ -1014,6 +1014,15 @@ private fun CreateWatchPartyDialog(
 
 // ── Watch Party Room Dialog (Theater Waiting Room + Lobby Music + Chat) ─────
 
+private data class RoomSideEmojiBubble(
+    val uid: String,
+    val emoji: String,
+    val sender: String,
+    val isLeft: Boolean,
+    val edgeDp: Float,
+    val swayDp: Float,
+)
+
 @Composable
 private fun WatchPartyRoomDialog(
     partyId: String,
@@ -1025,36 +1034,24 @@ private fun WatchPartyRoomDialog(
     var party by remember { mutableStateOf<WatchParty?>(null) }
     var chatInput by remember { mutableStateOf("") }
     var autoJoined by remember { mutableStateOf(false) }
-    var showtimeCountdown by remember { mutableStateOf<Int?>(null) }
-    var curtainsOpen by remember { mutableStateOf(false) }
+    var starting by remember { mutableStateOf(false) }
+    var prevStatus by remember { mutableStateOf<String?>(null) }
+    var bubbles by remember { mutableStateOf<List<RoomSideEmojiBubble>>(emptyList()) }
+    var rateLimitedUntilMs by remember { mutableStateOf(0L) }
+    var roomToast by remember { mutableStateOf<String?>(null) }
+    val seenMsgIds = remember(partyId) { HashSet<Int>() }
+    var msgsInitialized by remember(partyId) { mutableStateOf(false) }
+    val reactionTimestamps = remember(partyId) { mutableListOf<Long>() }
 
-    LaunchedEffect(party?.status, showtimeCountdown) {
-        val st = party?.status ?: return@LaunchedEffect
-        if (st == "playing" || st == "paused") {
-            curtainsOpen = true
-        } else if (showtimeCountdown == null) {
-            curtainsOpen = false
-        }
-    }
-
-    suspend fun refreshRoom() {
-        (api.fetchWatchParty(partyId) as? MusicApiResult.Success)?.let { party = it.data }
-    }
-
-    LaunchedEffect(partyId, api) {
-        refreshRoom()
-        while (true) {
-            delay(2_500L)
-            refreshRoom()
-        }
-    }
-
-    LaunchedEffect(party?.id) {
-        val p = party ?: return@LaunchedEffect
-        if (!autoJoined && !p.isMember) {
-            autoJoined = true
-            api.joinWatchParty(p.id, rsvp = p.status == "scheduled")
-            refreshRoom()
+    fun spawnRoomBubble(uid: String, emoji: String, sender: String, seed: Int) {
+        val isLeft = (seed % 2 == 0)
+        val edgeDp = 12f + ((kotlin.math.abs(seed) * 19) % 38)
+        val swayDp = (if (seed % 3 == 0) 1f else -1f) * (10f + (kotlin.math.abs(seed) % 14))
+        val b = RoomSideEmojiBubble(uid, emoji, sender, isLeft, edgeDp, swayDp)
+        bubbles = (bubbles.takeLast(14)) + b
+        scope.launch {
+            delay(2800L)
+            bubbles = bubbles.filterNot { it.uid == uid }
         }
     }
 
@@ -1076,6 +1073,80 @@ private fun WatchPartyRoomDialog(
         onDismiss()
     }
 
+    suspend fun refreshRoom() {
+        val res = api.fetchWatchParty(partyId)
+        if (res is MusicApiResult.Success) {
+            val fetched = res.data
+            party = fetched
+            val msgs = fetched.messages
+            if (!msgsInitialized) {
+                msgsInitialized = true
+                msgs.forEach { seenMsgIds += it.id }
+            } else {
+                for (m in msgs) {
+                    if (seenMsgIds.add(m.id)) {
+                        val body = m.body.trim()
+                        if (m.kind == "reaction" || body in PARTY_EMOJIS || body.startsWith("🚽")) {
+                            spawnRoomBubble("room-srv-${m.id}", body, m.profile?.name.orEmpty(), m.id)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Auto-transition everyone in the waiting room into the fullscreen video player when the movie starts!
+    LaunchedEffect(party?.status) {
+        val p = party ?: return@LaunchedEffect
+        val old = prevStatus
+        prevStatus = p.status
+        if ((old == "lobby" || old == "scheduled") && p.status == "playing" && !starting) {
+            launchSyncedVideo(p)
+        }
+    }
+
+    LaunchedEffect(partyId, api) {
+        refreshRoom()
+        while (true) {
+            delay(2_200L)
+            refreshRoom()
+        }
+    }
+
+    LaunchedEffect(party?.id) {
+        val p = party ?: return@LaunchedEffect
+        if (!autoJoined && !p.isMember) {
+            autoJoined = true
+            api.joinWatchParty(p.id, rsvp = p.status == "scheduled")
+            refreshRoom()
+        }
+    }
+
+    fun sendRoomReaction(p: WatchParty, emoji: String) {
+        val now = System.currentTimeMillis()
+        reactionTimestamps.removeAll { now - it >= 4_000L }
+        if (reactionTimestamps.size >= 5) {
+            rateLimitedUntilMs = now + 2_800L
+            roomToast = "Emoji cooldown (max 5 reactions per 4s)…"
+            scope.launch {
+                delay(2_800L)
+                if (roomToast?.startsWith("Emoji") == true) roomToast = null
+            }
+            return
+        }
+        reactionTimestamps += now
+        if (reactionTimestamps.size >= 5) {
+            rateLimitedUntilMs = now + 2_500L
+        }
+        val seed = (now.toInt() + reactionTimestamps.size * 17)
+        spawnRoomBubble("room-local-$now-${reactionTimestamps.size}", emoji, "You", seed)
+        scope.launch {
+            val r = api.postWatchPartyChat(p.id, "reaction", emoji)
+            if (r is MusicApiResult.Success) seenMsgIds += r.data.id
+            refreshRoom()
+        }
+    }
+
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
@@ -1094,455 +1165,628 @@ private fun WatchPartyRoomDialog(
                 return@Surface
             }
             val me = p.members.firstOrNull { it.you }
+            val majorityReady = p.majorityReady || (p.memberCount > 0 && p.readyCount * 2 > p.memberCount)
+            val canStartFromLobby = p.isHost || (p.memberCount > 1 && majorityReady) || p.canControl
+            val peeBreak = p.peeBreak
+            val isMyPeeBreak = peeBreak != null && me?.profileId == peeBreak.profileId
+            val isRateLimited = System.currentTimeMillis() < rateLimitedUntilMs
 
-            Column(modifier = Modifier.fillMaxSize()) {
-                // Hero top bar
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(132.dp),
-                ) {
-                    val bgUrl = api.artwork.resolve(p.meta?.backdrop ?: p.meta?.artwork)
-                        ?: api.artwork.forItem(p.itemType, p.itemId, preferBackdrop = true)
-                    if (bgUrl != null) {
-                        AsyncImage(
-                            model = bgUrl,
-                            imageLoader = LocalSoulSyncImageLoader.current,
-                            contentDescription = null,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize(),
-                        )
-                    }
+            Box(modifier = Modifier.fillMaxSize()) {
+                Column(modifier = Modifier.fillMaxSize()) {
+                    // Hero top bar
                     Box(
                         modifier = Modifier
-                            .fillMaxSize()
-                            .background(Brush.verticalGradient(listOf(Color(0x99070A10), Color(0xF6070A10)))),
-                    )
-                    IconButton(
-                        onClick = onDismiss,
-                        modifier = Modifier.align(Alignment.TopEnd).padding(6.dp),
+                            .fillMaxWidth()
+                            .height(126.dp),
                     ) {
-                        Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White)
-                    }
-                    Column(
-                        modifier = Modifier
-                            .align(Alignment.BottomStart)
-                            .padding(14.dp),
-                    ) {
-                        Text(
-                            text = when (p.status) {
-                                "playing" -> "● LIVE · ${formatClockSec(p.livePosition)}"
-                                "paused" -> "❚❚ PAUSED · ${formatClockSec(p.livePosition)}"
-                                "scheduled" -> "🗓 SCHEDULED · ${formatCountdown(p.scheduledFor)}"
-                                else -> "🍿 THEATER WAITING ROOM"
-                            },
-                            color = SoulSyncColors.AccentLight,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.ExtraBold,
+                        val bgUrl = api.artwork.resolve(p.meta?.backdrop ?: p.meta?.artwork)
+                            ?: api.artwork.forItem(p.itemType, p.itemId, preferBackdrop = true)
+                        if (bgUrl != null) {
+                            AsyncImage(
+                                model = bgUrl,
+                                imageLoader = LocalSoulSyncImageLoader.current,
+                                contentDescription = null,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        }
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(Brush.verticalGradient(listOf(Color(0x99070A10), Color(0xF6070A10)))),
                         )
-                        Text(
-                            text = p.title,
-                            color = Color.White,
-                            fontSize = 19.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        Text(
-                            text = "Hosted by ${p.hostProfile?.name ?: "Host"} · Room #${p.id}",
-                            color = SoulSyncColors.TextSecondary,
-                            fontSize = 11.5.sp,
-                        )
-                    }
-                }
-
-                LazyColumn(
-                    modifier = Modifier.weight(1f),
-                    contentPadding = PaddingValues(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    // 16:9 Cinema Proscenium Stage with Animated Pleated Velvet Curtains
-                    item {
-                        VelvetCurtainStage(
-                            title = p.title,
-                            subtitle = p.meta?.subtitle.orEmpty(),
-                            artworkUrl = api.artwork.resolve(p.meta?.backdrop) ?: api.artwork.resolve(p.meta?.artwork),
-                            status = p.status,
-                            readyCount = p.members.count { it.ready },
-                            memberCount = p.members.size,
-                            livePosition = p.livePosition,
-                            curtainsOpen = curtainsOpen,
-                            countdown = showtimeCountdown,
-                        )
-                    }
-
-                    // Curved Theater Seating Row
-                    if (p.members.isNotEmpty()) {
-                        item {
-                            LazyRow(
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(14.dp))
-                                    .background(Color(0xFF14101A))
-                                    .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(14.dp))
-                                    .padding(10.dp),
-                            ) {
-                                items(p.members, key = { "seat-${it.profileId}" }) { member ->
-                                    Column(
-                                        horizontalAlignment = Alignment.CenterHorizontally,
-                                        verticalArrangement = Arrangement.spacedBy(4.dp),
-                                        modifier = Modifier
-                                            .width(68.dp)
-                                            .clip(RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp, bottomStart = 6.dp, bottomEnd = 6.dp))
-                                            .background(if (member.ready) Color(0xFF22C55E).copy(alpha = 0.12f) else Color.White.copy(alpha = 0.04f))
-                                            .border(
-                                                1.dp,
-                                                if (member.ready) Color(0xFF22C55E).copy(alpha = 0.5f) else Color(0xFFA61226).copy(alpha = 0.55f),
-                                                RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp, bottomStart = 6.dp, bottomEnd = 6.dp),
-                                            )
-                                            .padding(horizontal = 6.dp, vertical = 8.dp),
-                                    ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(28.dp)
-                                                .clip(CircleShape)
-                                                .background(if (member.isHost) Color(0xFFF6C978).copy(alpha = 0.25f) else SoulSyncColors.Accent.copy(alpha = 0.3f)),
-                                            contentAlignment = Alignment.Center,
-                                        ) {
-                                            Text(
-                                                text = (member.profile?.name ?: "U").take(1).uppercase(),
-                                                color = Color.White,
-                                                fontSize = 12.sp,
-                                                fontWeight = FontWeight.ExtraBold,
-                                            )
-                                        }
-                                        Text(
-                                            text = member.profile?.name ?: "Guest",
-                                            color = Color.White,
-                                            fontSize = 10.5.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                        )
-                                        Text(
-                                            text = if (member.isHost) "★ HOST" else if (member.ready) "✓ READY" else "SEATED",
-                                            color = if (member.ready) Color(0xFF86EFAC) else if (member.isHost) Color(0xFFF6C978) else SoulSyncColors.TextSecondary,
-                                            fontSize = 8.5.sp,
-                                            fontWeight = FontWeight.ExtraBold,
-                                        )
-                                    }
-                                }
-                            }
+                        IconButton(
+                            onClick = onDismiss,
+                            modifier = Modifier.align(Alignment.TopEnd).padding(6.dp),
+                        ) {
+                            Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White)
+                        }
+                        Column(
+                            modifier = Modifier
+                                .align(Alignment.BottomStart)
+                                .padding(14.dp),
+                        ) {
+                            Text(
+                                text = when (p.status) {
+                                    "playing" -> "● LIVE · ${formatClockSec(p.livePosition)}"
+                                    "paused" -> if (peeBreak != null) "🚽 PEE BREAK · ${formatClockSec(p.livePosition)}" else "❚❚ PAUSED · ${formatClockSec(p.livePosition)}"
+                                    "scheduled" -> "🗓 SCHEDULED · ${formatCountdown(p.scheduledFor)}"
+                                    else -> "🍿 THEATER WAITING ROOM"
+                                },
+                                color = SoulSyncColors.AccentLight,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                            )
+                            Text(
+                                text = p.title,
+                                color = Color.White,
+                                fontSize = 19.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                text = "Hosted by ${p.hostProfile?.name ?: "Host"} · Room #${p.id}",
+                                color = SoulSyncColors.TextSecondary,
+                                fontSize = 11.5.sp,
+                            )
                         }
                     }
 
-                    // Synced Theater Lobby Music Bar
-                    val lt = p.lobbyTrack
-                    if (lt != null && (p.status == "lobby" || p.status == "scheduled")) {
+                    LazyColumn(
+                        modifier = Modifier.weight(1f),
+                        contentPadding = PaddingValues(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        // Cinema Feature Presentation Showcase Card (Velvet curtains unfurl full-screen over the video player!)
                         item {
+                            val posterUrl = api.artwork.resolve(p.meta?.artwork ?: p.meta?.backdrop)
+                                ?: api.artwork.forItem(p.itemType, p.itemId, preferBackdrop = false)
                             Surface(
-                                shape = RoundedCornerShape(14.dp),
-                                color = SoulSyncColors.Accent.copy(alpha = 0.12f),
-                                border = BorderStroke(1.dp, SoulSyncColors.Accent.copy(alpha = 0.4f)),
+                                shape = RoundedCornerShape(16.dp),
+                                color = Color(0xFF101524),
+                                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.14f)),
                                 modifier = Modifier.fillMaxWidth(),
                             ) {
                                 Row(
-                                    modifier = Modifier.padding(10.dp),
+                                    modifier = Modifier.padding(14.dp),
                                     verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(14.dp),
                                 ) {
                                     SoulSyncArtwork(
-                                        url = api.artwork.resolve(lt.artwork) ?: api.artwork.albumArtwork(lt.albumId),
-                                        contentDescription = lt.title,
-                                        fallbackIcon = Icons.Default.MusicNote,
-                                        modifier = Modifier.size(44.dp).clip(RoundedCornerShape(8.dp)),
+                                        url = posterUrl,
+                                        contentDescription = p.title,
+                                        modifier = Modifier
+                                            .width(72.dp)
+                                            .aspectRatio(2f / 3f)
+                                            .clip(RoundedCornerShape(10.dp))
+                                            .border(1.dp, Color.White.copy(alpha = 0.2f), RoundedCornerShape(10.dp)),
                                     )
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text("♪ LOBBY MUSIC", color = SoulSyncColors.AccentLight, fontSize = 10.sp, fontWeight = FontWeight.ExtraBold)
-                                        Text(lt.title, color = Color.White, fontSize = 13.5.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                        if (lt.artist.isNotBlank()) {
-                                            Text(lt.artist, color = SoulSyncColors.TextSecondary, fontSize = 11.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                        }
-                                    }
-                                    IconButton(
-                                        onClick = {
-                                            coordinator.playAudio(
-                                                ActivePlayable(
-                                                    itemType = "track",
-                                                    itemId = lt.trackId,
-                                                    title = lt.title,
-                                                    subtitle = "${lt.artist} · Theater Lobby",
-                                                    artworkUrl = api.artwork.resolve(lt.artwork) ?: api.artwork.albumArtwork(lt.albumId),
-                                                    streamUrl = api.streamUrl("track", lt.trackId),
-                                                    resumePositionMs = (lt.livePosition * 1000.0).toLong(),
-                                                ),
-                                            )
-                                        },
+                                    Column(
+                                        modifier = Modifier.weight(1f),
+                                        verticalArrangement = Arrangement.spacedBy(5.dp),
                                     ) {
-                                        Icon(Icons.Default.PlayArrow, contentDescription = "Play lobby music", tint = SoulSyncColors.AccentLight)
-                                    }
-                                    if (p.canControl) {
-                                        IconButton(
-                                            onClick = {
-                                                scope.launch {
-                                                    api.updateWatchPartyState(p.id, shuffleLobbyMusic = true)
-                                                    refreshRoom()
-                                                }
+                                        Text(
+                                            text = when (p.status) {
+                                                "playing" -> "● NOW SCREENING · ${formatClockSec(p.livePosition)}"
+                                                "paused" -> "❚❚ PAUSED AT ${formatClockSec(p.livePosition)}"
+                                                else -> "★ FEATURE PRESENTATION"
                                             },
+                                            color = Color(0xFFF6C978),
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            letterSpacing = 1.2.sp,
+                                        )
+                                        Text(
+                                            text = p.title,
+                                            color = Color.White,
+                                            fontSize = 17.sp,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            maxLines = 2,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                        if (!p.meta?.subtitle.isNullOrBlank()) {
+                                            Text(
+                                                text = p.meta?.subtitle.orEmpty(),
+                                                color = SoulSyncColors.TextSecondary,
+                                                fontSize = 12.sp,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                            )
+                                        }
+                                        Surface(
+                                            shape = CircleShape,
+                                            color = if (majorityReady) Color(0xFF10B981).copy(alpha = 0.18f) else Color.White.copy(alpha = 0.08f),
+                                            border = BorderStroke(
+                                                1.dp,
+                                                if (majorityReady) Color(0xFF34D399).copy(alpha = 0.5f) else Color.White.copy(alpha = 0.15f),
+                                            ),
                                         ) {
-                                            Icon(Icons.Default.Shuffle, contentDescription = "Shuffle lobby track", tint = Color.White)
+                                            Text(
+                                                text = if (majorityReady) {
+                                                    "✓ ${p.readyCount}/${p.memberCount} Ready · Majority Ready!"
+                                                } else {
+                                                    "${p.readyCount}/${p.memberCount} Ready · Majority or Host starts"
+                                                },
+                                                color = if (majorityReady) Color(0xFF6EE7B7) else SoulSyncColors.TextSoft,
+                                                fontSize = 10.5.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                                            )
                                         }
                                     }
                                 }
                             }
                         }
-                    }
 
-                    // Primary Action Controls
-                    item {
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            if (p.status == "lobby" || p.status == "scheduled") {
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    if (p.canControl) {
+                        // Active 🚽 5-Minute Pee Break Banner
+                        if (peeBreak != null) {
+                            item {
+                                Surface(
+                                    shape = RoundedCornerShape(14.dp),
+                                    color = Color(0xFF2B1C0C),
+                                    border = BorderStroke(1.dp, Color(0xFFFBBF24).copy(alpha = 0.55f)),
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(12.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                    ) {
+                                        Text("🚽", fontSize = 24.sp)
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = "${peeBreak.profile?.name ?: "Someone"} called a 5-min pee break!",
+                                                color = Color(0xFFFEF3C7),
+                                                fontSize = 13.sp,
+                                                fontWeight = FontWeight.ExtraBold,
+                                            )
+                                            Text(
+                                                text = "Stream paused for everyone until they return.",
+                                                color = Color(0xFFFCD34D),
+                                                fontSize = 11.5.sp,
+                                            )
+                                        }
+                                        if (isMyPeeBreak || p.isHost) {
+                                            Button(
+                                                onClick = {
+                                                    scope.launch {
+                                                        val r = api.updateWatchPartyState(p.id, action = "resume")
+                                                        if (r is MusicApiResult.Success) launchSyncedVideo(r.data)
+                                                    }
+                                                },
+                                                shape = CircleShape,
+                                                colors = ButtonDefaults.buttonColors(
+                                                    containerColor = Color(0xFF10B981),
+                                                    contentColor = Color(0xFF041B11),
+                                                ),
+                                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                                                modifier = Modifier.height(34.dp),
+                                            ) {
+                                                Text("I'm Back (5s)", fontSize = 11.5.sp, fontWeight = FontWeight.ExtraBold)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Curved Theater Seating Row
+                        if (p.members.isNotEmpty()) {
+                            item {
+                                LazyRow(
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(14.dp))
+                                        .background(Color(0xFF14101A))
+                                        .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(14.dp))
+                                        .padding(10.dp),
+                                ) {
+                                    items(p.members, key = { "seat-${it.profileId}" }) { member ->
+                                        Column(
+                                            horizontalAlignment = Alignment.CenterHorizontally,
+                                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                                            modifier = Modifier
+                                                .width(68.dp)
+                                                .clip(RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp, bottomStart = 6.dp, bottomEnd = 6.dp))
+                                                .background(if (member.ready) Color(0xFF22C55E).copy(alpha = 0.12f) else Color.White.copy(alpha = 0.04f))
+                                                .border(
+                                                    1.dp,
+                                                    if (member.ready) Color(0xFF22C55E).copy(alpha = 0.5f) else Color(0xFFA61226).copy(alpha = 0.55f),
+                                                    RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp, bottomStart = 6.dp, bottomEnd = 6.dp),
+                                                )
+                                                .padding(horizontal = 6.dp, vertical = 8.dp),
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(28.dp)
+                                                    .clip(CircleShape)
+                                                    .background(if (member.isHost) Color(0xFFF6C978).copy(alpha = 0.25f) else SoulSyncColors.Accent.copy(alpha = 0.3f)),
+                                                contentAlignment = Alignment.Center,
+                                            ) {
+                                                Text(
+                                                    text = (member.profile?.name ?: "U").take(1).uppercase(),
+                                                    color = Color.White,
+                                                    fontSize = 12.sp,
+                                                    fontWeight = FontWeight.ExtraBold,
+                                                )
+                                            }
+                                            Text(
+                                                text = member.profile?.name ?: "Guest",
+                                                color = Color.White,
+                                                fontSize = 10.5.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                            )
+                                            Text(
+                                                text = if (member.isHost) "★ HOST" else if (member.ready) "✓ READY" else "SEATED",
+                                                color = if (member.ready) Color(0xFF86EFAC) else if (member.isHost) Color(0xFFF6C978) else SoulSyncColors.TextSecondary,
+                                                fontSize = 8.5.sp,
+                                                fontWeight = FontWeight.ExtraBold,
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Synced Theater Lobby Music Bar
+                        val lt = p.lobbyTrack
+                        if (lt != null && (p.status == "lobby" || p.status == "scheduled")) {
+                            item {
+                                Surface(
+                                    shape = RoundedCornerShape(14.dp),
+                                    color = SoulSyncColors.Accent.copy(alpha = 0.12f),
+                                    border = BorderStroke(1.dp, SoulSyncColors.Accent.copy(alpha = 0.4f)),
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(10.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                    ) {
+                                        SoulSyncArtwork(
+                                            url = api.artwork.resolve(lt.artwork) ?: api.artwork.albumArtwork(lt.albumId),
+                                            contentDescription = lt.title,
+                                            fallbackIcon = Icons.Default.MusicNote,
+                                            modifier = Modifier.size(44.dp).clip(RoundedCornerShape(8.dp)),
+                                        )
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text("♪ LOBBY MUSIC", color = SoulSyncColors.AccentLight, fontSize = 10.sp, fontWeight = FontWeight.ExtraBold)
+                                            Text(lt.title, color = Color.White, fontSize = 13.5.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                            if (lt.artist.isNotBlank()) {
+                                                Text(lt.artist, color = SoulSyncColors.TextSecondary, fontSize = 11.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                            }
+                                        }
+                                        IconButton(
+                                            onClick = {
+                                                coordinator.playAudio(
+                                                    ActivePlayable(
+                                                        itemType = "track",
+                                                        itemId = lt.trackId,
+                                                        title = lt.title,
+                                                        subtitle = "${lt.artist} · Theater Lobby",
+                                                        artworkUrl = api.artwork.resolve(lt.artwork) ?: api.artwork.albumArtwork(lt.albumId),
+                                                        streamUrl = api.streamUrl("track", lt.trackId),
+                                                        resumePositionMs = (lt.livePosition * 1000.0).toLong(),
+                                                    ),
+                                                )
+                                            },
+                                        ) {
+                                            Icon(Icons.Default.PlayArrow, contentDescription = "Play lobby music", tint = SoulSyncColors.AccentLight)
+                                        }
+                                        if (p.canControl) {
+                                            IconButton(
+                                                onClick = {
+                                                    scope.launch {
+                                                        api.updateWatchPartyState(p.id, shuffleLobbyMusic = true)
+                                                        refreshRoom()
+                                                    }
+                                                },
+                                            ) {
+                                                Icon(Icons.Default.Shuffle, contentDescription = "Shuffle lobby track", tint = Color.White)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if (!roomToast.isNullOrBlank()) {
+                            item {
+                                Text(
+                                    text = roomToast.orEmpty(),
+                                    color = Color(0xFFFBBF24),
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                )
+                            }
+                        }
+
+                        // Primary Action Controls
+                        item {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                if (p.status == "lobby" || p.status == "scheduled") {
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                         Button(
                                             onClick = {
-                                                if (showtimeCountdown != null) return@Button
+                                                if (starting) return@Button
+                                                starting = true
                                                 scope.launch {
-                                                    showtimeCountdown = 3
-                                                    delay(800L)
-                                                    showtimeCountdown = 2
-                                                    delay(800L)
-                                                    showtimeCountdown = 1
-                                                    delay(800L)
-                                                    showtimeCountdown = null
-                                                    curtainsOpen = true
                                                     val r = api.updateWatchPartyState(p.id, action = "start")
-                                                    delay(1350L)
-                                                    if (r is MusicApiResult.Success) launchSyncedVideo(r.data)
+                                                    if (r is MusicApiResult.Success) {
+                                                        launchSyncedVideo(r.data)
+                                                    } else {
+                                                        starting = false
+                                                    }
                                                 }
                                             },
-                                            enabled = showtimeCountdown == null,
+                                            enabled = canStartFromLobby && !starting,
+                                            shape = CircleShape,
+                                            colors = ButtonDefaults.buttonColors(containerColor = SoulSyncColors.Accent, contentColor = SoulSyncColors.OnAccent),
+                                            modifier = Modifier.weight(1.25f).height(44.dp),
+                                        ) {
+                                            Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text(
+                                                text = if (starting) "Unfurling…" else "Start Presentation",
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 12.5.sp,
+                                            )
+                                        }
+                                        OutlinedButton(
+                                            onClick = {
+                                                scope.launch {
+                                                    api.joinWatchParty(p.id, ready = !(me?.ready ?: false))
+                                                    refreshRoom()
+                                                }
+                                            },
+                                            shape = CircleShape,
+                                            border = BorderStroke(1.dp, if (me?.ready == true) SoulSyncColors.Success else SoulSyncColors.Line),
+                                            modifier = Modifier.weight(0.9f).height(44.dp),
+                                        ) {
+                                            if (me?.ready == true) {
+                                                Icon(Icons.Default.Check, contentDescription = null, tint = SoulSyncColors.Success, modifier = Modifier.size(16.dp))
+                                                Spacer(modifier = Modifier.width(4.dp))
+                                            }
+                                            Text(
+                                                text = if (me?.ready == true) "Ready!" else "Mark Ready",
+                                                color = if (me?.ready == true) SoulSyncColors.Success else Color.White,
+                                                fontWeight = FontWeight.SemiBold,
+                                                fontSize = 12.5.sp,
+                                            )
+                                        }
+                                    }
+                                } else {
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Button(
+                                            onClick = { launchSyncedVideo(p) },
                                             shape = CircleShape,
                                             colors = ButtonDefaults.buttonColors(containerColor = SoulSyncColors.Accent, contentColor = SoulSyncColors.OnAccent),
                                             modifier = Modifier.weight(1f).height(44.dp),
                                         ) {
                                             Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
                                             Spacer(modifier = Modifier.width(4.dp))
-                                            Text(
-                                                text = showtimeCountdown?.let { "Starting in $it…" } ?: "Unfurl & Start",
-                                                fontWeight = FontWeight.Bold,
-                                            )
+                                            Text("Watch & Sync", fontWeight = FontWeight.Bold, fontSize = 12.5.sp)
                                         }
-                                    }
-                                    OutlinedButton(
-                                        onClick = {
-                                            scope.launch {
-                                                api.joinWatchParty(p.id, ready = !(me?.ready ?: false))
-                                                refreshRoom()
-                                            }
-                                        },
-                                        shape = CircleShape,
-                                        border = BorderStroke(1.dp, if (me?.ready == true) SoulSyncColors.Success else SoulSyncColors.Line),
-                                        modifier = Modifier.weight(1f).height(44.dp),
-                                    ) {
-                                        if (me?.ready == true) {
-                                            Icon(Icons.Default.Check, contentDescription = null, tint = SoulSyncColors.Success, modifier = Modifier.size(16.dp))
-                                            Spacer(modifier = Modifier.width(4.dp))
-                                        }
-                                        Text(
-                                            text = if (me?.ready == true) "Ready!" else "Mark Ready",
-                                            color = if (me?.ready == true) SoulSyncColors.Success else Color.White,
-                                            fontWeight = FontWeight.SemiBold,
-                                        )
-                                    }
-                                }
-                            } else {
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Button(
-                                        onClick = { launchSyncedVideo(p) },
-                                        shape = CircleShape,
-                                        colors = ButtonDefaults.buttonColors(containerColor = SoulSyncColors.Accent, contentColor = SoulSyncColors.OnAccent),
-                                        modifier = Modifier.weight(1f).height(44.dp),
-                                    ) {
-                                        Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text("Watch & Sync", fontWeight = FontWeight.Bold)
-                                    }
-                                    if (p.canControl) {
                                         OutlinedButton(
                                             onClick = {
                                                 scope.launch {
-                                                    api.updateWatchPartyState(p.id, action = if (p.status == "playing") "pause" else "play")
+                                                    val act = if (p.status == "playing") "pause" else "resume"
+                                                    val r = api.updateWatchPartyState(p.id, action = act)
                                                     refreshRoom()
+                                                    if (act == "resume" && r is MusicApiResult.Success) {
+                                                        launchSyncedVideo(r.data)
+                                                    }
                                                 }
                                             },
+                                            enabled = peeBreak == null || isMyPeeBreak || p.isHost,
                                             shape = CircleShape,
                                             border = BorderStroke(1.dp, SoulSyncColors.Line),
                                             modifier = Modifier.height(44.dp),
                                         ) {
-                                            Icon(
-                                                if (p.status == "playing") Icons.Default.Pause else Icons.Default.PlayArrow,
-                                                contentDescription = null,
-                                                tint = Color.White,
-                                                modifier = Modifier.size(17.dp),
+                                            Text(
+                                                text = if (p.status == "playing") "⏸ Pause All" else "▶ Resume (5s)",
+                                                color = Color.White,
+                                                fontSize = 11.5.sp,
+                                                fontWeight = FontWeight.Bold,
+                                            )
+                                        }
+                                        val cooldownMin = ((p.peeCooldownRemaining + 59) / 60).coerceAtLeast(1)
+                                        OutlinedButton(
+                                            onClick = {
+                                                scope.launch {
+                                                    val r = api.updateWatchPartyState(p.id, action = "pee_break")
+                                                    if (r is MusicApiResult.Success) {
+                                                        sendRoomReaction(p, "🚽💨")
+                                                        refreshRoom()
+                                                    } else if (r is MusicApiResult.Error) {
+                                                        roomToast = r.message
+                                                    }
+                                                }
+                                            },
+                                            enabled = p.peeCooldownRemaining <= 0 && peeBreak == null,
+                                            shape = CircleShape,
+                                            border = BorderStroke(1.dp, Color(0xFFFBBF24).copy(alpha = 0.45f)),
+                                            modifier = Modifier.height(44.dp),
+                                        ) {
+                                            Text(
+                                                text = if (p.peeCooldownRemaining > 0) "🚽 ${cooldownMin}m" else "🚽 5m",
+                                                color = Color(0xFFFDE68A),
+                                                fontSize = 11.5.sp,
+                                                fontWeight = FontWeight.Bold,
                                             )
                                         }
                                     }
                                 }
-                            }
-                            if (p.isHost) {
-                                OutlinedButton(
-                                    onClick = {
-                                        scope.launch {
-                                            api.deleteWatchParty(p.id)
-                                            onDismiss()
-                                        }
-                                    },
-                                    shape = CircleShape,
-                                    border = BorderStroke(1.dp, SoulSyncColors.Line),
-                                    modifier = Modifier.fillMaxWidth().height(36.dp),
-                                ) {
-                                    Text("End Watch Party", color = SoulSyncColors.TextSecondary, fontSize = 12.sp)
+                                if (p.isHost) {
+                                    OutlinedButton(
+                                        onClick = {
+                                            scope.launch {
+                                                api.deleteWatchParty(p.id)
+                                                onDismiss()
+                                            }
+                                        },
+                                        shape = CircleShape,
+                                        border = BorderStroke(1.dp, SoulSyncColors.Line),
+                                        modifier = Modifier.fillMaxWidth().height(36.dp),
+                                    ) {
+                                        Text("End Watch Party", color = SoulSyncColors.TextSecondary, fontSize = 12.sp)
+                                    }
                                 }
                             }
                         }
-                    }
 
-                    // Guest Roster
-                    item {
-                        Text(
-                            text = "IN THE ROOM (${p.readyCount}/${p.memberCount} READY)",
-                            color = SoulSyncColors.TextSecondary,
-                            fontSize = 10.5.sp,
-                            fontWeight = FontWeight.Bold,
-                            letterSpacing = 0.8.sp,
-                        )
-                    }
-                    items(p.members, key = { "m-${it.profileId}" }) { m ->
-                        Surface(
-                            shape = RoundedCornerShape(10.dp),
-                            color = SoulSyncColors.Card,
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween,
+                        // Guest Roster
+                        item {
+                            Text(
+                                text = "IN THE ROOM (${p.readyCount}/${p.memberCount} READY" + (if (majorityReady) " · MAJORITY READY" else "") + ")",
+                                color = SoulSyncColors.TextSecondary,
+                                fontSize = 10.5.sp,
+                                fontWeight = FontWeight.Bold,
+                                letterSpacing = 0.8.sp,
+                            )
+                        }
+                        items(p.members, key = { "m-${it.profileId}" }) { m ->
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = SoulSyncColors.Card,
+                                modifier = Modifier.fillMaxWidth(),
                             ) {
-                                Text(
-                                    text = (m.profile?.name ?: "Guest") + if (m.isHost) " (Host)" else if (m.you) " (You)" else "",
-                                    color = Color.White,
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                )
-                                Surface(
-                                    shape = CircleShape,
-                                    color = if (m.ready) SoulSyncColors.Success.copy(alpha = 0.16f) else SoulSyncColors.CardRaised,
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween,
                                 ) {
                                     Text(
-                                        text = if (m.ready) "Ready" else if (m.status == "rsvp") "RSVP" else "Waiting",
-                                        color = if (m.ready) SoulSyncColors.Success else SoulSyncColors.TextSecondary,
-                                        fontSize = 10.5.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 3.dp),
+                                        text = (m.profile?.name ?: "Guest") + if (m.isHost) " (Host)" else if (m.you) " (You)" else "",
+                                        color = Color.White,
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.SemiBold,
                                     )
+                                    Surface(
+                                        shape = CircleShape,
+                                        color = if (m.ready) SoulSyncColors.Success.copy(alpha = 0.16f) else SoulSyncColors.CardRaised,
+                                    ) {
+                                        Text(
+                                            text = if (m.ready) "Ready" else if (m.status == "rsvp") "RSVP" else "Waiting",
+                                            color = if (m.ready) SoulSyncColors.Success else SoulSyncColors.TextSecondary,
+                                            fontSize = 10.5.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 3.dp),
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        // Lounge Chat
+                        item {
+                            Text(
+                                text = "LOUNGE CHAT",
+                                color = SoulSyncColors.TextSecondary,
+                                fontSize = 10.5.sp,
+                                fontWeight = FontWeight.Bold,
+                                letterSpacing = 0.8.sp,
+                            )
+                        }
+                        items(p.messages.takeLast(20), key = { "msg-${it.id}" }) { msg ->
+                            if (msg.kind == "system") {
+                                Text(
+                                    text = "${msg.profile?.name ?: "Someone"} ${msg.body.lowercase()}",
+                                    color = SoulSyncColors.TextSecondary,
+                                    fontSize = 11.5.sp,
+                                    fontStyle = FontStyle.Italic,
+                                )
+                            } else {
+                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Text(
+                                        text = msg.profile?.name ?: "Someone",
+                                        color = SoulSyncColors.AccentLight,
+                                        fontSize = 12.5.sp,
+                                        fontWeight = FontWeight.Bold,
+                                    )
+                                    Text(msg.body, color = Color.White, fontSize = 12.5.sp)
                                 }
                             }
                         }
                     }
 
-                    // Lounge Chat
-                    item {
-                        Text(
-                            text = "LOUNGE CHAT",
-                            color = SoulSyncColors.TextSecondary,
-                            fontSize = 10.5.sp,
-                            fontWeight = FontWeight.Bold,
-                            letterSpacing = 0.8.sp,
-                        )
-                    }
-                    items(p.messages.takeLast(20), key = { "msg-${it.id}" }) { msg ->
-                        if (msg.kind == "system") {
-                            Text(
-                                text = "${msg.profile?.name ?: "Someone"} ${msg.body.lowercase()}",
-                                color = SoulSyncColors.TextSecondary,
-                                fontSize = 11.5.sp,
-                                fontStyle = FontStyle.Italic,
+                    HorizontalDivider(color = SoulSyncColors.Line, thickness = 0.75.dp)
+
+                    // Quick Emoji Reactions + Chat Composer
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            PARTY_EMOJIS.forEach { em ->
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = if (isRateLimited) SoulSyncColors.Card.copy(alpha = 0.45f) else SoulSyncColors.Card,
+                                    border = BorderStroke(1.dp, SoulSyncColors.Line),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clickable(enabled = !isRateLimited) {
+                                            sendRoomReaction(p, em)
+                                        },
+                                ) {
+                                    Box(
+                                        modifier = Modifier.padding(vertical = 6.dp),
+                                        contentAlignment = Alignment.Center,
+                                    ) {
+                                        Text(em, fontSize = 16.sp)
+                                    }
+                                }
+                            }
+                        }
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            OutlinedTextField(
+                                value = chatInput,
+                                onValueChange = { chatInput = it },
+                                placeholder = { Text("Say something…", fontSize = 13.sp) },
+                                singleLine = true,
+                                shape = RoundedCornerShape(999.dp),
+                                modifier = Modifier.weight(1f),
                             )
-                        } else {
-                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                Text(
-                                    text = msg.profile?.name ?: "Someone",
-                                    color = SoulSyncColors.AccentLight,
-                                    fontSize = 12.5.sp,
-                                    fontWeight = FontWeight.Bold,
-                                )
-                                Text(msg.body, color = Color.White, fontSize = 12.5.sp)
+                            IconButton(
+                                onClick = {
+                                    val txt = chatInput.trim()
+                                    if (txt.isEmpty()) return@IconButton
+                                    chatInput = ""
+                                    scope.launch {
+                                        api.postWatchPartyChat(p.id, "chat", txt)
+                                        refreshRoom()
+                                    }
+                                },
+                            ) {
+                                Icon(Icons.Default.Send, contentDescription = "Send", tint = SoulSyncColors.AccentLight)
                             }
                         }
                     }
                 }
 
-                HorizontalDivider(color = SoulSyncColors.Line, thickness = 0.75.dp)
-
-                // Quick Emoji Reactions + Chat Composer
-                Column(
-                    modifier = Modifier.padding(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        PARTY_EMOJIS.forEach { em ->
-                            Surface(
-                                shape = RoundedCornerShape(8.dp),
-                                color = SoulSyncColors.Card,
-                                border = BorderStroke(1.dp, SoulSyncColors.Line),
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .clickable {
-                                        scope.launch {
-                                            api.postWatchPartyChat(p.id, "reaction", em)
-                                            refreshRoom()
-                                        }
-                                    },
-                            ) {
-                                Box(
-                                    modifier = Modifier.padding(vertical = 6.dp),
-                                    contentAlignment = Alignment.Center,
-                                ) {
-                                    Text(em, fontSize = 16.sp)
-                                }
-                            }
-                        }
-                    }
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        OutlinedTextField(
-                            value = chatInput,
-                            onValueChange = { chatInput = it },
-                            placeholder = { Text("Say something…", fontSize = 13.sp) },
-                            singleLine = true,
-                            shape = RoundedCornerShape(999.dp),
-                            modifier = Modifier.weight(1f),
+                // Dual-Side (Left + Right) Floating Emoji Bubbles inside the Room Dialog
+                bubbles.forEach { b ->
+                    androidx.compose.runtime.key(b.uid) {
+                        RoomFloatingEmojiBubbleView(
+                            bubble = b,
+                            modifier = Modifier
+                                .align(if (b.isLeft) Alignment.BottomStart else Alignment.BottomEnd)
+                                .padding(
+                                    start = if (b.isLeft) b.edgeDp.dp else 0.dp,
+                                    end = if (!b.isLeft) b.edgeDp.dp else 0.dp,
+                                    bottom = 96.dp,
+                                ),
                         )
-                        IconButton(
-                            onClick = {
-                                val txt = chatInput.trim()
-                                if (txt.isEmpty()) return@IconButton
-                                chatInput = ""
-                                scope.launch {
-                                    api.postWatchPartyChat(p.id, "chat", txt)
-                                    refreshRoom()
-                                }
-                            },
-                        ) {
-                            Icon(Icons.Default.Send, contentDescription = "Send", tint = SoulSyncColors.AccentLight)
-                        }
                     }
                 }
             }
@@ -1550,173 +1794,49 @@ private fun WatchPartyRoomDialog(
     }
 }
 
-/**
- * 16:9 Cinema Proscenium Stage with animated pleated crimson velvet curtains,
- * golden valance trim, vintage marquee plaque, and 3-2-1 film-leader countdown.
- */
 @Composable
-private fun VelvetCurtainStage(
-    title: String,
-    subtitle: String,
-    artworkUrl: String?,
-    status: String,
-    readyCount: Int,
-    memberCount: Int,
-    livePosition: Double,
-    curtainsOpen: Boolean,
-    countdown: Int?,
+private fun RoomFloatingEmojiBubbleView(
+    bubble: RoomSideEmojiBubble,
+    modifier: Modifier = Modifier,
 ) {
-    val openFrac by animateFloatAsState(
-        targetValue = if (curtainsOpen) 1f else 0f,
-        animationSpec = tween(durationMillis = 1750, easing = FastOutSlowInEasing),
-        label = "velvet_curtain_unfurl",
-    )
-    val velvetPleats = remember {
-        Brush.horizontalGradient(
-            listOf(
-                Color(0xFF6B0714),
-                Color(0xFFA61226),
-                Color(0xFF4A040E),
-                Color(0xFF960E20),
-                Color(0xFF590511),
-                Color(0xFFA61226),
-                Color(0xFF6B0714),
-            ),
+    val progress = remember { androidx.compose.animation.core.Animatable(0f) }
+    LaunchedEffect(bubble.uid) {
+        progress.animateTo(
+            targetValue = 1f,
+            animationSpec = tween(durationMillis = 2700, easing = FastOutSlowInEasing),
         )
     }
-
-    androidx.compose.foundation.layout.BoxWithConstraints(
-        modifier = Modifier
-            .fillMaxWidth()
-            .aspectRatio(16f / 9f)
-            .clip(RoundedCornerShape(16.dp))
-            .background(Color(0xFF06070C))
-            .border(1.dp, Color(0x55F6C978), RoundedCornerShape(16.dp)),
+    val p = progress.value
+    val yOffset = (-260f * p).dp
+    val xOffset = (kotlin.math.sin(p * Math.PI * 2.0).toFloat() * bubble.swayDp).dp
+    val alpha = when {
+        p < 0.14f -> p / 0.14f
+        p > 0.72f -> ((1f - p) / 0.28f).coerceIn(0f, 1f)
+        else -> 1f
+    }
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+        modifier = modifier.offset(x = xOffset, y = yOffset),
     ) {
-        val halfW = maxWidth * 0.52f
-        val slideOffset = halfW * 0.85f * openFrac
-
-        // Underlying movie/show backdrop screen
-        if (!artworkUrl.isNullOrBlank()) {
-            SoulSyncArtwork(
-                url = artworkUrl,
-                contentDescription = title,
-                modifier = Modifier.fillMaxSize(),
-            )
-        }
-        // Warm overhead theater sconce glow + bottom vignette
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(
-                    Brush.verticalGradient(
-                        listOf(
-                            Color(0x44F6C978),
-                            Color(0x33000000),
-                            Color(0xCC06070C),
-                        ),
-                    ),
-                ),
+        Text(
+            text = bubble.emoji,
+            fontSize = 26.sp,
+            color = Color.White.copy(alpha = alpha),
         )
-
-        // Left Pleated Velvet Curtain
-        Box(
-            modifier = Modifier
-                .align(Alignment.CenterStart)
-                .width(halfW)
-                .fillMaxHeight()
-                .offset(x = -slideOffset)
-                .background(velvetPleats)
-                .border(BorderStroke(1.5.dp, Color(0x88F6C978))),
-        )
-
-        // Right Pleated Velvet Curtain
-        Box(
-            modifier = Modifier
-                .align(Alignment.CenterEnd)
-                .width(halfW)
-                .fillMaxHeight()
-                .offset(x = slideOffset)
-                .background(velvetPleats)
-                .border(BorderStroke(1.5.dp, Color(0x88F6C978))),
-        )
-
-        // Top Golden-Trimmed Crimson Valance
-        Box(
-            modifier = Modifier
-                .align(Alignment.TopCenter)
-                .fillMaxWidth()
-                .height(16.dp)
-                .background(velvetPleats)
-                .border(BorderStroke(1.5.dp, Color(0xAAF6C978))),
-        )
-
-        // Center Marquee / 3-2-1 Film Leader Countdown
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 20.dp),
-            contentAlignment = Alignment.Center,
-        ) {
-            if (countdown != null) {
-                Box(
-                    modifier = Modifier
-                        .size(72.dp)
-                        .clip(CircleShape)
-                        .background(Color(0xDD08060C))
-                        .border(2.5.dp, Color(0xFFF6C978), CircleShape),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        text = "$countdown",
-                        color = Color.White,
-                        fontSize = 34.sp,
-                        fontWeight = FontWeight.Black,
-                    )
-                }
-            } else {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(Color(0xBA0A070C))
-                        .border(1.dp, Color(0x66F6C978), RoundedCornerShape(14.dp))
-                        .padding(horizontal = 18.dp, vertical = 12.dp),
-                ) {
-                    Text(
-                        text = when {
-                            curtainsOpen && status == "playing" -> "● NOW SCREENING"
-                            curtainsOpen -> "❚❚ SCREENING PAUSED"
-                            status == "scheduled" -> "PREMIERE WAITING ROOM"
-                            else -> "FEATURE PRESENTATION"
-                        },
-                        color = Color(0xFFF6C978),
-                        fontSize = 9.5.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        letterSpacing = 1.6.sp,
-                    )
-                    Text(
-                        text = title,
-                        color = Color.White,
-                        fontSize = 17.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(
-                        text = if (curtainsOpen) {
-                            val sec = livePosition.toInt().coerceAtLeast(0)
-                            "Synced at ${sec / 60}:${"%02d".format(sec % 60)}"
-                        } else {
-                            "$readyCount of $memberCount seats ready" + if (subtitle.isNotBlank()) " · $subtitle" else ""
-                        },
-                        color = Color.White.copy(alpha = 0.78f),
-                        fontSize = 11.5.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
+        if (bubble.sender.isNotBlank()) {
+            Surface(
+                shape = CircleShape,
+                color = Color(0xBB080B12).copy(alpha = alpha * 0.85f),
+                border = BorderStroke(0.75.dp, Color.White.copy(alpha = 0.16f * alpha)),
+            ) {
+                Text(
+                    text = bubble.sender,
+                    color = Color.White.copy(alpha = alpha),
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp),
+                )
             }
         }
     }
