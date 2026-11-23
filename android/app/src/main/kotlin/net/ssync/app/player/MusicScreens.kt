@@ -211,10 +211,19 @@ fun MusicScreen(
                     is MusicApiResult.Error -> Unit
                 }
             }
-            MusicSubTab.PLAYLISTS -> when (val r = api.fetchPlaylists()) {
-                is MusicApiResult.Success -> playlists = r.data
-                MusicApiResult.DeviceRevoked -> onDeviceRevoked()
-                is MusicApiResult.Error -> Unit
+            MusicSubTab.PLAYLISTS -> {
+                coroutineScope {
+                    val plDef = async { api.fetchPlaylists() }
+                    val dDef = if (discoverPlaylists.isEmpty()) async { api.fetchDiscoverPlaylists() } else null
+                    when (val r = plDef.await()) {
+                        is MusicApiResult.Success -> playlists = r.data
+                        MusicApiResult.DeviceRevoked -> onDeviceRevoked()
+                        is MusicApiResult.Error -> Unit
+                    }
+                    dDef?.await()?.let { r ->
+                        (r as? MusicApiResult.Success)?.let { discoverPlaylists = it.data }
+                    }
+                }
             }
         }
         isLoading = false
@@ -530,24 +539,76 @@ fun MusicScreen(
             }
 
             MusicSubTab.PLAYLISTS -> {
-                if (playlists.isEmpty()) {
+                if (playlists.isEmpty() && discoverPlaylists.isEmpty()) {
                     EmptyBox("No playlists yet.")
                 } else {
+                    val groupedDiscover = remember(discoverPlaylists) {
+                        discoverPlaylists.groupBy { it.sectionLabel.ifBlank { "SoulSync Discovery" } }
+                    }
                     LazyColumn(
-                        contentPadding = PaddingValues(top = 4.dp, bottom = 28.dp),
+                        contentPadding = PaddingValues(top = 8.dp, bottom = 32.dp),
+                        verticalArrangement = Arrangement.spacedBy(18.dp),
                     ) {
-                        itemsIndexed(playlists, key = { _, p -> p.idString }) { idx, pl ->
-                            PlaylistListRow(
-                                playlist = pl,
-                                artworkUrl = api.artwork.resolve(pl.imageUrl),
-                                mosaicUrls = pl.coverTiles.mapNotNull { api.artwork.resolve(it) },
-                                showDivider = idx < playlists.lastIndex,
-                                onClick = {
-                                    pl.idString.toIntOrNull()?.let {
-                                        onNavigate(PlayerDestination.PlaylistDetail(it))
+                        groupedDiscover.forEach { (secLabel, itemsInSec) ->
+                            item(key = "disc-sec-$secLabel") {
+                                MediaRail(
+                                    title = "$secLabel (${itemsInSec.size})",
+                                ) {
+                                    items(itemsInSec, key = { "pl-disc-${it.key}" }) { dp ->
+                                        val tiles = dp.coverTiles.mapNotNull { api.artwork.resolve(it) }
+                                        AlbumGridTile(
+                                            title = dp.title,
+                                            subtitle = dp.subtitle ?: "${dp.trackCount} tracks",
+                                            artworkUrl = api.artwork.resolve(dp.coverUrl),
+                                            mosaicUrls = tiles,
+                                            tracksPresent = 0,
+                                            trackCount = 0,
+                                            modifier = Modifier.width(142.dp),
+                                            onClick = {
+                                                scope.launch {
+                                                    (api.fetchDiscoverPlaylistDetail(dp.key) as? MusicApiResult.Success)?.let { res ->
+                                                        val q = res.data.songs.filter { it.trackId != null }.map { t ->
+                                                            ActivePlayable(
+                                                                itemType = "track",
+                                                                itemId = t.trackId.toString(),
+                                                                title = t.title,
+                                                                subtitle = t.artist,
+                                                                artworkUrl = api.artwork.albumArtwork(t.albumId),
+                                                                streamUrl = api.streamUrl("track", t.trackId.toString()),
+                                                            )
+                                                        }
+                                                        if (q.isNotEmpty()) coordinator.playAudio(q.first(), q.drop(1))
+                                                    }
+                                                }
+                                            },
+                                        )
                                     }
-                                },
-                            )
+                                }
+                            }
+                        }
+                        if (playlists.isNotEmpty()) {
+                            item(key = "your-playlists-head") {
+                                Text(
+                                    text = "Your Playlists & Mirrored (${playlists.size})",
+                                    color = Color.White,
+                                    fontSize = 16.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 16.dp),
+                                )
+                            }
+                            itemsIndexed(playlists, key = { _, p -> p.idString }) { idx, pl ->
+                                PlaylistListRow(
+                                    playlist = pl,
+                                    artworkUrl = api.artwork.resolve(pl.imageUrl),
+                                    mosaicUrls = pl.coverTiles.mapNotNull { api.artwork.resolve(it) },
+                                    showDivider = idx < playlists.lastIndex,
+                                    onClick = {
+                                        pl.idString.toIntOrNull()?.let {
+                                            onNavigate(PlayerDestination.PlaylistDetail(it))
+                                        }
+                                    },
+                                )
+                            }
                         }
                     }
                 }
@@ -636,8 +697,12 @@ fun MusicScreen(
                     // 2. Made for you (Discover mixes with 2x2 mosaic covers!)
                     if (discoverPlaylists.isNotEmpty()) {
                         item {
-                            MediaRail(title = "Made for you") {
-                                items(discoverPlaylists.take(12), key = { it.key }) { dp ->
+                            MediaRail(
+                                title = "Made for you · SoulSync Discovery",
+                                actionLabel = "All ${discoverPlaylists.size}",
+                                onAction = { tab = MusicSubTab.PLAYLISTS },
+                            ) {
+                                items(discoverPlaylists.take(24), key = { it.key }) { dp ->
                                     val tiles = dp.coverTiles.mapNotNull { api.artwork.resolve(it) }
                                     AlbumGridTile(
                                         title = dp.title,
@@ -1028,7 +1093,7 @@ private fun ArtistMixCard(
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun AlbumGridTile(
+internal fun AlbumGridTile(
     title: String,
     subtitle: String,
     artworkUrl: String?,

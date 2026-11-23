@@ -1178,11 +1178,12 @@ data class HomeLayout(
     companion object {
         fun defaultRows(): List<LayoutRow> = listOf(
             LayoutRow("continue", "wide", true),
-            LayoutRow("watchlist", "standard", true),
             LayoutRow("new-episodes", "wide", true),
+            LayoutRow("collections", "standard", true),
             LayoutRow("top-rated", "ranked", true),
             LayoutRow("recent-movies", "standard", true),
             LayoutRow("recent-shows", "standard", true),
+            LayoutRow("discovery-playlists", "standard", true),
             LayoutRow("recent-music", "standard", true),
             LayoutRow("youtube", "wide", true),
             LayoutRow("podcasts", "standard", true),
@@ -1262,6 +1263,9 @@ data class StudioCollection(
     val mediaType: String = "movie",
     val summary: String? = null,
     val poster: String? = null,
+    @SerialName("member_posters")
+    val memberPosters: List<String> = emptyList(),
+    val pinned: Boolean = false,
     val members: List<Int> = emptyList(),
 )
 
@@ -1349,6 +1353,7 @@ data class DiscoverPlaylistSummary(
     val coverUrl: String? = null,
     @SerialName("cover_tiles")
     val coverTiles: List<String> = emptyList(),
+    val sectionLabel: String = "",
 )
 
 @Serializable

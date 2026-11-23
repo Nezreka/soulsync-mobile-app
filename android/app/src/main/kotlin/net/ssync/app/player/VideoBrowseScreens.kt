@@ -78,12 +78,14 @@ fun MoviesScreen(
     onDeviceRevoked: () -> Unit,
 ) {
     var movies by remember { mutableStateOf<List<CatalogMovie>>(emptyList()) }
+    var studioCollections by remember { mutableStateOf<List<net.ssync.player.StudioCollection>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
     var tab by remember { mutableStateOf(VideoBrowseTab.FOR_YOU) }
     var sort by remember { mutableStateOf(VideoSort.ADDED) }
     var selectedGenre by remember { mutableStateOf<String?>(null) }
     var selectedDecade by remember { mutableStateOf<String?>(null) }
     var selectedCollection by remember { mutableStateOf<String?>(null) }
+    var selectedStudioIds by remember { mutableStateOf<Set<Int>?>(null) }
     var gridView by remember { mutableStateOf(true) }
 
     LaunchedEffect(api) {
@@ -92,6 +94,9 @@ fun MoviesScreen(
             is MusicApiResult.Success -> movies = res.data.movies
             MusicApiResult.DeviceRevoked -> onDeviceRevoked()
             is MusicApiResult.Error -> Unit
+        }
+        (api.fetchCollections() as? MusicApiResult.Success)?.let {
+            studioCollections = it.data.filter { c -> c.mediaType == "movie" }
         }
         isLoading = false
     }
@@ -127,11 +132,12 @@ fun MoviesScreen(
         }
     }
 
-    val filtered = remember(movies, selectedGenre, selectedDecade, selectedCollection, sort) {
+    val filtered = remember(movies, selectedGenre, selectedDecade, selectedCollection, selectedStudioIds, sort) {
         val base = movies.filter { m ->
             (selectedGenre == null || m.genres.any { it.equals(selectedGenre, ignoreCase = true) }) &&
                 (selectedDecade == null || decadeOf(m.year) == selectedDecade) &&
-                (selectedCollection == null || m.collection == selectedCollection || m.studio == selectedCollection)
+                (selectedStudioIds == null || selectedStudioIds!!.contains(m.id)) &&
+                (selectedStudioIds != null || selectedCollection == null || m.collection == selectedCollection || m.studio == selectedCollection)
         }
         when (sort) {
             VideoSort.ADDED -> base.sortedByDescending { it.addedAt.orEmpty() }
@@ -228,6 +234,7 @@ fun MoviesScreen(
                     activeChip = selectedCollection ?: selectedDecade,
                     onClearActiveChip = {
                         selectedCollection = null
+                        selectedStudioIds = null
                         selectedDecade = null
                     },
                     gridView = gridView,
@@ -277,21 +284,52 @@ fun MoviesScreen(
             }
 
             VideoBrowseTab.COLLECTIONS -> {
-                if (collections.isEmpty()) {
-                    EmptyBox("No multi-film collections found yet.")
+                val movieIds = remember(movies) { movies.map { it.id }.toSet() }
+                val visibleStudio = remember(studioCollections, movieIds) {
+                    studioCollections.mapNotNull { c ->
+                        val mem = c.members.filter { movieIds.contains(it) }
+                        if (mem.isEmpty()) null else c to mem
+                    }
+                }
+                if (visibleStudio.isEmpty() && collections.isEmpty()) {
+                    EmptyBox("No collections found yet.")
                 } else {
                     LazyColumn(
                         contentPadding = PaddingValues(16.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                         modifier = Modifier.fillMaxSize(),
                     ) {
-                        items(collections, key = { it.key }) { (name, films) ->
+                        if (visibleStudio.isNotEmpty()) {
+                            items(visibleStudio, key = { (c, _) -> "studio-col-${c.id}" }) { (c, mem) ->
+                                val posters = buildList {
+                                    api.artwork.resolve(c.poster)?.let { add(it) }
+                                    mem.take(4).forEach { id ->
+                                        val u = api.artwork.moviePoster(id)
+                                        if (u !in this) add(u)
+                                    }
+                                }.take(4)
+                                CollectionRowCard(
+                                    name = if (c.pinned) "★ ${c.name}" else c.name,
+                                    countLabel = "${mem.size} films · SoulSync Collection",
+                                    posterUrls = posters,
+                                    onClick = {
+                                        selectedCollection = c.name
+                                        selectedStudioIds = mem.toSet()
+                                        selectedGenre = null
+                                        selectedDecade = null
+                                        tab = VideoBrowseTab.LIBRARY
+                                    },
+                                )
+                            }
+                        }
+                        items(collections, key = { "tmdb-col-${it.key}" }) { (name, films) ->
                             CollectionRowCard(
                                 name = name,
                                 countLabel = "${films.size} films",
                                 posterUrls = films.take(4).map { api.artwork.moviePoster(it.id) },
                                 onClick = {
                                     selectedCollection = name
+                                    selectedStudioIds = null
                                     selectedGenre = null
                                     selectedDecade = null
                                     tab = VideoBrowseTab.LIBRARY

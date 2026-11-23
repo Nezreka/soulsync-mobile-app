@@ -117,6 +117,8 @@ fun HomeScreen(
     var continueItems by remember { mutableStateOf<List<ProgressRow>>(emptyList()) }
     var catalog by remember { mutableStateOf(VideoCatalog()) }
     var watchlist by remember { mutableStateOf<List<WatchlistItem>>(emptyList()) }
+    var studioCollections by remember { mutableStateOf<List<net.ssync.player.StudioCollection>>(emptyList()) }
+    var discoverPlaylists by remember { mutableStateOf<List<net.ssync.player.DiscoverPlaylistSummary>>(emptyList()) }
     var albums by remember { mutableStateOf<List<LibAlbum>>(emptyList()) }
     var podcasts by remember { mutableStateOf<List<PodcastSub>>(emptyList()) }
     var books by remember { mutableStateOf<List<OwnedBook>>(emptyList()) }
@@ -143,6 +145,8 @@ fun HomeScreen(
             val aDef = async { api.fetchAlbums(limit = 20) }
             val pDef = async { api.fetchPodcastSubs() }
             val bDef = async { api.fetchAudiobooks() }
+            val colDef = async { api.fetchCollections() }
+            val discDef = async { api.fetchDiscoverPlaylists() }
             val lDef = async { api.fetchHomeLayout(device = "phone") }
 
             val results = listOf(cDef.await(), vDef.await(), wDef.await(), aDef.await(), pDef.await(), bDef.await())
@@ -171,6 +175,8 @@ fun HomeScreen(
                 @Suppress("UNCHECKED_CAST")
                 books = it.data as List<OwnedBook>
             }
+            (colDef.await() as? MusicApiResult.Success)?.let { studioCollections = it.data }
+            (discDef.await() as? MusicApiResult.Success)?.let { discoverPlaylists = it.data }
             (lDef.await() as? MusicApiResult.Success)?.let { resp ->
                 if (resp.data.layout.rows.isNotEmpty()) {
                     homeLayout = resp.data.layout
@@ -526,39 +532,79 @@ fun HomeScreen(
                         }
                     }
                 }
-                row.id == "watchlist" && watchlist.isNotEmpty() -> {
-                    item(key = "row-watchlist") {
-                        MediaRail("Your Watchlist", actionLabel = "See all", onAction = { onNavigate(PlayerDestination.Watchlist) }) {
-                            items(watchlist, key = { "${it.itemType}:${it.itemId}" }) { w ->
-                                val idInt = w.itemId.toIntOrNull()
-                                val movie = if (w.itemType == "movie" && idInt != null) moviesById[idInt] else null
-                                val show = if (w.itemType == "show" && idInt != null) showsById[idInt] else null
-                                val title = movie?.title ?: show?.title ?: w.meta?.title ?: w.itemId
-                                val art = api.artwork.resolve(w.meta?.artwork)
-                                    ?: api.artwork.forItem(w.itemType, w.itemId, preferBackdrop = false)
-                                PosterCard(
-                                    title = title,
-                                    subtitle = movie?.year?.toString()
-                                        ?: show?.year?.toString()
-                                        ?: w.itemType.replaceFirstChar { it.uppercase() },
-                                    artworkUrl = art,
-                                    width = cardWidth,
-                                    contextItem = MediaContextItem(
-                                        itemType = w.itemType,
-                                        itemId = w.itemId,
-                                        title = title,
-                                        subtitle = movie?.year?.toString() ?: show?.year?.toString().orEmpty(),
+                row.id == "watchlist" -> Unit
+                row.id == "collections" && studioCollections.isNotEmpty() -> {
+                    val visibleCols = studioCollections.mapNotNull { c ->
+                        val members = c.members.filter { id ->
+                            if (c.mediaType == "movie") moviesById.containsKey(id) else showsById.containsKey(id)
+                        }
+                        if (members.isEmpty()) null else c to members
+                    }
+                    if (visibleCols.isNotEmpty()) {
+                        item(key = "row-collections") {
+                            MediaRail(
+                                title = "Collections",
+                                actionLabel = "See all",
+                                onAction = { onNavigate(PlayerDestination.Movies) },
+                            ) {
+                                items(visibleCols, key = { (c, _) -> "col-${c.id}" }) { (c, members) ->
+                                    val art = api.artwork.resolve(c.poster ?: c.memberPosters.firstOrNull())
+                                        ?: api.artwork.forItem(
+                                            if (c.mediaType == "movie") "movie" else "show",
+                                            members.first().toString(),
+                                            preferBackdrop = false,
+                                        )
+                                    PosterCard(
+                                        title = c.name,
+                                        subtitle = "${members.size} ${if (members.size == 1) "title" else "titles"}",
                                         artworkUrl = art,
-                                        streamUrl = if (w.itemType == "movie") api.streamUrl("movie", w.itemId) else null,
-                                        isVideo = true,
-                                        onOpenDetails = {
-                                            if (w.itemType == "movie" && idInt != null) onNavigate(PlayerDestination.MovieDetail(idInt))
-                                            if (w.itemType == "show" && idInt != null) onNavigate(PlayerDestination.ShowDetail(idInt))
+                                        badge = if (c.pinned) "Pinned" else null,
+                                        inLibrary = true,
+                                        width = cardWidth,
+                                        onClick = {
+                                            val firstId = members.first()
+                                            if (c.mediaType == "movie") onNavigate(PlayerDestination.MovieDetail(firstId))
+                                            else onNavigate(PlayerDestination.ShowDetail(firstId))
                                         },
-                                    ),
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+                row.id == "discovery-playlists" && discoverPlaylists.isNotEmpty() -> {
+                    item(key = "row-discovery-playlists") {
+                        MediaRail(
+                            title = "SoulSync Discovery Playlists",
+                            actionLabel = "All ${discoverPlaylists.size}",
+                            onAction = { onNavigate(PlayerDestination.Music) },
+                        ) {
+                            items(discoverPlaylists.take(24), key = { "home-disc-${it.key}" }) { dp ->
+                                val tiles = dp.coverTiles.mapNotNull { api.artwork.resolve(it) }
+                                AlbumGridTile(
+                                    title = dp.title,
+                                    subtitle = dp.subtitle ?: "${dp.trackCount} tracks",
+                                    artworkUrl = api.artwork.resolve(dp.coverUrl),
+                                    mosaicUrls = tiles,
+                                    tracksPresent = 0,
+                                    trackCount = 0,
+                                    modifier = Modifier.width(142.dp),
                                     onClick = {
-                                        if (w.itemType == "movie" && idInt != null) onNavigate(PlayerDestination.MovieDetail(idInt))
-                                        if (w.itemType == "show" && idInt != null) onNavigate(PlayerDestination.ShowDetail(idInt))
+                                        scope.launch {
+                                            (api.fetchDiscoverPlaylistDetail(dp.key) as? MusicApiResult.Success)?.let { res ->
+                                                val q = res.data.songs.filter { it.trackId != null }.map { t ->
+                                                    ActivePlayable(
+                                                        itemType = "track",
+                                                        itemId = t.trackId.toString(),
+                                                        title = t.title,
+                                                        subtitle = t.artist,
+                                                        artworkUrl = api.artwork.albumArtwork(t.albumId),
+                                                        streamUrl = api.streamUrl("track", t.trackId.toString()),
+                                                    )
+                                                }
+                                                if (q.isNotEmpty()) coordinator.playAudio(q.first(), q.drop(1))
+                                            }
+                                        }
                                     },
                                 )
                             }

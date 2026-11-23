@@ -858,7 +858,7 @@ class PlayerApiClient(
         getJson("$base/api/player/discover-playlists") { body ->
             val root = json.parseToJsonElement(body).jsonObject
             val out = mutableListOf<DiscoverPlaylistSummary>()
-            fun parseItem(obj: JsonObject): DiscoverPlaylistSummary? {
+            fun parseItem(obj: JsonObject, secLabel: String = ""): DiscoverPlaylistSummary? {
                 val key = obj["key"]?.jsonPrimitive?.content ?: return null
                 val title = obj["name"]?.jsonPrimitive?.content
                     ?: obj["title"]?.jsonPrimitive?.content
@@ -877,14 +877,17 @@ class PlayerApiClient(
                     trackCount = trackCount,
                     coverUrl = coverUrl ?: tiles.firstOrNull(),
                     coverTiles = tiles,
+                    sectionLabel = secLabel,
                 )
             }
             val sections = root["sections"] as? JsonArray
             if (sections != null) {
                 for (sec in sections) {
-                    val pls = (sec as? JsonObject)?.get("playlists") as? JsonArray ?: continue
+                    val secObj = sec as? JsonObject ?: continue
+                    val secLabel = secObj["label"]?.jsonPrimitive?.content.orEmpty()
+                    val pls = secObj["playlists"] as? JsonArray ?: continue
                     for (p in pls) {
-                        (p as? JsonObject)?.let(::parseItem)?.let { out += it }
+                        (p as? JsonObject)?.let { parseItem(it, secLabel) }?.let { out += it }
                     }
                 }
             } else {
