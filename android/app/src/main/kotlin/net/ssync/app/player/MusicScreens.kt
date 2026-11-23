@@ -536,6 +536,7 @@ fun MusicScreen(
                             PlaylistListRow(
                                 playlist = pl,
                                 artworkUrl = api.artwork.resolve(pl.imageUrl),
+                                mosaicUrls = pl.coverTiles.mapNotNull { api.artwork.resolve(it) },
                                 showDivider = idx < playlists.lastIndex,
                                 onClick = {
                                     pl.idString.toIntOrNull()?.let {
@@ -553,11 +554,11 @@ fun MusicScreen(
                     contentPadding = PaddingValues(top = 8.dp, bottom = 32.dp),
                     verticalArrangement = Arrangement.spacedBy(20.dp),
                 ) {
-                    // 1. Stations & Instant Mixes (Plexamp-grade 1-tap listening)
+                    // 1. Stations & Artist Mixes (1:1 Desktop parity: 2x2 mosaic + similar artists + vibe badge)
                     item {
                         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             Text(
-                                text = "Stations & Instant Mixes",
+                                text = "Stations & Artist Mixes",
                                 color = Color.White,
                                 fontSize = 18.sp,
                                 fontWeight = FontWeight.Bold,
@@ -565,91 +566,80 @@ fun MusicScreen(
                             )
                             LazyRow(
                                 contentPadding = PaddingValues(horizontal = 16.dp),
-                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
                             ) {
                                 item(key = "station-shuffle") {
-                                    Surface(
-                                        modifier = Modifier
-                                            .width(172.dp)
-                                            .height(92.dp)
-                                            .clip(RoundedCornerShape(16.dp))
-                                            .clickable {
-                                                val shuffled = songs.toPlayables(api).shuffled()
-                                                if (shuffled.isNotEmpty()) {
-                                                    coordinator.playAudio(shuffled.first(), shuffled.drop(1))
-                                                }
-                                            },
-                                        shape = RoundedCornerShape(16.dp),
-                                        color = SoulSyncColors.Accent.copy(alpha = 0.22f),
-                                        border = BorderStroke(1.dp, SoulSyncColors.Accent.copy(alpha = 0.55f)),
-                                    ) {
-                                        Column(
-                                            modifier = Modifier.fillMaxSize().padding(12.dp),
-                                            verticalArrangement = Arrangement.SpaceBetween,
-                                        ) {
-                                            Text("INSTANT RADIO", color = SoulSyncColors.AccentLight, fontSize = 9.5.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 0.8.sp)
-                                            Column {
-                                                Text("Library Shuffle", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 1)
-                                                Text("Shuffle your music", color = SoulSyncColors.TextSoft, fontSize = 11.5.sp, maxLines = 1)
+                                    val shuffleTiles = albums.take(4)
+                                        .mapNotNull { api.artwork.resolve(it.imageUrl ?: it.remoteImageUrl) }
+                                    ArtistMixCard(
+                                        badge = "LIBRARY RADIO",
+                                        title = "Library Shuffle",
+                                        subtitle = "All vibes · shuffle",
+                                        tiles = shuffleTiles,
+                                        accentTint = true,
+                                        vibeTint = false,
+                                        onClick = {
+                                            val shuffled = songs.toPlayables(api).shuffled()
+                                            if (shuffled.isNotEmpty()) {
+                                                coordinator.playAudio(shuffled.first(), shuffled.drop(1))
                                             }
-                                        }
-                                    }
+                                        },
+                                    )
                                 }
-                                items(musicStations.take(8), key = { it.id }) { st ->
+                                items(musicStations.take(12), key = { it.id }) { st ->
                                     val isVibe = st.kind.equals("vibe", ignoreCase = true)
-                                    Surface(
-                                        modifier = Modifier
-                                            .width(164.dp)
-                                            .height(92.dp)
-                                            .clip(RoundedCornerShape(16.dp))
-                                            .clickable {
-                                                val queue = st.trackItems.shuffled().take(100).map { t ->
-                                                    ActivePlayable(
-                                                        itemType = "track",
-                                                        itemId = t.id.toString(),
-                                                        title = t.title,
-                                                        subtitle = t.artist,
-                                                        artworkUrl = api.artwork.albumArtwork(t.albumId),
-                                                        streamUrl = api.streamUrl("track", t.id.toString()),
-                                                    )
-                                                }
-                                                if (queue.isNotEmpty()) coordinator.playAudio(queue.first(), queue.drop(1))
-                                            },
-                                        shape = RoundedCornerShape(16.dp),
-                                        color = if (isVibe) Color(0x2EA855F7) else SoulSyncColors.Card,
-                                        border = BorderStroke(1.dp, if (isVibe) Color(0x66A855F7) else SoulSyncColors.Line),
-                                    ) {
-                                        Column(
-                                            modifier = Modifier.fillMaxSize().padding(12.dp),
-                                            verticalArrangement = Arrangement.SpaceBetween,
-                                        ) {
-                                            Text(
-                                                text = if (isVibe) "MOOD RADIO" else "GENRE RADIO",
-                                                color = if (isVibe) Color(0xFFD8B4FE) else SoulSyncColors.AccentLight,
-                                                fontSize = 9.5.sp,
-                                                fontWeight = FontWeight.ExtraBold,
-                                                letterSpacing = 0.8.sp,
-                                            )
-                                            Column {
-                                                Text(st.name, color = Color.White, fontSize = 14.5.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                                Text("${st.count} songs", color = SoulSyncColors.TextSecondary, fontSize = 11.5.sp)
-                                            }
-                                        }
+                                    val distinctArtists = st.trackItems
+                                        .map { it.artist.trim() }
+                                        .filter { it.isNotBlank() }
+                                        .distinctBy { it.lowercase() }
+                                        .take(3)
+                                    val mosaicUrls = st.trackItems
+                                        .mapNotNull { it.albumId }
+                                        .distinct()
+                                        .take(4)
+                                        .mapNotNull { api.artwork.albumArtwork(it) }
+                                    val headline = if (distinctArtists.size >= 2) {
+                                        "${distinctArtists.take(2).joinToString(", ")} & More"
+                                    } else {
+                                        st.name
                                     }
+                                    ArtistMixCard(
+                                        badge = if (isVibe) "${st.name.uppercase()} VIBE" else "${st.name.uppercase()} MIX",
+                                        title = headline,
+                                        subtitle = "${st.name} · ${st.count} songs",
+                                        tiles = mosaicUrls,
+                                        accentTint = false,
+                                        vibeTint = isVibe,
+                                        onClick = {
+                                            val queue = st.trackItems.shuffled().take(100).map { t ->
+                                                ActivePlayable(
+                                                    itemType = "track",
+                                                    itemId = t.id.toString(),
+                                                    title = t.title,
+                                                    subtitle = t.artist,
+                                                    artworkUrl = api.artwork.albumArtwork(t.albumId),
+                                                    streamUrl = api.streamUrl("track", t.id.toString()),
+                                                )
+                                            }
+                                            if (queue.isNotEmpty()) coordinator.playAudio(queue.first(), queue.drop(1))
+                                        },
+                                    )
                                 }
                             }
                         }
                     }
 
-                    // 2. Made for you (Discover mixes — now actually playable!)
+                    // 2. Made for you (Discover mixes with 2x2 mosaic covers!)
                     if (discoverPlaylists.isNotEmpty()) {
                         item {
                             MediaRail(title = "Made for you") {
                                 items(discoverPlaylists.take(12), key = { it.key }) { dp ->
+                                    val tiles = dp.coverTiles.mapNotNull { api.artwork.resolve(it) }
                                     AlbumGridTile(
                                         title = dp.title,
                                         subtitle = dp.subtitle ?: "${dp.trackCount} tracks",
                                         artworkUrl = api.artwork.resolve(dp.coverUrl),
+                                        mosaicUrls = tiles,
                                         tracksPresent = 0,
                                         trackCount = 0,
                                         modifier = Modifier.width(142.dp),
@@ -713,15 +703,17 @@ fun MusicScreen(
                         }
                     }
 
-                    // 5. Your playlists
+                    // 5. Your playlists (with 2x2 mosaic cover tiles!)
                     if (playlists.isNotEmpty()) {
                         item {
                             MediaRail(title = "Your playlists") {
                                 items(playlists.take(14), key = { "fy-pl-${it.idString}" }) { pl ->
+                                    val tiles = pl.coverTiles.mapNotNull { api.artwork.resolve(it) }
                                     AlbumGridTile(
                                         title = pl.name,
                                         subtitle = "${pl.trackCount} tracks",
                                         artworkUrl = api.artwork.resolve(pl.imageUrl),
+                                        mosaicUrls = tiles,
                                         tracksPresent = 0,
                                         trackCount = 0,
                                         modifier = Modifier.width(142.dp),
@@ -868,6 +860,159 @@ private fun LoadMorePill(
 }
 
 @Composable
+private fun MosaicArtwork(
+    primaryUrl: String?,
+    mosaicUrls: List<String>,
+    contentDescription: String,
+    modifier: Modifier = Modifier,
+) {
+    if (!primaryUrl.isNullOrBlank()) {
+        SoulSyncArtwork(
+            url = primaryUrl,
+            contentDescription = contentDescription,
+            fallbackIcon = Icons.Default.MusicNote,
+            modifier = modifier,
+        )
+    } else if (mosaicUrls.size >= 4) {
+        Column(modifier = modifier) {
+            Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                SoulSyncArtwork(url = mosaicUrls[0], contentDescription = null, fallbackIcon = Icons.Default.MusicNote, modifier = Modifier.weight(1f).fillMaxSize())
+                SoulSyncArtwork(url = mosaicUrls[1], contentDescription = null, fallbackIcon = Icons.Default.MusicNote, modifier = Modifier.weight(1f).fillMaxSize())
+            }
+            Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                SoulSyncArtwork(url = mosaicUrls[2], contentDescription = null, fallbackIcon = Icons.Default.MusicNote, modifier = Modifier.weight(1f).fillMaxSize())
+                SoulSyncArtwork(url = mosaicUrls[3], contentDescription = null, fallbackIcon = Icons.Default.MusicNote, modifier = Modifier.weight(1f).fillMaxSize())
+            }
+        }
+    } else {
+        SoulSyncArtwork(
+            url = mosaicUrls.firstOrNull(),
+            contentDescription = contentDescription,
+            fallbackIcon = Icons.Default.MusicNote,
+            modifier = modifier,
+        )
+    }
+}
+
+@Composable
+private fun ArtistMixCard(
+    badge: String,
+    title: String,
+    subtitle: String,
+    tiles: List<String>,
+    accentTint: Boolean,
+    vibeTint: Boolean,
+    onClick: () -> Unit,
+) {
+    val bgColor = when {
+        accentTint -> SoulSyncColors.Accent.copy(alpha = 0.2f)
+        vibeTint -> Color(0x2EA855F7)
+        else -> SoulSyncColors.Card
+    }
+    val borderColor = when {
+        accentTint -> SoulSyncColors.Accent.copy(alpha = 0.55f)
+        vibeTint -> Color(0x66A855F7)
+        else -> SoulSyncColors.Line
+    }
+    val badgeColor = when {
+        vibeTint -> Color(0xFFE9D5FF)
+        accentTint -> SoulSyncColors.AccentLight
+        else -> Color.White
+    }
+    Surface(
+        modifier = Modifier
+            .width(154.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .clickable(onClick = onClick)
+            .dpadFocusable(RoundedCornerShape(16.dp)),
+        shape = RoundedCornerShape(16.dp),
+        color = bgColor,
+        border = BorderStroke(1.dp, borderColor),
+    ) {
+        Column(
+            modifier = Modifier.padding(8.dp),
+            verticalArrangement = Arrangement.spacedBy(7.dp),
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(1f)
+                    .clip(RoundedCornerShape(11.dp))
+                    .background(SoulSyncColors.CardRaised),
+            ) {
+                MosaicArtwork(
+                    primaryUrl = null,
+                    mosaicUrls = tiles,
+                    contentDescription = title,
+                    modifier = Modifier.fillMaxSize(),
+                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(Color.Black.copy(alpha = 0.18f), Color.Transparent, Color.Black.copy(alpha = 0.68f)),
+                            ),
+                        ),
+                )
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(6.dp)
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(Color.Black.copy(alpha = 0.72f))
+                        .padding(horizontal = 7.dp, vertical = 2.dp),
+                ) {
+                    Text(
+                        text = badge,
+                        color = badgeColor,
+                        fontSize = 8.5.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        letterSpacing = 0.5.sp,
+                        maxLines = 1,
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(7.dp)
+                        .size(30.dp)
+                        .clip(CircleShape)
+                        .background(Color.Black.copy(alpha = 0.72f))
+                        .border(1.dp, Color.White.copy(alpha = 0.25f), CircleShape),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.PlayArrow,
+                        contentDescription = "Play mix",
+                        tint = Color.White,
+                        modifier = Modifier.size(17.dp),
+                    )
+                }
+            }
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    text = title,
+                    color = Color.White,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 2,
+                    lineHeight = 16.sp,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = subtitle,
+                    color = SoulSyncColors.TextSecondary,
+                    fontSize = 11.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun AlbumGridTile(
     title: String,
     subtitle: String,
@@ -876,6 +1021,7 @@ private fun AlbumGridTile(
     trackCount: Int,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    mosaicUrls: List<String> = emptyList(),
 ) {
     val isIncomplete = trackCount > 0 && tracksPresent in 1 until trackCount
     Column(
@@ -892,10 +1038,10 @@ private fun AlbumGridTile(
                 .background(SoulSyncColors.CardRaised)
                 .border(0.75.dp, Color.White.copy(alpha = 0.09f), RoundedCornerShape(12.dp)),
         ) {
-            SoulSyncArtwork(
-                url = artworkUrl,
+            MosaicArtwork(
+                primaryUrl = artworkUrl,
+                mosaicUrls = mosaicUrls,
                 contentDescription = title,
-                fallbackIcon = Icons.Default.MusicNote,
                 modifier = Modifier.fillMaxSize(),
             )
             if (isIncomplete) {
@@ -1258,6 +1404,7 @@ private fun PlaylistListRow(
     artworkUrl: String?,
     showDivider: Boolean,
     onClick: () -> Unit,
+    mosaicUrls: List<String> = emptyList(),
 ) {
     Column(
         modifier = Modifier
@@ -1277,10 +1424,10 @@ private fun PlaylistListRow(
                     .background(SoulSyncColors.CardRaised)
                     .border(0.75.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(10.dp)),
             ) {
-                SoulSyncArtwork(
-                    url = artworkUrl,
+                MosaicArtwork(
+                    primaryUrl = artworkUrl,
+                    mosaicUrls = mosaicUrls,
                     contentDescription = playlist.name,
-                    fallbackIcon = Icons.AutoMirrored.Filled.QueueMusic,
                     modifier = Modifier.fillMaxSize(),
                 )
             }
@@ -1959,7 +2106,11 @@ private fun AlbumTrackRow(
                 }
             }
 
-            Column(modifier = Modifier.weight(1f)) {
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .alpha(if (playable) 1f else 0.48f),
+            ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -1977,6 +2128,22 @@ private fun AlbumTrackRow(
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f, fill = false),
                     )
+                    if (!playable) {
+                        Surface(
+                            shape = RoundedCornerShape(999.dp),
+                            color = Color.White.copy(alpha = 0.08f),
+                            border = BorderStroke(0.5.dp, Color.White.copy(alpha = 0.16f)),
+                        ) {
+                            Text(
+                                text = "MISSING",
+                                color = SoulSyncColors.TextSecondary,
+                                fontSize = 8.5.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                letterSpacing = 0.5.sp,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp),
+                            )
+                        }
+                    }
                     if (explicit) {
                         Surface(
                             shape = RoundedCornerShape(3.dp),
@@ -2199,31 +2366,33 @@ fun PlaylistDetailScreen(
                 duration = formatTrackDuration(item.durationMs),
                 isActive = activeTrackId == item.trackId?.toString(),
                 showDivider = idx < pl.tracks.lastIndex,
-                trailingActions = {
-                    val songRef = SongRefPayload(
-                        title = item.title,
-                        artist = item.artist,
-                        album = item.album,
-                        durationMs = item.durationMs,
-                        lib2TrackId = item.trackId,
-                    )
-                    val pItem = item.trackId?.let { tid ->
-                        ActivePlayable(
+                trailingActions = if (item.trackId != null) {
+                    {
+                        val songRef = SongRefPayload(
+                            title = item.title,
+                            artist = item.artist,
+                            album = item.album,
+                            durationMs = item.durationMs,
+                            lib2TrackId = item.trackId,
+                        )
+                        val pItem = ActivePlayable(
                             itemType = "track",
-                            itemId = tid.toString(),
+                            itemId = item.trackId.toString(),
                             title = item.title,
                             subtitle = item.artist,
                             artworkUrl = api.artwork.albumArtwork(item.albumId),
-                            streamUrl = api.streamUrl("track", tid.toString()),
+                            streamUrl = api.streamUrl("track", item.trackId.toString()),
+                        )
+                        TrackRowActionIcons(
+                            song = songRef,
+                            playable = pItem,
+                            likedState = likedState,
+                            coordinator = coordinator,
+                            onAddToPlaylist = { playlistPickerSong = it },
                         )
                     }
-                    TrackRowActionIcons(
-                        song = songRef,
-                        playable = pItem,
-                        likedState = likedState,
-                        coordinator = coordinator,
-                        onAddToPlaylist = { playlistPickerSong = it },
-                    )
+                } else {
+                    null
                 },
                 onClick = {
                     val pIdx = playable.indexOfFirst { it.itemId == item.trackId?.toString() }

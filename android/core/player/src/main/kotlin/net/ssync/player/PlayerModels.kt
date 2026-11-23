@@ -437,6 +437,63 @@ internal data class DiscoverPlaylistDetailEnvelope(
 )
 
 @Serializable
+data class CalendarEpisode(
+    val id: Int? = null,
+    @SerialName("show_id")
+    val showId: Int? = null,
+    @SerialName("show_title")
+    val showTitle: String = "",
+    @SerialName("tmdb_id")
+    val tmdbId: Int? = null,
+    @SerialName("season_number")
+    val seasonNumber: Int = 1,
+    @SerialName("episode_number")
+    val episodeNumber: Int = 1,
+    val title: String? = null,
+    @SerialName("air_date")
+    val airDate: String = "",
+    @SerialName("poster_url")
+    val posterUrl: String? = null,
+    val acq: String? = null,
+    val progress: Double? = null,
+)
+
+@Serializable
+data class CalendarMovie(
+    val id: Int? = null,
+    @SerialName("tmdb_id")
+    val tmdbId: Int = 0,
+    val title: String = "",
+    val year: Int? = null,
+    @SerialName("release_date")
+    val releaseDate: String? = null,
+    @SerialName("event_date")
+    val eventDate: String? = null,
+    @SerialName("event_kind")
+    val eventKind: String? = null,
+    @SerialName("poster_url")
+    val posterUrl: String? = null,
+    @SerialName("library_id")
+    val libraryId: Int? = null,
+    val acq: String? = null,
+)
+
+@Serializable
+data class VideoCalendarResponse(
+    val today: String = "",
+    val start: String = "",
+    val end: String = "",
+    val days: Int = 14,
+    val episodes: List<CalendarEpisode> = emptyList(),
+    val movies: List<CalendarMovie> = emptyList(),
+)
+
+@Serializable
+internal data class VideoCalendarFollowedEnvelope(
+    val episodes: List<CalendarEpisode> = emptyList(),
+)
+
+@Serializable
 data class LyricsResponse(
     val synced: String? = null,
     val plain: String? = null,
@@ -1128,6 +1185,8 @@ data class DiscoverPlaylistSummary(
     val trackCount: Int = 0,
     @SerialName("cover_url")
     val coverUrl: String? = null,
+    @SerialName("cover_tiles")
+    val coverTiles: List<String> = emptyList(),
 )
 
 @Serializable

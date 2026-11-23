@@ -31,6 +31,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Cast
 import androidx.compose.material.icons.filled.CastConnected
 import androidx.compose.material.icons.filled.Check
@@ -971,6 +972,7 @@ private fun PlayerSidebar(
 
         SidebarItem(Icons.Default.Home, "Home", current is PlayerDestination.Home, collapsed) { onNavigate(PlayerDestination.Home) }
         SidebarItem(Icons.Default.LiveTv, "Live Guide", current is PlayerDestination.Guide, collapsed) { onNavigate(PlayerDestination.Guide) }
+        SidebarItem(Icons.Default.CalendarMonth, "Calendar", current is PlayerDestination.Calendar, collapsed) { onNavigate(PlayerDestination.Calendar) }
         SidebarItem(Icons.Default.Bookmark, "Watchlist", current is PlayerDestination.Watchlist, collapsed) { onNavigate(PlayerDestination.Watchlist) }
         SidebarItem(
             icon = Icons.Default.Group,
@@ -1080,6 +1082,7 @@ private fun PlayerContent(
             onEditorConsumed = onConsumeHomeEditor,
         )
         PlayerDestination.Guide -> GuideScreen(api, coordinator, onDeviceRevoked, onNavigate)
+        PlayerDestination.Calendar -> CalendarScreen(api, onNavigate, onDeviceRevoked)
         PlayerDestination.Movies -> MoviesScreen(api, { onNavigate(PlayerDestination.MovieDetail(it)) }, onDeviceRevoked)
         is PlayerDestination.MovieDetail -> MovieDetailScreen(current.movieId, api, coordinator, onNavigate, onDeviceRevoked)
         PlayerDestination.Tv -> TvScreen(api, { onNavigate(PlayerDestination.ShowDetail(it)) }, onDeviceRevoked)

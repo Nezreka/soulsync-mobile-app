@@ -69,6 +69,8 @@ data class MusicPlaylist(
     val trackCount: Int = 0,
     @SerialName("image_url")
     val imageUrl: String? = null,
+    @SerialName("cover_tiles")
+    val coverTiles: List<String> = emptyList(),
 ) {
     val idString: String get() = id.content
 }

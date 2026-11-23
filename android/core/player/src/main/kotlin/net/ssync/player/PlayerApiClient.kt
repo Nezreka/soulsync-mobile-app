@@ -594,6 +594,34 @@ class PlayerApiClient(
             json.decodeFromString<EpisodeExtra>(body)
         }
 
+    suspend fun fetchVideoCalendar(
+        start: String,
+        days: Int = 14,
+        scope: String = "all",
+    ): MusicApiResult<VideoCalendarResponse> {
+        val url = "$base/api/video/calendar".toHttpUrl().newBuilder()
+            .addQueryParameter("start", start)
+            .addQueryParameter("days", days.toString())
+            .addQueryParameter("scope", scope)
+            .build()
+        return getJson(url.toString()) { body ->
+            json.decodeFromString<VideoCalendarResponse>(body)
+        }
+    }
+
+    suspend fun fetchVideoCalendarFollowed(
+        start: String,
+        days: Int = 14,
+    ): MusicApiResult<List<CalendarEpisode>> {
+        val url = "$base/api/video/calendar/followed".toHttpUrl().newBuilder()
+            .addQueryParameter("start", start)
+            .addQueryParameter("days", days.toString())
+            .build()
+        return getJson(url.toString()) { body ->
+            json.decodeFromString<VideoCalendarFollowedEnvelope>(body).episodes
+        }
+    }
+
     suspend fun submitVideoIssue(
         entityType: String,
         entityId: Int,
@@ -652,7 +680,46 @@ class PlayerApiClient(
 
     suspend fun fetchDiscoverPlaylists(): MusicApiResult<List<DiscoverPlaylistSummary>> =
         getJson("$base/api/player/discover-playlists") { body ->
-            json.decodeFromString<DiscoverPlaylistsEnvelope>(body).playlists
+            val root = json.parseToJsonElement(body).jsonObject
+            val out = mutableListOf<DiscoverPlaylistSummary>()
+            fun parseItem(obj: JsonObject): DiscoverPlaylistSummary? {
+                val key = obj["key"]?.jsonPrimitive?.content ?: return null
+                val title = obj["name"]?.jsonPrimitive?.content
+                    ?: obj["title"]?.jsonPrimitive?.content
+                    ?: return null
+                val subtitle = obj["blurb"]?.jsonPrimitive?.content
+                    ?: obj["subtitle"]?.jsonPrimitive?.content
+                val trackCount = obj["track_count"]?.jsonPrimitive?.intOrNull ?: 0
+                val coverUrl = obj["cover_url"]?.jsonPrimitive?.content
+                val tiles = (obj["cover_tiles"] as? JsonArray)
+                    ?.mapNotNull { it.jsonPrimitive.content.takeIf { s -> s.isNotBlank() && s != "null" } }
+                    .orEmpty()
+                return DiscoverPlaylistSummary(
+                    key = key,
+                    title = title,
+                    subtitle = subtitle,
+                    trackCount = trackCount,
+                    coverUrl = coverUrl ?: tiles.firstOrNull(),
+                    coverTiles = tiles,
+                )
+            }
+            val sections = root["sections"] as? JsonArray
+            if (sections != null) {
+                for (sec in sections) {
+                    val pls = (sec as? JsonObject)?.get("playlists") as? JsonArray ?: continue
+                    for (p in pls) {
+                        (p as? JsonObject)?.let(::parseItem)?.let { out += it }
+                    }
+                }
+            } else {
+                val pls = root["playlists"] as? JsonArray
+                if (pls != null) {
+                    for (p in pls) {
+                        (p as? JsonObject)?.let(::parseItem)?.let { out += it }
+                    }
+                }
+            }
+            out
         }
 
     suspend fun removeProgress(itemType: String, itemId: String): MusicApiResult<Unit> =
