@@ -288,6 +288,37 @@ class PlayerApiClient(
             out
         }
 
+    suspend fun createSavedGuideChannel(
+        scope: String = "mine",
+        spec: GuideChannelSpec,
+    ): MusicApiResult<SavedGuideChannel> = withContext(Dispatchers.IO) {
+        val bodyObj = kotlinx.serialization.json.buildJsonObject {
+            put("scope", kotlinx.serialization.json.JsonPrimitive(scope))
+            put("spec", json.encodeToJsonElement(GuideChannelSpec.serializer(), spec))
+        }
+        val req = Request.Builder()
+            .url("$base/api/player/guide/channels")
+            .post(bodyObj.toString().toRequestBody(JSON_MEDIA_TYPE))
+            .build()
+        execute(req) { body ->
+            val root = json.parseToJsonElement(body).jsonObject
+            val chObj = root["channel"] as? JsonObject
+                ?: throw IllegalStateException("Invalid channel response")
+            val id = chObj["id"]?.jsonPrimitive?.content ?: ""
+            val sc = chObj["scope"]?.jsonPrimitive?.content ?: scope
+            val sp = chObj["spec"]?.let { json.decodeFromJsonElement(GuideChannelSpec.serializer(), it) } ?: spec
+            SavedGuideChannel(id = id, scope = sc, spec = sp)
+        }
+    }
+
+    suspend fun deleteSavedGuideChannel(channelId: String): MusicApiResult<Unit> = withContext(Dispatchers.IO) {
+        val req = Request.Builder()
+            .url("$base/api/player/guide/channels/${encodeSeg(channelId)}")
+            .delete()
+            .build()
+        execute(req) { }
+    }
+
     suspend fun fetchGuideLineup(): MusicApiResult<List<GuideLineupEntry>> =
         getJson("$base/api/player/guide/lineup") { body ->
             val root = json.parseToJsonElement(body).jsonObject

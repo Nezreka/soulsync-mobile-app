@@ -986,6 +986,8 @@ data class GuideChannelSpec(
     val decades: List<Int> = emptyList(),
     val studios: List<String> = emptyList(),
     val networks: List<String> = emptyList(),
+    @SerialName("youtube_channels")
+    val youtubeChannels: List<String> = emptyList(),
     val collection: String? = null,
     @SerialName("min_score")
     val minScore: Double? = null,

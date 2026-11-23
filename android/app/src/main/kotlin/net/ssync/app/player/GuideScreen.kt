@@ -1038,6 +1038,11 @@ private fun buildSpecPool(
                 spec.collection == null
         }.flatMap { episodesByShow[it.id].orEmpty() }
     }
+    if ("youtube" in spec.kinds && spec.people.isEmpty()) {
+        out += catalog.youtube.filter { y ->
+            sameWord(spec.youtubeChannels, y.channelTitle) || sameWord(spec.youtubeChannels, y.channelId)
+        }.map { youtubePoolItem(it, api) }
+    }
     return out
 }
 
@@ -1045,10 +1050,16 @@ private fun buildSpecBlurb(spec: GuideChannelSpec, showTitle: String?): String {
     if (spec.show != null) return "${showTitle ?: "one show"}, start to finish"
     return listOfNotNull(
         spec.people.takeIf { it.isNotEmpty() }?.joinToString(", ") { it.name },
-        spec.kinds.joinToString(" + ") { if (it == "tv") "TV" else "movies" },
+        spec.kinds.joinToString(" + ") {
+            when (it) {
+                "tv" -> "TV"
+                "youtube" -> "YouTube"
+                else -> "movies"
+            }
+        },
         spec.genres.take(2).takeIf { it.isNotEmpty() }?.joinToString(", "),
         spec.decades.takeIf { it.isNotEmpty() }?.joinToString(", ") { "${it}s" },
-        (spec.studios + spec.networks).take(2).takeIf { it.isNotEmpty() }?.joinToString(", "),
+        (spec.studios + spec.networks + spec.youtubeChannels).take(2).takeIf { it.isNotEmpty() }?.joinToString(", "),
         spec.collection,
         spec.minScore?.let { "★ $it+" },
         spec.addedDays?.let { "added in $it days" },
@@ -1081,6 +1092,7 @@ fun GuideScreen(
     var isLoading by remember { mutableStateOf(true) }
     var allChannels by remember { mutableStateOf<List<EpgChannel>>(emptyList()) }
     var liveSessions by remember { mutableStateOf<List<WatchingSession>>(emptyList()) }
+    var showMakeChannelDialog by remember { mutableStateOf(false) }
     val viewersByChannel = remember(liveSessions) {
         liveSessions
             .filter { it.channel != null && it.channel!!.id.isNotBlank() }
@@ -1311,36 +1323,56 @@ fun GuideScreen(
                     Text("$shownCount of ${allChannels.size} channels", color = SoulSyncColors.TextSecondary, fontSize = 11.sp)
                 }
                 Row(
-                    modifier = Modifier
-                        .clip(CircleShape)
-                        .background(Color.Black.copy(alpha = 0.4f))
-                        .border(1.dp, SoulSyncColors.Line, CircleShape)
-                        .padding(3.dp),
-                    horizontalArrangement = Arrangement.spacedBy(2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    GuideViewMode.entries.forEach { mode ->
-                        val on = viewMode == mode
-                        Row(
-                            modifier = Modifier
-                                .clip(CircleShape)
-                                .background(if (on) SoulSyncColors.Accent.copy(alpha = 0.24f) else Color.Transparent)
-                                .clickable { viewMode = mode }
-                                .padding(horizontal = 10.dp, vertical = 5.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        ) {
-                            Icon(
-                                imageVector = if (mode == GuideViewMode.GRID) Icons.Default.GridView else Icons.AutoMirrored.Filled.ViewList,
-                                contentDescription = mode.label,
-                                tint = if (on) Color.White else SoulSyncColors.TextSecondary,
-                                modifier = Modifier.size(14.dp),
-                            )
-                            Text(
-                                text = mode.label,
-                                color = if (on) Color.White else SoulSyncColors.TextSecondary,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                            )
+                    Box(
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .background(SoulSyncColors.Accent.copy(alpha = 0.22f))
+                            .border(1.dp, SoulSyncColors.AccentLight.copy(alpha = 0.65f), CircleShape)
+                            .clickable { showMakeChannelDialog = true }
+                            .padding(horizontal = 11.dp, vertical = 6.dp),
+                    ) {
+                        Text(
+                            text = "+ Make Channel",
+                            color = Color.White,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                        )
+                    }
+                    Row(
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .background(Color.Black.copy(alpha = 0.4f))
+                            .border(1.dp, SoulSyncColors.Line, CircleShape)
+                            .padding(3.dp),
+                        horizontalArrangement = Arrangement.spacedBy(2.dp),
+                    ) {
+                        GuideViewMode.entries.forEach { mode ->
+                            val on = viewMode == mode
+                            Row(
+                                modifier = Modifier
+                                    .clip(CircleShape)
+                                    .background(if (on) SoulSyncColors.Accent.copy(alpha = 0.24f) else Color.Transparent)
+                                    .clickable { viewMode = mode }
+                                    .padding(horizontal = 10.dp, vertical = 5.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                Icon(
+                                    imageVector = if (mode == GuideViewMode.GRID) Icons.Default.GridView else Icons.AutoMirrored.Filled.ViewList,
+                                    contentDescription = mode.label,
+                                    tint = if (on) Color.White else SoulSyncColors.TextSecondary,
+                                    modifier = Modifier.size(14.dp),
+                                )
+                                Text(
+                                    text = mode.label,
+                                    color = if (on) Color.White else SoulSyncColors.TextSecondary,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                )
+                            }
                         }
                     }
                 }
@@ -1775,6 +1807,274 @@ fun GuideScreen(
                             }
                         }
                     }
+                }
+            }
+        }
+
+        if (showMakeChannelDialog) {
+            MakeGuideChannelDialog(
+                catalog = catalog,
+                api = api,
+                onDismiss = { showMakeChannelDialog = false },
+                onCreated = { created ->
+                    showMakeChannelDialog = false
+                    val updatedSaved = savedChannels + created
+                    savedChannels = updatedSaved
+                    scope.launch {
+                        allChannels = withContext(Dispatchers.Default) {
+                            buildDesktopParityChannels(
+                                catalog = catalog,
+                                musicPoolSongs = musicPoolSongs,
+                                playlists = playlistDetails,
+                                musicChannels = musicChannels,
+                                savedChannels = updatedSaved,
+                                lineup = lineup,
+                                api = api,
+                                windowStartSec = windowStartSec,
+                                windowEndSec = windowEndSec,
+                            )
+                        }
+                    }
+                },
+            )
+        }
+    }
+}
+
+@Composable
+private fun MakeGuideChannelDialog(
+    catalog: VideoCatalog,
+    api: PlayerApiClient,
+    onDismiss: () -> Unit,
+    onCreated: (SavedGuideChannel) -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    var name by remember { mutableStateOf("") }
+    var kinds by remember { mutableStateOf(listOf("movies", "tv")) }
+    var selectedGenres by remember { mutableStateOf<List<String>>(emptyList()) }
+    var selectedDecades by remember { mutableStateOf<List<Int>>(emptyList()) }
+    var selectedYoutubeChannels by remember { mutableStateOf<List<String>>(emptyList()) }
+    var kidsOnly by remember { mutableStateOf(false) }
+    var order by remember { mutableStateOf("shuffle") }
+    var saving by remember { mutableStateOf(false) }
+    var errorMsg by remember { mutableStateOf<String?>(null) }
+
+    val availableGenres = remember(catalog) {
+        (catalog.movies.flatMap { it.genres } + catalog.shows.flatMap { it.genres })
+            .groupingBy { it }
+            .eachCount()
+            .entries
+            .sortedByDescending { it.value }
+            .map { it.key }
+            .take(18)
+    }
+    val availableYoutubeChannels = remember(catalog) {
+        catalog.youtube.mapNotNull { it.channelTitle?.takeIf { s -> s.isNotBlank() } }
+            .groupingBy { it }
+            .eachCount()
+            .entries
+            .sortedByDescending { it.value }
+            .map { it.key }
+            .take(20)
+    }
+    val decades = remember { listOf(1960, 1970, 1980, 1990, 2000, 2010, 2020) }
+
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = onDismiss,
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Card(
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = SoulSyncColors.BgPrimary),
+            border = BorderStroke(1.dp, SoulSyncColors.Line),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 24.dp),
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("Make a Channel", color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.ExtraBold)
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White)
+                    }
+                }
+
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    placeholder = { Text("Channel name (e.g. Saturday Matinee)", fontSize = 13.sp) },
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+
+                Text("SOURCES", color = SoulSyncColors.TextSecondary, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf("movies" to "Movies", "tv" to "TV", "youtube" to "YouTube").forEach { (key, label) ->
+                        val on = key in kinds
+                        Box(
+                            modifier = Modifier
+                                .clip(CircleShape)
+                                .background(if (on) SoulSyncColors.Accent.copy(alpha = 0.24f) else Color.White.copy(alpha = 0.05f))
+                                .border(1.dp, if (on) SoulSyncColors.AccentLight else SoulSyncColors.Line, CircleShape)
+                                .clickable {
+                                    kinds = if (on) kinds - key else kinds + key
+                                }
+                                .padding(horizontal = 14.dp, vertical = 7.dp),
+                        ) {
+                            Text(label, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+
+                if ("youtube" in kinds && availableYoutubeChannels.isNotEmpty()) {
+                    Text("YOUTUBE CHANNELS (OPTIONAL)", color = SoulSyncColors.TextSecondary, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        items(availableYoutubeChannels, key = { "yt-$it" }) { chName ->
+                            val on = chName in selectedYoutubeChannels
+                            Box(
+                                modifier = Modifier
+                                    .clip(CircleShape)
+                                    .background(if (on) SoulSyncColors.Accent.copy(alpha = 0.24f) else Color.White.copy(alpha = 0.05f))
+                                    .border(1.dp, if (on) SoulSyncColors.AccentLight else SoulSyncColors.Line, CircleShape)
+                                    .clickable {
+                                        selectedYoutubeChannels = if (on) selectedYoutubeChannels - chName else selectedYoutubeChannels + chName
+                                    }
+                                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                            ) {
+                                Text(chName, color = Color.White, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
+                            }
+                        }
+                    }
+                }
+
+                if (("movies" in kinds || "tv" in kinds) && availableGenres.isNotEmpty()) {
+                    Text("GENRES (OPTIONAL)", color = SoulSyncColors.TextSecondary, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        items(availableGenres, key = { "g-$it" }) { g ->
+                            val on = g in selectedGenres
+                            Box(
+                                modifier = Modifier
+                                    .clip(CircleShape)
+                                    .background(if (on) SoulSyncColors.Accent.copy(alpha = 0.24f) else Color.White.copy(alpha = 0.05f))
+                                    .border(1.dp, if (on) SoulSyncColors.AccentLight else SoulSyncColors.Line, CircleShape)
+                                    .clickable {
+                                        selectedGenres = if (on) selectedGenres - g else selectedGenres + g
+                                    }
+                                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                            ) {
+                                Text(g, color = Color.White, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
+                            }
+                        }
+                    }
+
+                    Text("DECADES (OPTIONAL)", color = SoulSyncColors.TextSecondary, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        items(decades, key = { "d-$it" }) { d ->
+                            val on = d in selectedDecades
+                            Box(
+                                modifier = Modifier
+                                    .clip(CircleShape)
+                                    .background(if (on) SoulSyncColors.Accent.copy(alpha = 0.24f) else Color.White.copy(alpha = 0.05f))
+                                    .border(1.dp, if (on) SoulSyncColors.AccentLight else SoulSyncColors.Line, CircleShape)
+                                    .clickable {
+                                        selectedDecades = if (on) selectedDecades - d else selectedDecades + d
+                                    }
+                                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                            ) {
+                                Text("${d}s", color = Color.White, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
+                            }
+                        }
+                    }
+                }
+
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Box(
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .background(if (order == "in_order") SoulSyncColors.Accent.copy(alpha = 0.24f) else Color.White.copy(alpha = 0.05f))
+                            .border(1.dp, if (order == "in_order") SoulSyncColors.AccentLight else SoulSyncColors.Line, CircleShape)
+                            .clickable { order = if (order == "shuffle") "in_order" else "shuffle" }
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                    ) {
+                        Text(
+                            text = if (order == "shuffle") "Order: Shuffled" else "Order: In Order",
+                            color = Color.White,
+                            fontSize = 11.5.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .background(if (kidsOnly) SoulSyncColors.Accent.copy(alpha = 0.24f) else Color.White.copy(alpha = 0.05f))
+                            .border(1.dp, if (kidsOnly) SoulSyncColors.AccentLight else SoulSyncColors.Line, CircleShape)
+                            .clickable { kidsOnly = !kidsOnly }
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                    ) {
+                        Text(
+                            text = if (kidsOnly) "✓ Kids Only" else "Kids Only",
+                            color = Color.White,
+                            fontSize = 11.5.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                }
+
+                if (!errorMsg.isNullOrBlank()) {
+                    Text(errorMsg.orEmpty(), color = Color(0xFFFBBF24), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                }
+
+                Button(
+                    onClick = {
+                        if (name.trim().isEmpty()) {
+                            errorMsg = "Give the channel a name."
+                            return@Button
+                        }
+                        if (kinds.isEmpty()) {
+                            errorMsg = "Pick Movies, TV, YouTube, or any combination."
+                            return@Button
+                        }
+                        saving = true
+                        errorMsg = null
+                        val spec = GuideChannelSpec(
+                            name = name.trim(),
+                            kinds = kinds,
+                            genres = selectedGenres,
+                            decades = selectedDecades,
+                            youtubeChannels = selectedYoutubeChannels,
+                            kids = kidsOnly,
+                            order = order,
+                        )
+                        scope.launch {
+                            when (val r = api.createSavedGuideChannel("mine", spec)) {
+                                is MusicApiResult.Success -> {
+                                    saving = false
+                                    onCreated(r.data)
+                                }
+                                is MusicApiResult.Error -> {
+                                    saving = false
+                                    errorMsg = r.message
+                                }
+                                MusicApiResult.DeviceRevoked -> {
+                                    saving = false
+                                }
+                            }
+                        }
+                    },
+                    enabled = !saving,
+                    shape = CircleShape,
+                    colors = ButtonDefaults.buttonColors(containerColor = SoulSyncColors.Accent, contentColor = SoulSyncColors.OnAccent),
+                    modifier = Modifier.fillMaxWidth().height(44.dp),
+                ) {
+                    Text(if (saving) "Saving…" else "Make Channel", fontWeight = FontWeight.Bold)
                 }
             }
         }
