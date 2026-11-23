@@ -1379,9 +1379,10 @@ private fun WatchPartyFullscreenReactions(
     }
 
     fun spawn(uid: String, emoji: String, sender: String, seed: Int) {
-        val isLeft = (seed % 2 == 0)
-        val edgeDp = 18f + ((kotlin.math.abs(seed) * 23) % 62)
-        val sway = (if (seed % 3 == 0) 1f else -1f) * (11f + (kotlin.math.abs(seed) % 15))
+        val positiveSeed = seed and 0x7FFFFFFF
+        val isLeft = (positiveSeed % 2 == 0)
+        val edgeDp = (18f + (((positiveSeed % 62) * 23) % 62)).coerceIn(12f, 84f)
+        val sway = (if (positiveSeed % 3 == 0) 1f else -1f) * (11f + (positiveSeed % 15))
         val bubble = FloatingPartyEmoji(uid, emoji, sender, isLeft, edgeDp, sway)
         bubbles = (bubbles.takeLast(18)) + bubble
         scope.launch {
@@ -1532,13 +1533,14 @@ private fun WatchPartyFullscreenReactions(
         if (!muted) {
             bubbles.forEach { b ->
                 key(b.uid) {
+                    val safeEdge = b.edgeOffsetDp.coerceAtLeast(0f)
                     FloatingReactionBubble(
                         bubble = b,
                         modifier = Modifier
                             .align(if (b.isLeft) Alignment.BottomStart else Alignment.BottomEnd)
                             .padding(
-                                start = if (b.isLeft) b.edgeOffsetDp.dp else 0.dp,
-                                end = if (!b.isLeft) b.edgeOffsetDp.dp else 0.dp,
+                                start = if (b.isLeft) safeEdge.dp else 0.dp,
+                                end = if (!b.isLeft) safeEdge.dp else 0.dp,
                                 bottom = 104.dp,
                             ),
                     )

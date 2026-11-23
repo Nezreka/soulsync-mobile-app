@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -277,7 +278,7 @@ fun WatchingNowScreen(
                 }
             }
         } else {
-            items(parties, key = { "party-${it.id}" }) { party ->
+            itemsIndexed(parties, key = { idx, party -> "party-$idx-${party.id}" }) { _, party ->
                 WatchPartyCinemaCard(
                     party = party,
                     api = api,
@@ -295,7 +296,7 @@ fun WatchingNowScreen(
                 EmptyBox("Nobody else is watching or listening right now.")
             }
         } else {
-            items(sessions, key = { "s-${it.profileId}-${it.itemType}-${it.itemId}" }) { s ->
+            itemsIndexed(sessions, key = { idx, s -> "s-$idx-${s.profileId}-${s.itemType}-${s.itemId}" }) { _, s ->
                 CinemaWatchingCard(
                     session = s,
                     api = api,
@@ -344,7 +345,7 @@ fun WatchingNowScreen(
         // ── Section 3: Watching the Same Thing ──
         if (together.isNotEmpty()) {
             item { SectionHeader("Watching the Same Thing") }
-            items(together, key = { it.key.ifBlank { "${it.itemType}:${it.itemId}" } }) { t ->
+            itemsIndexed(together, key = { idx, t -> "tog-$idx-${t.key.ifBlank { "${t.itemType}:${t.itemId}" }}" }) { _, t ->
                 val mine = t.mine
                 val title = mine?.meta?.parentTitle ?: mine?.meta?.title ?: t.title.ifBlank { "Shared Title" }
                 val artUrl = api.artwork.resolve(mine?.meta?.artwork ?: t.artwork)
@@ -1044,9 +1045,10 @@ private fun WatchPartyRoomDialog(
     val reactionTimestamps = remember(partyId) { mutableListOf<Long>() }
 
     fun spawnRoomBubble(uid: String, emoji: String, sender: String, seed: Int) {
-        val isLeft = (seed % 2 == 0)
-        val edgeDp = 12f + ((kotlin.math.abs(seed) * 19) % 38)
-        val swayDp = (if (seed % 3 == 0) 1f else -1f) * (10f + (kotlin.math.abs(seed) % 14))
+        val positiveSeed = seed and 0x7FFFFFFF
+        val isLeft = (positiveSeed % 2 == 0)
+        val edgeDp = (12f + (((positiveSeed % 38) * 19) % 38)).coerceIn(8f, 52f)
+        val swayDp = (if (positiveSeed % 3 == 0) 1f else -1f) * (10f + (positiveSeed % 14))
         val b = RoomSideEmojiBubble(uid, emoji, sender, isLeft, edgeDp, swayDp)
         bubbles = (bubbles.takeLast(14)) + b
         scope.launch {
@@ -1796,13 +1798,14 @@ private fun WatchPartyRoomDialog(
                 // Dual-Side (Left + Right) Floating Emoji Bubbles inside the Room Dialog
                 bubbles.forEach { b ->
                     androidx.compose.runtime.key(b.uid) {
+                        val safeEdge = b.edgeDp.coerceAtLeast(0f)
                         RoomFloatingEmojiBubbleView(
                             bubble = b,
                             modifier = Modifier
                                 .align(if (b.isLeft) Alignment.BottomStart else Alignment.BottomEnd)
                                 .padding(
-                                    start = if (b.isLeft) b.edgeDp.dp else 0.dp,
-                                    end = if (!b.isLeft) b.edgeDp.dp else 0.dp,
+                                    start = if (b.isLeft) safeEdge.dp else 0.dp,
+                                    end = if (!b.isLeft) safeEdge.dp else 0.dp,
                                     bottom = 96.dp,
                                 ),
                         )
