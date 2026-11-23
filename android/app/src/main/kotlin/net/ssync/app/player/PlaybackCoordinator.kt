@@ -26,6 +26,8 @@ data class ActivePlayable(
     val durationMs: Long = 0L,
     val parentId: String? = null,
     val partyId: String? = null,
+    /** True when playing from the Live Guide: never save Continue Watching progress; only mark movies watched at >=92%. */
+    val isLiveGuide: Boolean = false,
 )
 
 /**
@@ -180,14 +182,25 @@ class PlaybackCoordinator(
         isPlaying = false
         if (current != null) {
             scope.launch {
-                api.saveProgress(
-                    itemType = current.itemType,
-                    itemId = current.itemId,
-                    positionSeconds = lastPositionMs / 1000.0,
-                    durationSeconds = totalDurationMs.takeIf { it > 0 }?.let { it / 1000.0 },
-                    finished = totalDurationMs > 0 && lastPositionMs >= (totalDurationMs * 0.92),
-                    meta = buildProgressMeta(current),
-                )
+                val reachedCredits = totalDurationMs > 0 && lastPositionMs >= (totalDurationMs * 0.92)
+                if (current.isLiveGuide) {
+                    // Guide playback never appears in Continue Watching; only tracks watched state for movies.
+                    if (reachedCredits && current.itemType == "movie") {
+                        api.markWatched(itemType = "movie", itemId = current.itemId)
+                    }
+                } else {
+                    api.saveProgress(
+                        itemType = current.itemType,
+                        itemId = current.itemId,
+                        positionSeconds = lastPositionMs / 1000.0,
+                        durationSeconds = totalDurationMs.takeIf { it > 0 }?.let { it / 1000.0 },
+                        finished = reachedCredits,
+                        meta = buildProgressMeta(current),
+                    )
+                    if (reachedCredits && (current.itemType == "movie" || current.itemType == "episode")) {
+                        api.markWatched(itemType = current.itemType, itemId = current.itemId)
+                    }
+                }
                 api.clearPresence()
             }
         }
@@ -256,7 +269,7 @@ class PlaybackCoordinator(
         durationMs = controller.duration.coerceAtLeast(0L)
         isPlaying = controller.isPlaying
 
-        if (positionMs > 0 && item.itemType in setOf("podcast", "audiobook")) {
+        if (!item.isLiveGuide && positionMs > 0 && item.itemType in setOf("podcast", "audiobook")) {
             scope.launch {
                 api.saveProgress(
                     itemType = item.itemType,

@@ -1239,6 +1239,7 @@ fun GuideScreen(
                     subtitle = "${t.subtitle} · CH ${ch.number} ${ch.name}",
                     artworkUrl = t.posterUrl,
                     streamUrl = api.streamUrl("track", t.itemId),
+                    isLiveGuide = true,
                 )
             }
             if (queue.isNotEmpty()) coordinator.playAudio(queue.first(), queue.drop(1))
@@ -1258,6 +1259,7 @@ fun GuideScreen(
                     streamUrl = api.streamUrl(active.itemType, active.itemId),
                     isVideo = true,
                     resumePositionMs = offsetMs,
+                    isLiveGuide = true,
                 ),
             )
         }

@@ -37,6 +37,23 @@ class PlayerApiClient(
     fun streamUrl(itemType: String, itemId: String): String =
         "$base/api/player/stream/$itemType/$itemId"
 
+    suspend fun fetchPlayable(
+        itemType: String,
+        itemId: String,
+        quality: String = "original",
+    ): MusicApiResult<PlayableDecision> = getJson("$base/api/player/playable/$itemType/$itemId?q=$quality") { body ->
+        val root = json.parseToJsonElement(body).jsonObject
+        val url = (root["url"] as? kotlinx.serialization.json.JsonPrimitive)?.content.orEmpty()
+        val transcodeObj = root["transcode"] as? JsonObject
+        val needsTranscode = transcodeObj != null
+        val durationSec = (root["duration"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toDoubleOrNull()
+        PlayableDecision(
+            url = if (url.startsWith("/")) "$base$url" else url,
+            needsTranscode = needsTranscode,
+            durationMs = durationSec?.let { (it * 1000.0).toLong() } ?: 0L,
+        )
+    }
+
     fun transcodeUrl(
         itemType: String,
         itemId: String,
@@ -517,6 +534,21 @@ class PlayerApiClient(
 
     suspend fun clearPresence(): MusicApiResult<Unit> = withContext(Dispatchers.IO) {
         val req = Request.Builder().url("$base/api/player/presence?session=${encodeSeg(presenceSessionId)}").delete().build()
+        execute(req) { }
+    }
+
+    suspend fun markWatched(
+        itemType: String,
+        itemId: String,
+    ): MusicApiResult<Unit> = withContext(Dispatchers.IO) {
+        val payload = kotlinx.serialization.json.buildJsonObject {
+            put("item_type", kotlinx.serialization.json.JsonPrimitive(itemType))
+            put("item_id", kotlinx.serialization.json.JsonPrimitive(itemId))
+        }
+        val req = Request.Builder()
+            .url("$base/api/player/watched")
+            .post(payload.toString().toRequestBody(JSON_MEDIA_TYPE))
+            .build()
         execute(req) { }
     }
 

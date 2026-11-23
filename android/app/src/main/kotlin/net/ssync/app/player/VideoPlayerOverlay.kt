@@ -129,6 +129,11 @@ fun VideoPlayerOverlay(
     }
     val dimAlpha = (1f - displayPrefs.brightness).coerceIn(0f, 0.85f)
 
+    val isRemoteStream = remember(item.streamUrl) {
+        item.streamUrl.startsWith("http://", ignoreCase = true) ||
+            item.streamUrl.startsWith("https://", ignoreCase = true)
+    }
+
     val exoPlayer = remember(item.streamUrl) {
         val dataSourceFactory = OkHttpDataSource.Factory(pinnedHttpClient)
         val audioAttributes = AudioAttributes.Builder()
@@ -140,12 +145,18 @@ fun VideoPlayerOverlay(
             .setAudioAttributes(audioAttributes, true)
             .setHandleAudioBecomingNoisy(true)
             .build().apply {
-                setMediaItem(MediaItem.fromUri(item.streamUrl))
-                if (item.resumePositionMs > 0L) {
-                    seekTo(item.resumePositionMs)
+                // Only direct-start immediately for offline local files; for remote streams we
+                // consult /api/player/playable first (like desktop) so AC-3/E-AC-3/HEVC/AV1/DTS
+                // files start directly on the transcoded H.264+AAC stream instead of rendering a
+                // black screen with silent audio while the clock ticks!
+                if (!isRemoteStream) {
+                    setMediaItem(MediaItem.fromUri(item.streamUrl))
+                    if (item.resumePositionMs > 0L) {
+                        seekTo(item.resumePositionMs)
+                    }
+                    prepare()
+                    playWhenReady = true
                 }
-                prepare()
-                playWhenReady = true
             }
     }
 
@@ -204,6 +215,29 @@ fun VideoPlayerOverlay(
         exoPlayer.playWhenReady = true
     }
 
+    LaunchedEffect(item.streamUrl, item.itemType, item.itemId) {
+        if (!isRemoteStream) return@LaunchedEffect
+        if (canTranscode) {
+            val res = api.fetchPlayable(item.itemType, item.itemId)
+            if (res is MusicApiResult.Success) {
+                val decision = res.data
+                if (decision.durationMs > 0L && durationMs <= 0L) {
+                    durationMs = decision.durationMs
+                }
+                if (decision.needsTranscode) {
+                    startTranscodeAt(item.resumePositionMs)
+                    return@LaunchedEffect
+                }
+            }
+        }
+        exoPlayer.setMediaItem(MediaItem.fromUri(item.streamUrl))
+        if (item.resumePositionMs > 0L) {
+            exoPlayer.seekTo(item.resumePositionMs)
+        }
+        exoPlayer.prepare()
+        exoPlayer.playWhenReady = true
+    }
+
     fun seekOrTranscode(targetMs: Long) {
         val clamped = targetMs.coerceAtLeast(0L).let {
             if (durationMs > 0L) it.coerceAtMost(durationMs) else it
@@ -215,11 +249,35 @@ fun VideoPlayerOverlay(
         }
     }
 
+    var hasRenderedFirstFrame by remember(item.streamUrl) { mutableStateOf(false) }
+
     DisposableEffect(exoPlayer) {
         val listener = object : Player.Listener {
             override fun onIsPlayingChanged(playing: Boolean) {
                 isPlaying = playing
                 if (playing) playbackError = null
+            }
+
+            override fun onRenderedFirstFrame() {
+                hasRenderedFirstFrame = true
+            }
+
+            override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
+                // If direct play reached READY and selected no supported video or audio track
+                // (e.g. Dolby E-AC-3/DTS/TrueHD or 10-bit HEVC/AV1 where ExoPlayer silently drops
+                // the unsupported track without throwing PlaybackException, resulting in a black
+                // screen or silent playback while the timeline clock ticks), switch immediately
+                // to the server's H.264 + AAC transcode stream!
+                if (!usingTranscode && canTranscode && tracks.groups.isNotEmpty()) {
+                    val videoGroups = tracks.groups.filter { it.type == C.TRACK_TYPE_VIDEO }
+                    val audioGroups = tracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }
+                    val videoUnsupported = videoGroups.isNotEmpty() && videoGroups.none { it.isSupported }
+                    val audioUnsupported = audioGroups.isNotEmpty() && audioGroups.none { it.isSupported }
+                    if (videoUnsupported || audioUnsupported) {
+                        val resumeAt = effectivePositionMs().takeIf { it > 0L } ?: item.resumePositionMs
+                        startTranscodeAt(resumeAt)
+                    }
+                }
             }
 
             override fun onPlaybackStateChanged(playbackState: Int) {
@@ -264,12 +322,25 @@ fun VideoPlayerOverlay(
         }
     }
 
+    var watchedMarked by remember(item.itemType, item.itemId) { mutableStateOf(false) }
+
     LaunchedEffect(exoPlayer) {
         while (true) {
             if (!scrubbing) {
                 positionMs = effectivePositionMs()
                 if (!usingTranscode && exoPlayer.duration > 0L) {
                     durationMs = exoPlayer.duration
+                }
+                if (
+                    !watchedMarked &&
+                    durationMs > 0L &&
+                    positionMs >= (durationMs * 0.92).toLong() &&
+                    (item.itemType == "movie" || (!item.isLiveGuide && item.itemType == "episode"))
+                ) {
+                    watchedMarked = true
+                    scope.launch {
+                        api.markWatched(itemType = item.itemType, itemId = item.itemId)
+                    }
                 }
             }
             delay(400L)

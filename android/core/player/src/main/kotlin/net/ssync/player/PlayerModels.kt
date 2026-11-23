@@ -53,6 +53,12 @@ internal data class ContinueResponse(
     val items: List<ProgressRow> = emptyList(),
 )
 
+data class PlayableDecision(
+    val url: String,
+    val needsTranscode: Boolean,
+    val durationMs: Long = 0L,
+)
+
 // ── Video Catalog (Movies, TV, Recent Episodes, YouTube) ─────────────────────
 
 @Serializable
