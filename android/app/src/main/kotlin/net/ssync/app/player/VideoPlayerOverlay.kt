@@ -97,6 +97,8 @@ import net.ssync.pairing.theme.SoulSyncColors
 import net.ssync.pairing.ui.dpadFocusable
 import net.ssync.player.MusicApiResult
 import net.ssync.player.PlayerApiClient
+import androidx.compose.runtime.key
+import androidx.compose.ui.graphics.graphicsLayer
 import net.ssync.player.SubtitleCandidate
 import okhttp3.OkHttpClient
 import kotlin.math.roundToInt
@@ -328,6 +330,17 @@ fun VideoPlayerOverlay(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(Color.Black.copy(alpha = dimAlpha)),
+            )
+        }
+
+        // Live full-screen Watch Party floating emoji reactions (visible to all guests)
+        if (!item.partyId.isNullOrBlank()) {
+            WatchPartyFullscreenReactions(
+                partyId = item.partyId,
+                api = api,
+                hudVisible = showHud,
+                onInteract = { hudPoke++ },
+                modifier = Modifier.fillMaxSize(),
             )
         }
 
@@ -964,4 +977,183 @@ private fun formatVideoTime(ms: Long): String {
     val mins = (totalSec % 3600L) / 60L
     val secs = totalSec % 60L
     return if (hrs > 0) "%d:%02d:%02d".format(hrs, mins, secs) else "%d:%02d".format(mins, secs)
+}
+
+private val PARTY_REACTION_EMOJIS = listOf("🍿", "🔥", "😂", "😮", "👏", "❤️")
+
+private data class FloatingPartyEmoji(
+    val uid: String,
+    val emoji: String,
+    val sender: String,
+    val rightOffsetDp: Float,
+    val swayDp: Float,
+)
+
+@Composable
+private fun WatchPartyFullscreenReactions(
+    partyId: String,
+    api: PlayerApiClient,
+    hudVisible: Boolean,
+    onInteract: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val scope = rememberCoroutineScope()
+    var bubbles by remember(partyId) { mutableStateOf<List<FloatingPartyEmoji>>(emptyList()) }
+    var muted by remember(partyId) { mutableStateOf(false) }
+    val seenIds = remember(partyId) { HashSet<Int>() }
+    var initialized by remember(partyId) { mutableStateOf(false) }
+
+    fun spawn(uid: String, emoji: String, sender: String, seed: Int) {
+        val rightDp = 18f + ((kotlin.math.abs(seed) * 23) % 64)
+        val sway = (if (seed % 2 == 0) 1f else -1f) * (10f + (kotlin.math.abs(seed) % 14))
+        val bubble = FloatingPartyEmoji(uid, emoji, sender, rightDp, sway)
+        bubbles = (bubbles.takeLast(14)) + bubble
+        scope.launch {
+            delay(3300L)
+            bubbles = bubbles.filterNot { it.uid == uid }
+        }
+    }
+
+    LaunchedEffect(partyId) {
+        while (true) {
+            val res = api.fetchWatchParty(partyId)
+            if (res is MusicApiResult.Success) {
+                val msgs = res.data.messages
+                if (!initialized) {
+                    initialized = true
+                    msgs.forEach { seenIds += it.id }
+                } else {
+                    for (m in msgs) {
+                        if (seenIds.add(m.id)) {
+                            val body = m.body.trim()
+                            val isReaction = m.kind == "reaction" || body in PARTY_REACTION_EMOJIS
+                            if (isReaction && !muted) {
+                                spawn("srv-${m.id}", body, m.profile?.name.orEmpty(), m.id)
+                            }
+                        }
+                    }
+                }
+            }
+            delay(2000L)
+        }
+    }
+
+    Box(modifier = modifier) {
+        if (!muted) {
+            bubbles.forEach { b ->
+                key(b.uid) {
+                    FloatingReactionBubble(
+                        bubble = b,
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(end = b.rightOffsetDp.dp, bottom = 104.dp),
+                    )
+                }
+            }
+        }
+
+        AnimatedVisibility(
+            visible = hudVisible,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .navigationBarsPadding()
+                .padding(end = 18.dp, bottom = 108.dp),
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(2.dp),
+                modifier = Modifier
+                    .clip(CircleShape)
+                    .background(Color(0xBB0C0E16))
+                    .border(1.dp, Color.White.copy(alpha = 0.16f), CircleShape)
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+            ) {
+                PARTY_REACTION_EMOJIS.forEach { emoji ->
+                    Box(
+                        modifier = Modifier
+                            .size(34.dp)
+                            .clip(CircleShape)
+                            .clickable {
+                                onInteract()
+                                spawn("local-${System.nanoTime()}", emoji, "You", System.currentTimeMillis().toInt())
+                                scope.launch {
+                                    api.postWatchPartyChat(partyId, "reaction", emoji)
+                                }
+                            },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(text = emoji, fontSize = 18.sp)
+                    }
+                }
+                Text(
+                    text = if (muted) "Off" else "Live",
+                    color = Color.White,
+                    fontSize = 10.5.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier
+                        .padding(start = 4.dp)
+                        .clip(CircleShape)
+                        .background(if (muted) Color(0x44F43F5E) else Color.White.copy(alpha = 0.12f))
+                        .clickable {
+                            onInteract()
+                            muted = !muted
+                        }
+                        .padding(horizontal = 9.dp, vertical = 4.dp),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun FloatingReactionBubble(
+    bubble: FloatingPartyEmoji,
+    modifier: Modifier = Modifier,
+) {
+    val progress = remember { androidx.compose.animation.core.Animatable(0f) }
+    LaunchedEffect(bubble.uid) {
+        progress.animateTo(
+            targetValue = 1f,
+            animationSpec = androidx.compose.animation.core.tween(
+                durationMillis = 3200,
+                easing = androidx.compose.animation.core.FastOutSlowInEasing,
+            ),
+        )
+    }
+    val p = progress.value
+    val yOffset = (-300f * p).dp
+    val xOffset = (kotlin.math.sin(p * Math.PI * 2.0).toFloat() * bubble.swayDp).dp
+    val alpha = when {
+        p < 0.12f -> p / 0.12f
+        p > 0.72f -> ((1f - p) / 0.28f).coerceIn(0f, 1f)
+        else -> 1f
+    }
+
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+        modifier = modifier
+            .graphicsLayer {
+                this.alpha = alpha
+                translationX = xOffset.toPx()
+                translationY = yOffset.toPx()
+            },
+    ) {
+        Text(text = bubble.emoji, fontSize = 28.sp)
+        if (bubble.sender.isNotBlank()) {
+            Text(
+                text = bubble.sender,
+                color = Color.White.copy(alpha = 0.92f),
+                fontSize = 9.5.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier
+                    .clip(CircleShape)
+                    .background(Color(0xAA0A0C14))
+                    .border(1.dp, Color.White.copy(alpha = 0.16f), CircleShape)
+                    .padding(horizontal = 7.dp, vertical = 1.dp),
+            )
+        }
+    }
 }

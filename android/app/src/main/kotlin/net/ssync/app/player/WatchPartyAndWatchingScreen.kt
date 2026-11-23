@@ -1072,6 +1072,7 @@ private fun WatchPartyRoomDialog(
                 streamUrl = api.streamUrl(p.itemType, p.itemId),
                 isVideo = true,
                 resumePositionMs = (p.livePosition * 1000.0).toLong(),
+                partyId = p.id,
             ),
         )
         onDismiss()

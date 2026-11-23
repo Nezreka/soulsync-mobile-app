@@ -25,6 +25,7 @@ data class ActivePlayable(
     val resumePositionMs: Long = 0L,
     val durationMs: Long = 0L,
     val parentId: String? = null,
+    val partyId: String? = null,
 )
 
 /**
