@@ -451,7 +451,7 @@ internal data class DiscoverPlaylistDetailEnvelope(
 
 @Serializable
 data class CalendarEpisode(
-    val id: Int? = null,
+    val id: kotlinx.serialization.json.JsonPrimitive? = null,
     @SerialName("show_id")
     val showId: Int? = null,
     @SerialName("show_title")
@@ -477,9 +477,9 @@ data class CalendarEpisode(
     @SerialName("poster_url")
     val posterUrl: String? = null,
     @SerialName("has_still")
-    val hasStill: Boolean = false,
+    val hasStill: kotlinx.serialization.json.JsonPrimitive? = null,
     @SerialName("show_has_backdrop")
-    val showHasBackdrop: Boolean = false,
+    val showHasBackdrop: kotlinx.serialization.json.JsonPrimitive? = null,
     val overview: String? = null,
     @SerialName("runtime_minutes")
     val runtimeMinutes: Int? = null,
@@ -494,6 +494,9 @@ data class CalendarEpisode(
     val progress: Double? = null,
 ) {
     val resolvedTmdbId: Int? get() = showTmdbId ?: tmdbId
+    val episodeIdInt: Int? get() = id?.content?.toIntOrNull()
+    val hasStillBool: Boolean get() = hasStill?.content?.let { it == "true" || it == "1" } ?: false
+    val showHasBackdropBool: Boolean get() = showHasBackdrop?.content?.let { it == "true" || it == "1" } ?: false
 }
 
 @Serializable

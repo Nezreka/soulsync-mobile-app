@@ -199,11 +199,11 @@ private fun formatRangeLabel(startIso: String, days: Int): String {
 }
 
 private fun calendarEpisodeArt(ep: CalendarEpisode, api: PlayerApiClient): String? {
-    val epId = ep.id
+    val epId = ep.episodeIdInt
     val showId = ep.showId
-    if (!ep.notInLibrary && ep.hasStill && epId != null) return api.artwork.episodeStill(epId)
+    if (!ep.notInLibrary && ep.hasStillBool && epId != null) return api.artwork.episodeStill(epId)
     if (!ep.stillUrl.isNullOrBlank()) return api.artwork.resolve(ep.stillUrl)
-    if (!ep.notInLibrary && showId != null && ep.showHasBackdrop) return api.artwork.showBackdrop(showId)
+    if (!ep.notInLibrary && showId != null && ep.showHasBackdropBool) return api.artwork.showBackdrop(showId)
     if (!ep.backdropUrl.isNullOrBlank()) return api.artwork.resolve(ep.backdropUrl)
     if (!ep.notInLibrary && showId != null) return api.artwork.showPoster(showId)
     if (!ep.posterUrl.isNullOrBlank()) return api.artwork.resolve(ep.posterUrl)
@@ -212,7 +212,7 @@ private fun calendarEpisodeArt(ep: CalendarEpisode, api: PlayerApiClient): Strin
 
 private fun calendarEpisodeBackdrop(ep: CalendarEpisode, api: PlayerApiClient): String? {
     val showId = ep.showId
-    if (!ep.notInLibrary && showId != null && ep.showHasBackdrop) return api.artwork.showBackdrop(showId)
+    if (!ep.notInLibrary && showId != null && ep.showHasBackdropBool) return api.artwork.showBackdrop(showId)
     if (!ep.backdropUrl.isNullOrBlank()) return api.artwork.resolve(ep.backdropUrl)
     return calendarEpisodeArt(ep, api)
 }
