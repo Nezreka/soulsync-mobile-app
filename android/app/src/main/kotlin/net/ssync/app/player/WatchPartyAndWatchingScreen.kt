@@ -1,6 +1,12 @@
 package net.ssync.app.player
 
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -1021,6 +1027,17 @@ private fun WatchPartyRoomDialog(
     var party by remember { mutableStateOf<WatchParty?>(null) }
     var chatInput by remember { mutableStateOf("") }
     var autoJoined by remember { mutableStateOf(false) }
+    var showtimeCountdown by remember { mutableStateOf<Int?>(null) }
+    var curtainsOpen by remember { mutableStateOf(false) }
+
+    LaunchedEffect(party?.status, showtimeCountdown) {
+        val st = party?.status ?: return@LaunchedEffect
+        if (st == "playing" || st == "paused") {
+            curtainsOpen = true
+        } else if (showtimeCountdown == null) {
+            curtainsOpen = false
+        }
+    }
 
     suspend fun refreshRoom() {
         (api.fetchWatchParty(partyId) as? MusicApiResult.Success)?.let { party = it.data }
@@ -1145,6 +1162,82 @@ private fun WatchPartyRoomDialog(
                     contentPadding = PaddingValues(14.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
+                    // 16:9 Cinema Proscenium Stage with Animated Pleated Velvet Curtains
+                    item {
+                        VelvetCurtainStage(
+                            title = p.title,
+                            subtitle = p.meta?.subtitle.orEmpty(),
+                            artworkUrl = api.artwork.resolve(p.meta?.backdrop) ?: api.artwork.resolve(p.meta?.artwork),
+                            status = p.status,
+                            readyCount = p.members.count { it.ready },
+                            memberCount = p.members.size,
+                            livePosition = p.livePosition,
+                            curtainsOpen = curtainsOpen,
+                            countdown = showtimeCountdown,
+                        )
+                    }
+
+                    // Curved Theater Seating Row
+                    if (p.members.isNotEmpty()) {
+                        item {
+                            LazyRow(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(Color(0xFF14101A))
+                                    .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(14.dp))
+                                    .padding(10.dp),
+                            ) {
+                                items(p.members, key = { "seat-${it.profileId}" }) { member ->
+                                    Column(
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                                        modifier = Modifier
+                                            .width(68.dp)
+                                            .clip(RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp, bottomStart = 6.dp, bottomEnd = 6.dp))
+                                            .background(if (member.ready) Color(0xFF22C55E).copy(alpha = 0.12f) else Color.White.copy(alpha = 0.04f))
+                                            .border(
+                                                1.dp,
+                                                if (member.ready) Color(0xFF22C55E).copy(alpha = 0.5f) else Color(0xFFA61226).copy(alpha = 0.55f),
+                                                RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp, bottomStart = 6.dp, bottomEnd = 6.dp),
+                                            )
+                                            .padding(horizontal = 6.dp, vertical = 8.dp),
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(28.dp)
+                                                .clip(CircleShape)
+                                                .background(if (member.isHost) Color(0xFFF6C978).copy(alpha = 0.25f) else SoulSyncColors.Accent.copy(alpha = 0.3f)),
+                                            contentAlignment = Alignment.Center,
+                                        ) {
+                                            Text(
+                                                text = (member.profile?.name ?: "U").take(1).uppercase(),
+                                                color = Color.White,
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.ExtraBold,
+                                            )
+                                        }
+                                        Text(
+                                            text = member.profile?.name ?: "Guest",
+                                            color = Color.White,
+                                            fontSize = 10.5.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                        Text(
+                                            text = if (member.isHost) "★ HOST" else if (member.ready) "✓ READY" else "SEATED",
+                                            color = if (member.ready) Color(0xFF86EFAC) else if (member.isHost) Color(0xFFF6C978) else SoulSyncColors.TextSecondary,
+                                            fontSize = 8.5.sp,
+                                            fontWeight = FontWeight.ExtraBold,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     // Synced Theater Lobby Music Bar
                     val lt = p.lobbyTrack
                     if (lt != null && (p.status == "lobby" || p.status == "scheduled")) {
@@ -1215,18 +1308,32 @@ private fun WatchPartyRoomDialog(
                                     if (p.canControl) {
                                         Button(
                                             onClick = {
+                                                if (showtimeCountdown != null) return@Button
                                                 scope.launch {
+                                                    showtimeCountdown = 3
+                                                    delay(800L)
+                                                    showtimeCountdown = 2
+                                                    delay(800L)
+                                                    showtimeCountdown = 1
+                                                    delay(800L)
+                                                    showtimeCountdown = null
+                                                    curtainsOpen = true
                                                     val r = api.updateWatchPartyState(p.id, action = "start")
+                                                    delay(1350L)
                                                     if (r is MusicApiResult.Success) launchSyncedVideo(r.data)
                                                 }
                                             },
+                                            enabled = showtimeCountdown == null,
                                             shape = CircleShape,
                                             colors = ButtonDefaults.buttonColors(containerColor = SoulSyncColors.Accent, contentColor = SoulSyncColors.OnAccent),
                                             modifier = Modifier.weight(1f).height(44.dp),
                                         ) {
                                             Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
                                             Spacer(modifier = Modifier.width(4.dp))
-                                            Text("Start Movie", fontWeight = FontWeight.Bold)
+                                            Text(
+                                                text = showtimeCountdown?.let { "Starting in $it…" } ?: "Unfurl & Start",
+                                                fontWeight = FontWeight.Bold,
+                                            )
                                         }
                                     }
                                     OutlinedButton(
@@ -1438,6 +1545,178 @@ private fun WatchPartyRoomDialog(
                             Icon(Icons.Default.Send, contentDescription = "Send", tint = SoulSyncColors.AccentLight)
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 16:9 Cinema Proscenium Stage with animated pleated crimson velvet curtains,
+ * golden valance trim, vintage marquee plaque, and 3-2-1 film-leader countdown.
+ */
+@Composable
+private fun VelvetCurtainStage(
+    title: String,
+    subtitle: String,
+    artworkUrl: String?,
+    status: String,
+    readyCount: Int,
+    memberCount: Int,
+    livePosition: Double,
+    curtainsOpen: Boolean,
+    countdown: Int?,
+) {
+    val openFrac by animateFloatAsState(
+        targetValue = if (curtainsOpen) 1f else 0f,
+        animationSpec = tween(durationMillis = 1750, easing = FastOutSlowInEasing),
+        label = "velvet_curtain_unfurl",
+    )
+    val velvetPleats = remember {
+        Brush.horizontalGradient(
+            listOf(
+                Color(0xFF6B0714),
+                Color(0xFFA61226),
+                Color(0xFF4A040E),
+                Color(0xFF960E20),
+                Color(0xFF590511),
+                Color(0xFFA61226),
+                Color(0xFF6B0714),
+            ),
+        )
+    }
+
+    androidx.compose.foundation.layout.BoxWithConstraints(
+        modifier = Modifier
+            .fillMaxWidth()
+            .aspectRatio(16f / 9f)
+            .clip(RoundedCornerShape(16.dp))
+            .background(Color(0xFF06070C))
+            .border(1.dp, Color(0x55F6C978), RoundedCornerShape(16.dp)),
+    ) {
+        val halfW = maxWidth * 0.52f
+        val slideOffset = halfW * 0.85f * openFrac
+
+        // Underlying movie/show backdrop screen
+        if (!artworkUrl.isNullOrBlank()) {
+            SoulSyncArtwork(
+                url = artworkUrl,
+                contentDescription = title,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
+        // Warm overhead theater sconce glow + bottom vignette
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.verticalGradient(
+                        listOf(
+                            Color(0x44F6C978),
+                            Color(0x33000000),
+                            Color(0xCC06070C),
+                        ),
+                    ),
+                ),
+        )
+
+        // Left Pleated Velvet Curtain
+        Box(
+            modifier = Modifier
+                .align(Alignment.CenterStart)
+                .width(halfW)
+                .fillMaxHeight()
+                .offset(x = -slideOffset)
+                .background(velvetPleats)
+                .border(BorderStroke(1.5.dp, Color(0x88F6C978))),
+        )
+
+        // Right Pleated Velvet Curtain
+        Box(
+            modifier = Modifier
+                .align(Alignment.CenterEnd)
+                .width(halfW)
+                .fillMaxHeight()
+                .offset(x = slideOffset)
+                .background(velvetPleats)
+                .border(BorderStroke(1.5.dp, Color(0x88F6C978))),
+        )
+
+        // Top Golden-Trimmed Crimson Valance
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .fillMaxWidth()
+                .height(16.dp)
+                .background(velvetPleats)
+                .border(BorderStroke(1.5.dp, Color(0xAAF6C978))),
+        )
+
+        // Center Marquee / 3-2-1 Film Leader Countdown
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 20.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (countdown != null) {
+                Box(
+                    modifier = Modifier
+                        .size(72.dp)
+                        .clip(CircleShape)
+                        .background(Color(0xDD08060C))
+                        .border(2.5.dp, Color(0xFFF6C978), CircleShape),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = "$countdown",
+                        color = Color.White,
+                        fontSize = 34.sp,
+                        fontWeight = FontWeight.Black,
+                    )
+                }
+            } else {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(Color(0xBA0A070C))
+                        .border(1.dp, Color(0x66F6C978), RoundedCornerShape(14.dp))
+                        .padding(horizontal = 18.dp, vertical = 12.dp),
+                ) {
+                    Text(
+                        text = when {
+                            curtainsOpen && status == "playing" -> "● NOW SCREENING"
+                            curtainsOpen -> "❚❚ SCREENING PAUSED"
+                            status == "scheduled" -> "PREMIERE WAITING ROOM"
+                            else -> "FEATURE PRESENTATION"
+                        },
+                        color = Color(0xFFF6C978),
+                        fontSize = 9.5.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        letterSpacing = 1.6.sp,
+                    )
+                    Text(
+                        text = title,
+                        color = Color.White,
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        text = if (curtainsOpen) {
+                            val sec = livePosition.toInt().coerceAtLeast(0)
+                            "Synced at ${sec / 60}:${"%02d".format(sec % 60)}"
+                        } else {
+                            "$readyCount of $memberCount seats ready" + if (subtitle.isNotBlank()) " · $subtitle" else ""
+                        },
+                        color = Color.White.copy(alpha = 0.78f),
+                        fontSize = 11.5.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                 }
             }
         }
