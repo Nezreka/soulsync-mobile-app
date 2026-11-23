@@ -254,12 +254,18 @@ class SoulSyncCastController(private val appContext: Context) {
                 return false
             }
         }
-        val fullUrl = castInfo.streamUrl?.takeIf { it.isNotBlank() }
-            ?: (baseUrl.trimEnd('/') + castInfo.streamPath)
-        val artBase = castInfo.artworkBaseUrl?.trimEnd('/')
+        val trimmedBase = baseUrl.trimEnd('/')
+        val isLocalLan = Regex("(192[.-]168[.-]|10[.-]|172[.-](1[6-9]|2\\d|3[01])[.-]|localhost|127\\.0\\.0\\.1)")
+            .containsMatchIn(trimmedBase)
+        val fullUrl = if (isLocalLan && !castInfo.streamUrl.isNullOrBlank()) {
+            castInfo.streamUrl!!
+        } else {
+            trimmedBase + castInfo.streamPath
+        }
+        val artBase = if (isLocalLan) castInfo.artworkBaseUrl?.trimEnd('/') else null
         val resolvedArt = item.artworkUrl?.let { raw ->
-            if (artBase != null && raw.startsWith(baseUrl.trimEnd('/'))) {
-                artBase + raw.removePrefix(baseUrl.trimEnd('/'))
+            if (artBase != null && raw.startsWith(trimmedBase)) {
+                artBase + raw.removePrefix(trimmedBase)
             } else {
                 raw
             }
