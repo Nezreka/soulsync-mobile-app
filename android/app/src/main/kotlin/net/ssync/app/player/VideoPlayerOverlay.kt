@@ -1350,6 +1350,11 @@ private fun WatchPartyFullscreenReactions(
     var lastLocalActionMs by remember(partyId) { mutableLongStateOf(0L) }
     var rateLimitedUntilMs by remember(partyId) { mutableLongStateOf(0L) }
     var toastMsg by remember(partyId) { mutableStateOf<String?>(null) }
+    var chatToasts by remember(partyId) { mutableStateOf<List<Triple<String, String, String>>>(emptyList()) }
+    var chatOpen by remember(partyId) { mutableStateOf(false) }
+    var chatInput by remember(partyId) { mutableStateOf("") }
+    var unreadChat by remember(partyId) { mutableStateOf(0) }
+    var videoEnded by remember(partyId) { mutableStateOf(false) }
 
     // Full-viewport velvet theater curtain unfurl directly over the video player
     var curtainMounted by remember(partyId) { mutableStateOf(true) }
@@ -1358,6 +1363,14 @@ private fun WatchPartyFullscreenReactions(
     val seenIds = remember(partyId) { HashSet<Int>() }
     var initialized by remember(partyId) { mutableStateOf(false) }
     val reactionTimestamps = remember(partyId) { mutableListOf<Long>() }
+
+    fun spawnChatToast(uid: String, sender: String, body: String) {
+        chatToasts = (chatToasts.takeLast(2)) + Triple(uid, sender, body)
+        scope.launch {
+            delay(5500L)
+            chatToasts = chatToasts.filterNot { it.first == uid }
+        }
+    }
 
     fun showToast(msg: String) {
         toastMsg = msg
@@ -1380,6 +1393,7 @@ private fun WatchPartyFullscreenReactions(
         while (true) {
             delay(200L)
             nowMs = System.currentTimeMillis()
+            videoEnded = exoPlayer.playbackState == Player.STATE_ENDED
         }
     }
 
@@ -1443,6 +1457,11 @@ private fun WatchPartyFullscreenReactions(
                             val isReaction = m.kind == "reaction" || body in PARTY_REACTION_EMOJIS || body.startsWith("🚽")
                             if (isReaction && !muted) {
                                 spawn("srv-${m.id}", body, m.profile?.name.orEmpty(), m.id)
+                            } else if (m.kind == "chat" && body.isNotEmpty()) {
+                                if (!muted && !chatOpen) {
+                                    spawnChatToast("chat-${m.id}", m.profile?.name ?: "Someone", body)
+                                }
+                                if (!chatOpen) unreadChat += 1
                             }
                         }
                     }
@@ -1764,6 +1783,23 @@ private fun WatchPartyFullscreenReactions(
                     }
                 }
                 Text(
+                    text = if (unreadChat > 0 && !chatOpen) "💬 $unreadChat" else "💬",
+                    color = Color.White,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier
+                        .padding(start = 2.dp)
+                        .clip(CircleShape)
+                        .background(if (chatOpen) Color(0x666366F1) else Color.White.copy(alpha = 0.12f))
+                        .border(1.dp, Color(0x55A5B4FC), CircleShape)
+                        .clickable {
+                            onInteract()
+                            chatOpen = !chatOpen
+                            if (chatOpen) unreadChat = 0
+                        }
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                )
+                Text(
                     text = if (muted) "Off" else "Live",
                     color = Color.White,
                     fontSize = 10.sp,
@@ -1794,6 +1830,240 @@ private fun WatchPartyFullscreenReactions(
                         }
                         .padding(horizontal = 9.dp, vertical = 4.dp),
                 )
+            }
+        }
+
+        // 4b. Top-Right "Who's Here" Presence Strip (when HUD is visible)
+        val liveParty = party
+        if (hudVisible && liveParty != null) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .statusBarsPadding()
+                    .padding(top = 56.dp, end = 16.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xC80A0D16))
+                    .border(1.dp, Color.White.copy(alpha = 0.16f), CircleShape)
+                    .padding(horizontal = 10.dp, vertical = 5.dp),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(7.dp)
+                        .clip(CircleShape)
+                        .background(if (liveParty.status == "playing") Color(0xFF22C55E) else Color(0xFFF59E0B)),
+                )
+                Text(
+                    text = "${liveParty.memberCount} watching",
+                    color = Color.White,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                )
+                liveParty.members.take(4).forEach { m ->
+                    val onBreak = peeBreak?.profileId == m.profileId
+                    Box(
+                        modifier = Modifier
+                            .size(20.dp)
+                            .clip(CircleShape)
+                            .background(if (onBreak) Color(0xFFF59E0B) else Color(0xCC6366F1))
+                            .border(1.dp, Color(0xFF0B0F19), CircleShape),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = if (onBreak) "🚽" else (m.profile?.name ?: "?").take(1).uppercase(),
+                            color = if (onBreak) Color.Black else Color.White,
+                            fontSize = 9.5.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                        )
+                    }
+                }
+            }
+        }
+
+        // 4c. Auto-Fading Live Chat Toasts (bottom-left, non-intrusive)
+        if (!muted && !chatOpen && chatToasts.isNotEmpty()) {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(5.dp),
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(start = 16.dp, bottom = if (hudVisible) 150.dp else 28.dp, end = 80.dp),
+            ) {
+                chatToasts.forEach { (_, sender, body) ->
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Color(0xC80A0D16))
+                            .border(1.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(12.dp))
+                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                    ) {
+                        Text(sender, color = Color(0xFFA5B4FC), fontSize = 11.5.sp, fontWeight = FontWeight.ExtraBold)
+                        Text(body, color = Color.White, fontSize = 11.5.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+            }
+        }
+
+        // 4d. Slide-Over In-Player Chat Panel
+        if (chatOpen && liveParty != null) {
+            Column(
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .padding(end = 14.dp, top = 64.dp, bottom = 148.dp)
+                    .width(290.dp)
+                    .fillMaxHeight()
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(Color(0xE80A0D16))
+                    .border(1.dp, Color.White.copy(alpha = 0.16f), RoundedCornerShape(18.dp)),
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "PARTY CHAT · ${liveParty.memberCount} LIVE",
+                        color = Color(0xFFC7D2FE),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        letterSpacing = 0.8.sp,
+                    )
+                    Text(
+                        text = "✕",
+                        color = Color.White,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .background(Color.White.copy(alpha = 0.1f))
+                            .clickable { chatOpen = false }
+                            .padding(horizontal = 8.dp, vertical = 2.dp),
+                    )
+                }
+                val chatMsgs = liveParty.messages.filter { it.kind != "reaction" }.takeLast(30)
+                LazyColumn(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    items(chatMsgs, key = { "inplayer-msg-${it.id}" }) { m ->
+                        if (m.kind == "system") {
+                            Text(
+                                text = "${m.profile?.name ?: "Someone"} ${m.body.lowercase()}",
+                                color = Color.White.copy(alpha = 0.55f),
+                                fontSize = 11.sp,
+                            )
+                        } else {
+                            Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                                Text(
+                                    text = m.profile?.name ?: "Someone",
+                                    color = Color(0xFFA5B4FC),
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                )
+                                Text(
+                                    text = m.body,
+                                    color = Color.White,
+                                    fontSize = 12.sp,
+                                )
+                            }
+                        }
+                    }
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    androidx.compose.material3.OutlinedTextField(
+                        value = chatInput,
+                        onValueChange = { chatInput = it },
+                        placeholder = { Text("Message…", fontSize = 12.sp, color = Color.White.copy(alpha = 0.5f)) },
+                        singleLine = true,
+                        textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 12.sp),
+                        modifier = Modifier.weight(1f).height(46.dp),
+                    )
+                    Text(
+                        text = "Send",
+                        color = Color.White,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .background(Color(0xFF6366F1))
+                            .clickable {
+                                val txt = chatInput.trim()
+                                if (txt.isNotEmpty()) {
+                                    chatInput = ""
+                                    scope.launch {
+                                        val r = api.postWatchPartyChat(liveParty.id, "chat", txt)
+                                        if (r is MusicApiResult.Success) seenIds += r.data.id
+                                        (api.fetchWatchParty(liveParty.id) as? MusicApiResult.Success)?.let { party = it.data }
+                                    }
+                                }
+                            }
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                    )
+                }
+            }
+        }
+
+        // 4e. Post-Credits Lounge Overlay when Movie Ends
+        if (videoEnded && liveParty != null) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color(0xB8060910)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier
+                        .padding(24.dp)
+                        .clip(RoundedCornerShape(22.dp))
+                        .background(Color(0xF00D111D))
+                        .border(1.5.dp, Color.White.copy(alpha = 0.16f), RoundedCornerShape(22.dp))
+                        .padding(horizontal = 28.dp, vertical = 22.dp),
+                ) {
+                    Text(
+                        text = "★ CREDITS ROLLED ★",
+                        color = Color(0xFFA5B4FC),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        letterSpacing = 2.sp,
+                    )
+                    Text(
+                        text = liveParty.title,
+                        color = Color.White,
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Black,
+                    )
+                    Text(
+                        text = "Hope everyone enjoyed the show!",
+                        color = Color.White.copy(alpha = 0.72f),
+                        fontSize = 13.sp,
+                    )
+                    Text(
+                        text = "Leave Party",
+                        color = Color.Black,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        modifier = Modifier
+                            .padding(top = 6.dp)
+                            .clip(CircleShape)
+                            .background(Color.White)
+                            .clickable { onLeaveParty() }
+                            .padding(horizontal = 20.dp, vertical = 9.dp),
+                    )
+                }
             }
         }
 

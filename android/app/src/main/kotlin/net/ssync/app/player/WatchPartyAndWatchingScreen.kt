@@ -88,7 +88,7 @@ import net.ssync.player.WatchingSession
 
 private val PARTY_EMOJIS = listOf("🍿", "🔥", "😂", "😮", "👏", "❤️")
 
-private data class MobilePartySeed(
+data class MobilePartySeed(
     val itemType: String,
     val itemId: String,
     val title: String,
@@ -128,6 +128,7 @@ fun WatchingNowScreen(
     coordinator: PlaybackCoordinator,
     onNavigate: (PlayerDestination) -> Unit = {},
     onDeviceRevoked: () -> Unit,
+    initialSeed: MobilePartySeed? = null,
 ) {
     val scope = rememberCoroutineScope()
     var sessions by remember { mutableStateOf<List<WatchingSession>>(emptyList()) }
@@ -135,9 +136,33 @@ fun WatchingNowScreen(
     var together by remember { mutableStateOf<List<TogetherTitle>>(emptyList()) }
     var sharing by remember { mutableStateOf(true) }
     var isLoading by remember { mutableStateOf(true) }
-    var showCreate by remember { mutableStateOf(false) }
-    var createSeed by remember { mutableStateOf<MobilePartySeed?>(null) }
+    var showCreate by remember(initialSeed) { mutableStateOf(initialSeed != null) }
+    var createSeed by remember(initialSeed) { mutableStateOf<MobilePartySeed?>(initialSeed) }
     var activePartyId by remember { mutableStateOf<String?>(null) }
+
+    fun jumpIntoLiveParty(party: WatchParty) {
+        scope.launch {
+            if (!party.isMember) {
+                api.joinWatchParty(party.id, ready = true)
+            }
+            val fresh = (api.fetchWatchParty(party.id) as? MusicApiResult.Success)?.data ?: party
+            val art = api.artwork.resolve(fresh.meta?.backdrop ?: fresh.meta?.artwork)
+                ?: api.artwork.forItem(fresh.itemType, fresh.itemId, preferBackdrop = true)
+            coordinator.playVideo(
+                ActivePlayable(
+                    itemType = fresh.itemType,
+                    itemId = fresh.itemId,
+                    title = fresh.title,
+                    subtitle = "Watch Party · ${fresh.hostProfile?.name ?: "Host"}",
+                    artworkUrl = art,
+                    streamUrl = api.streamUrl(fresh.itemType, fresh.itemId),
+                    isVideo = true,
+                    resumePositionMs = (fresh.livePosition * 1000.0).toLong().coerceAtLeast(0L),
+                    partyId = fresh.id,
+                ),
+            )
+        }
+    }
 
     suspend fun refreshAll() {
         coroutineScope {
@@ -235,16 +260,13 @@ fun WatchingNowScreen(
             }
         }
 
-        // ── Section 1: Watch Parties (Live Lobbies & Scheduled Premieres) ──
-        item {
-            SectionHeader("Watch Parties")
-        }
+        // ── Section 1: Cinema Lounge Hero Spotlight / Active Watch Parties ──
         if (parties.isEmpty()) {
             item {
                 Surface(
-                    shape = RoundedCornerShape(16.dp),
+                    shape = RoundedCornerShape(20.dp),
                     color = SoulSyncColors.Card,
-                    border = BorderStroke(1.dp, SoulSyncColors.Line),
+                    border = BorderStroke(1.dp, SoulSyncColors.Accent.copy(alpha = 0.28f)),
                     modifier = Modifier
                         .fillMaxWidth()
                         .clickable {
@@ -252,48 +274,237 @@ fun WatchingNowScreen(
                             showCreate = true
                         },
                 ) {
-                    Row(
-                        modifier = Modifier.padding(16.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(44.dp)
-                                .clip(CircleShape)
-                                .background(SoulSyncColors.Accent.copy(alpha = 0.16f)),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Icon(Icons.Default.People, contentDescription = null, tint = SoulSyncColors.AccentLight)
-                        }
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text("Start a Theater Watch Party", color = Color.White, fontSize = 14.5.sp, fontWeight = FontWeight.Bold)
-                            Text(
-                                "Open a waiting room with music from your library, or schedule a premiere.",
-                                color = SoulSyncColors.TextSecondary,
-                                fontSize = 12.sp,
+                    Column(
+                        modifier = Modifier
+                            .background(
+                                Brush.linearGradient(
+                                    listOf(
+                                        SoulSyncColors.Accent.copy(alpha = 0.16f),
+                                        Color(0xFF0D121D),
+                                    ),
+                                ),
                             )
+                            .padding(18.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text(
+                            text = "★ SOULSYNC THEATER LOUNGE",
+                            color = SoulSyncColors.AccentLight,
+                            fontSize = 10.5.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            letterSpacing = 1.4.sp,
+                        )
+                        Text(
+                            text = "Watch movies & shows together in sync",
+                            color = Color.White,
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                        )
+                        Text(
+                            text = "Open a waiting room with music from your library, unfurl the velvet curtains when everyone is ready, and react live with floating emojis, chat, and pee-break pauses.",
+                            color = SoulSyncColors.TextSecondary,
+                            fontSize = 12.5.sp,
+                            lineHeight = 17.sp,
+                        )
+                        Spacer(Modifier.height(2.dp))
+                        Button(
+                            onClick = {
+                                createSeed = null
+                                showCreate = true
+                            },
+                            shape = CircleShape,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = SoulSyncColors.Accent,
+                                contentColor = SoulSyncColors.OnAccent,
+                            ),
+                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                        ) {
+                            Text("🍿 Open a Theater Room", fontSize = 12.5.sp, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
             }
         } else {
-            itemsIndexed(parties, key = { idx, party -> "party-$idx-${party.id}" }) { _, party ->
-                WatchPartyCinemaCard(
-                    party = party,
-                    api = api,
-                    onOpen = { activePartyId = party.id },
-                )
+            val featured = parties.first()
+            val extraParties = parties.drop(1)
+            item(key = "featured-party-${featured.id}") {
+                val bgUrl = api.artwork.resolve(featured.meta?.backdrop ?: featured.meta?.artwork)
+                    ?: api.artwork.forItem(featured.itemType, featured.itemId, preferBackdrop = true)
+                val isLive = featured.status == "playing" || featured.status == "paused"
+                val statusLabel = when (featured.status) {
+                    "playing" -> "LIVE NOW · ${formatClockSec(featured.livePosition)}"
+                    "paused" -> "PAUSED · ${formatClockSec(featured.livePosition)}"
+                    "scheduled" -> "SCHEDULED · ${formatCountdown(featured.scheduledFor)}"
+                    else -> "THEATER LOBBY · ${featured.readyCount}/${featured.memberCount} READY"
+                }
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(226.dp)
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(Color(0xFF0D121D))
+                        .border(1.dp, SoulSyncColors.Accent.copy(alpha = 0.36f), RoundedCornerShape(20.dp))
+                        .clickable {
+                            if (isLive) jumpIntoLiveParty(featured) else activePartyId = featured.id
+                        },
+                ) {
+                    SoulSyncArtwork(
+                        url = bgUrl,
+                        contentDescription = featured.title,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(
+                                Brush.verticalGradient(
+                                    listOf(
+                                        Color(0x55070A10),
+                                        Color(0xCC070A10),
+                                        Color(0xFA070A10),
+                                    ),
+                                ),
+                            ),
+                    )
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(16.dp),
+                        verticalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                modifier = Modifier
+                                    .clip(CircleShape)
+                                    .background(Color(0xB8070A10))
+                                    .border(1.dp, Color.White.copy(alpha = 0.16f), CircleShape)
+                                    .padding(horizontal = 10.dp, vertical = 4.dp),
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(7.dp)
+                                        .clip(CircleShape)
+                                        .background(if (isLive) Color(0xFF22C55E) else SoulSyncColors.AccentLight),
+                                )
+                                Text(
+                                    text = statusLabel,
+                                    color = Color.White,
+                                    fontSize = 10.5.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                )
+                            }
+                            Text(
+                                text = "${featured.memberCount} ${if (featured.memberCount == 1) "viewer" else "viewers"}",
+                                color = Color.White,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier
+                                    .clip(CircleShape)
+                                    .background(Color(0x99070A10))
+                                    .padding(horizontal = 9.dp, vertical = 4.dp),
+                            )
+                        }
+
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(
+                                text = featured.title,
+                                color = Color.White,
+                                fontSize = 20.sp,
+                                fontWeight = FontWeight.Black,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                text = buildString {
+                                    append("Hosted by ${featured.hostProfile?.name ?: "Host"}")
+                                    featured.meta?.subtitle?.takeIf { it.isNotBlank() }?.let { append(" · $it") }
+                                },
+                                color = SoulSyncColors.TextSecondary,
+                                fontSize = 12.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.padding(top = 4.dp),
+                            ) {
+                                if (isLive) {
+                                    Button(
+                                        onClick = { jumpIntoLiveParty(featured) },
+                                        shape = CircleShape,
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = Color.White,
+                                            contentColor = Color.Black,
+                                        ),
+                                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+                                        modifier = Modifier.height(34.dp),
+                                    ) {
+                                        Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
+                                        Spacer(Modifier.width(4.dp))
+                                        Text(
+                                            text = "Jump In (${formatClockSec(featured.livePosition)})",
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.ExtraBold,
+                                        )
+                                    }
+                                    OutlinedButton(
+                                        onClick = { activePartyId = featured.id },
+                                        shape = CircleShape,
+                                        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.28f)),
+                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                                        modifier = Modifier.height(34.dp),
+                                    ) {
+                                        Text("Lounge", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                    }
+                                } else {
+                                    Button(
+                                        onClick = { activePartyId = featured.id },
+                                        shape = CircleShape,
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = Color.White,
+                                            contentColor = Color.Black,
+                                        ),
+                                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
+                                        modifier = Modifier.height(34.dp),
+                                    ) {
+                                        Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
+                                        Spacer(Modifier.width(4.dp))
+                                        Text(
+                                            text = if (featured.status == "scheduled") "RSVP & Enter" else "Enter Theater Lobby",
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.ExtraBold,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if (extraParties.isNotEmpty()) {
+                itemsIndexed(extraParties, key = { idx, party -> "party-$idx-${party.id}" }) { _, party ->
+                    WatchPartyCinemaCard(
+                        party = party,
+                        api = api,
+                        onOpen = { activePartyId = party.id },
+                    )
+                }
             }
         }
 
-        // ── Section 2: Right Now (Redesigned Cinema Backdrop Cards) ──
+        // ── Section 2: On Air Right Now (Live Screens) ──
         item {
-            SectionHeader("Right Now")
+            SectionHeader("On Air Right Now")
         }
         if (sessions.isEmpty()) {
             item {
-                EmptyBox("Nobody else is watching or listening right now.")
+                EmptyBox("All screens are quiet — live sessions appear here.")
             }
         } else {
             itemsIndexed(sessions, key = { idx, s -> "s-$idx-${s.profileId}-${s.itemType}-${s.itemId}" }) { _, s ->
@@ -342,77 +553,122 @@ fun WatchingNowScreen(
             }
         }
 
-        // ── Section 3: Watching the Same Thing ──
+        // ── Section 3: Finish Together (60-Day Shared Watch History — Horizontal Strip) ──
         if (together.isNotEmpty()) {
-            item { SectionHeader("Watching the Same Thing") }
-            itemsIndexed(together, key = { idx, t -> "tog-$idx-${t.key.ifBlank { "${t.itemType}:${t.itemId}" }}" }) { _, t ->
-                val mine = t.mine
-                val title = mine?.meta?.parentTitle ?: mine?.meta?.title ?: t.title.ifBlank { "Shared Title" }
-                val artUrl = api.artwork.resolve(mine?.meta?.artwork ?: t.artwork)
-                val itemType = mine?.itemType?.ifBlank { t.itemType } ?: t.itemType
-                val itemId = mine?.itemId?.ifBlank { t.itemId } ?: t.itemId
-                val othersSummary = if (t.others.isNotEmpty()) {
-                    t.others.joinToString(" · ") { o -> o.profile?.name ?: "Someone" }
-                } else {
-                    t.profiles.joinToString(", ")
+            item {
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    SectionHeader("Finish Together")
+                    Text(
+                        text = "Shared watch history · last 60 days",
+                        color = SoulSyncColors.TextSecondary,
+                        fontSize = 11.5.sp,
+                    )
                 }
+            }
+            item {
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    itemsIndexed(
+                        together,
+                        key = { idx, t -> "tog-$idx-${t.key.ifBlank { "${t.itemType}:${t.itemId}" }}" },
+                    ) { _, t ->
+                        val mine = t.mine
+                        val title = mine?.meta?.parentTitle ?: mine?.meta?.title ?: t.title.ifBlank { "Shared Title" }
+                        val artUrl = api.artwork.resolve(mine?.meta?.artwork ?: t.artwork)
+                        val itemType = mine?.itemType?.ifBlank { t.itemType } ?: t.itemType
+                        val itemId = mine?.itemId?.ifBlank { t.itemId } ?: t.itemId
+                        val othersSummary = if (t.others.isNotEmpty()) {
+                            t.others.joinToString(" · ") { o -> o.profile?.name ?: "Someone" }
+                        } else {
+                            t.profiles.joinToString(", ")
+                        }
 
-                Surface(
-                    shape = RoundedCornerShape(14.dp),
-                    color = SoulSyncColors.Card,
-                    border = BorderStroke(1.dp, SoulSyncColors.Line),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Row(
-                        modifier = Modifier.padding(10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    ) {
-                        SoulSyncArtwork(
-                            url = artUrl,
-                            contentDescription = title,
-                            modifier = Modifier
-                                .width(52.dp)
-                                .height(76.dp)
-                                .clip(RoundedCornerShape(8.dp)),
-                        )
-                        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Text(
-                                text = title,
-                                color = Color.White,
-                                fontSize = 14.5.sp,
-                                fontWeight = FontWeight.Bold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            if (othersSummary.isNotBlank()) {
-                                Text(
-                                    text = "Also watching: $othersSummary",
-                                    color = SoulSyncColors.TextSecondary,
-                                    fontSize = 12.sp,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
+                        Surface(
+                            shape = RoundedCornerShape(14.dp),
+                            color = SoulSyncColors.Card,
+                            border = BorderStroke(1.dp, SoulSyncColors.Line),
+                            modifier = Modifier.width(276.dp),
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            ) {
+                                SoulSyncArtwork(
+                                    url = artUrl,
+                                    contentDescription = title,
+                                    modifier = Modifier
+                                        .width(50.dp)
+                                        .height(74.dp)
+                                        .clip(RoundedCornerShape(8.dp)),
                                 )
-                            }
-                            if (itemType == "movie" || itemType == "episode" || itemType == "youtube") {
-                                OutlinedButton(
-                                    onClick = {
-                                        createSeed = MobilePartySeed(
-                                            itemType = itemType,
-                                            itemId = itemId,
-                                            title = title,
-                                            subtitle = mine?.meta?.subtitle,
-                                            artwork = mine?.meta?.artwork ?: t.artwork,
-                                            backdrop = mine?.meta?.backdrop,
+                                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Text(
+                                        text = title,
+                                        color = Color.White,
+                                        fontSize = 13.5.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                    if (othersSummary.isNotBlank()) {
+                                        Text(
+                                            text = "With $othersSummary",
+                                            color = SoulSyncColors.TextSecondary,
+                                            fontSize = 11.sp,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
                                         )
-                                        showCreate = true
-                                    },
-                                    shape = CircleShape,
-                                    border = BorderStroke(1.dp, SoulSyncColors.Accent.copy(alpha = 0.55f)),
-                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                                    modifier = Modifier.height(30.dp),
-                                ) {
-                                    Text("🍿 Watch Party", color = SoulSyncColors.AccentLight, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
+                                    }
+                                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        if (mine != null && !mine.finished) {
+                                            Button(
+                                                onClick = {
+                                                    val isAudio = itemType == "track" || itemType == "audiobook" || itemType == "podcast_episode"
+                                                    val playable = ActivePlayable(
+                                                        itemType = itemType,
+                                                        itemId = itemId,
+                                                        title = title,
+                                                        subtitle = mine.meta?.subtitle ?: "",
+                                                        artworkUrl = artUrl,
+                                                        streamUrl = api.streamUrl(itemType, itemId),
+                                                        isVideo = !isAudio,
+                                                        resumePositionMs = (mine.position * 1000.0).toLong().coerceAtLeast(0L),
+                                                    )
+                                                    if (isAudio) coordinator.playAudio(playable) else coordinator.playVideo(playable)
+                                                },
+                                                shape = CircleShape,
+                                                colors = ButtonDefaults.buttonColors(
+                                                    containerColor = Color.White,
+                                                    contentColor = Color.Black,
+                                                ),
+                                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                                                modifier = Modifier.height(28.dp),
+                                            ) {
+                                                Text("Resume", fontSize = 11.sp, fontWeight = FontWeight.ExtraBold)
+                                            }
+                                        }
+                                        if (itemType == "movie" || itemType == "episode" || itemType == "youtube") {
+                                            OutlinedButton(
+                                                onClick = {
+                                                    createSeed = MobilePartySeed(
+                                                        itemType = itemType,
+                                                        itemId = itemId,
+                                                        title = title,
+                                                        subtitle = mine?.meta?.subtitle,
+                                                        artwork = mine?.meta?.artwork ?: t.artwork,
+                                                        backdrop = mine?.meta?.backdrop,
+                                                    )
+                                                    showCreate = true
+                                                },
+                                                shape = CircleShape,
+                                                border = BorderStroke(1.dp, SoulSyncColors.Accent.copy(alpha = 0.55f)),
+                                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                                                modifier = Modifier.height(28.dp),
+                                            ) {
+                                                Text("🍿 Party", color = SoulSyncColors.AccentLight, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }

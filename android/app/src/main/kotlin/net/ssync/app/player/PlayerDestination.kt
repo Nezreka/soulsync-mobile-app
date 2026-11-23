@@ -34,6 +34,13 @@ sealed interface PlayerDestination {
     data class AudiobookDetail(val book: OwnedBook) : PlayerDestination
     data object Watchlist : PlayerDestination
     data object WatchingNow : PlayerDestination
+    data class StartWatchParty(
+        val itemType: String,
+        val itemId: String,
+        val title: String,
+        val artwork: String? = null,
+        val backdrop: String? = null,
+    ) : PlayerDestination
     data object Search : PlayerDestination
     data object Settings : PlayerDestination
 }

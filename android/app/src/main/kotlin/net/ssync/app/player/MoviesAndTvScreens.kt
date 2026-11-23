@@ -197,29 +197,59 @@ fun MovieDetailScreen(
             }
         }
         item {
-            Row(
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = 16.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                OfflineDownloadButton(
-                    api = api,
-                    itemType = "movie",
-                    itemId = movie.id.toString(),
-                    title = movie.title,
-                    subtitle = movie.year?.toString() ?: "",
-                    artworkUrl = api.artwork.moviePoster(movie.id),
-                    streamUrl = api.streamUrl("movie", movie.id.toString()),
-                    isVideo = true,
-                )
-                ReportIssuePillButton(
-                    onClick = {
-                        issueTarget = ReportIssueTarget(
-                            entityType = "movie",
-                            entityId = movie.id,
-                            title = movie.title,
-                        )
-                    },
-                )
+                item {
+                    OutlinedButton(
+                        onClick = {
+                            onNavigate(
+                                PlayerDestination.StartWatchParty(
+                                    itemType = "movie",
+                                    itemId = movie.id.toString(),
+                                    title = movie.title,
+                                    artwork = "/api/video/poster/movie/${movie.id}",
+                                    backdrop = "/api/video/backdrop/movie/${movie.id}",
+                                ),
+                            )
+                        },
+                        shape = CircleShape,
+                        border = BorderStroke(1.dp, SoulSyncColors.Accent.copy(alpha = 0.55f)),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            containerColor = SoulSyncColors.Accent.copy(alpha = 0.14f),
+                            contentColor = Color.White,
+                        ),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                        modifier = Modifier.height(34.dp).dpadFocusable(CircleShape),
+                    ) {
+                        Text("🍿 Watch Party", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+                item {
+                    OfflineDownloadButton(
+                        api = api,
+                        itemType = "movie",
+                        itemId = movie.id.toString(),
+                        title = movie.title,
+                        subtitle = movie.year?.toString() ?: "",
+                        artworkUrl = api.artwork.moviePoster(movie.id),
+                        streamUrl = api.streamUrl("movie", movie.id.toString()),
+                        isVideo = true,
+                    )
+                }
+                item {
+                    ReportIssuePillButton(
+                        onClick = {
+                            issueTarget = ReportIssueTarget(
+                                entityType = "movie",
+                                entityId = movie.id,
+                                title = movie.title,
+                            )
+                        },
+                    )
+                }
             }
         }
         if (movie.cast.isNotEmpty()) {
@@ -1255,19 +1285,50 @@ fun ShowDetailScreen(
         }
 
         item {
-            Row(
-                modifier = Modifier.padding(horizontal = 16.dp),
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = 16.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                ReportIssuePillButton(
-                    onClick = {
-                        issueTarget = ReportIssueTarget(
-                            entityType = "show",
-                            entityId = show.id,
-                            title = show.title,
-                        )
-                    },
-                )
+                if (upNext != null) {
+                    item {
+                        val (se, ep) = upNext
+                        OutlinedButton(
+                            onClick = {
+                                onNavigate(
+                                    PlayerDestination.StartWatchParty(
+                                        itemType = "episode",
+                                        itemId = ep.id.toString(),
+                                        title = "${show.title} · S${se.seasonNumber} E${ep.episodeNumber}",
+                                        artwork = "/api/video/poster/show/${show.id}",
+                                        backdrop = "/api/video/backdrop/show/${show.id}",
+                                    ),
+                                )
+                            },
+                            shape = CircleShape,
+                            border = BorderStroke(1.dp, SoulSyncColors.Accent.copy(alpha = 0.55f)),
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                containerColor = SoulSyncColors.Accent.copy(alpha = 0.14f),
+                                contentColor = Color.White,
+                            ),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                            modifier = Modifier.height(34.dp).dpadFocusable(CircleShape),
+                        ) {
+                            Text("🍿 Watch Party", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+                item {
+                    ReportIssuePillButton(
+                        onClick = {
+                            issueTarget = ReportIssueTarget(
+                                entityType = "show",
+                                entityId = show.id,
+                                title = show.title,
+                            )
+                        },
+                    )
+                }
             }
         }
 

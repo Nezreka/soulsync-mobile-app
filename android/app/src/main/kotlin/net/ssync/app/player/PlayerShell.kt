@@ -1179,6 +1179,19 @@ private fun PlayerContent(
         is PlayerDestination.AudiobookDetail -> AudiobookDetailScreen(current.book, api, coordinator)
         PlayerDestination.Watchlist -> WatchlistScreen(api, onNavigate, onDeviceRevoked)
         PlayerDestination.WatchingNow -> WatchingNowScreen(api, coordinator, onNavigate, onDeviceRevoked)
+        is PlayerDestination.StartWatchParty -> WatchingNowScreen(
+            api = api,
+            coordinator = coordinator,
+            onNavigate = onNavigate,
+            onDeviceRevoked = onDeviceRevoked,
+            initialSeed = MobilePartySeed(
+                itemType = current.itemType,
+                itemId = current.itemId,
+                title = current.title,
+                artwork = current.artwork,
+                backdrop = current.backdrop,
+            ),
+        )
         PlayerDestination.Search -> SearchScreen(api, coordinator, onNavigate, onDeviceRevoked)
         PlayerDestination.Settings -> SettingsScreen(
             record = record,
