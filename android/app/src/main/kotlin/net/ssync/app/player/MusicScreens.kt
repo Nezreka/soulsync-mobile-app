@@ -1784,6 +1784,7 @@ fun AlbumDetailScreen(
     coordinator: PlaybackCoordinator,
     onDeviceRevoked: () -> Unit,
     onArtistClick: (Int) -> Unit = {},
+    highlightTrackId: Int? = null,
 ) {
     var album by remember { mutableStateOf<LibAlbumDetail?>(null) }
     var isLoading by remember { mutableStateOf(true) }
@@ -1867,7 +1868,18 @@ fun AlbumDetailScreen(
         }
     }
 
+    val albumListState = androidx.compose.foundation.lazy.rememberLazyListState()
+    LaunchedEffect(al.tracks, highlightTrackId) {
+        if (highlightTrackId != null) {
+            val idx = al.tracks.indexOfFirst { it.id == highlightTrackId }
+            if (idx >= 0) {
+                albumListState.animateScrollToItem(idx + 1)
+            }
+        }
+    }
+
     LazyColumn(
+        state = albumListState,
         contentPadding = PaddingValues(bottom = 36.dp),
     ) {
         // Centered Apple Music / Plexamp album hero

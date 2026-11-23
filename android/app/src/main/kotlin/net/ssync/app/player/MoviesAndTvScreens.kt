@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -1145,6 +1146,8 @@ fun ShowDetailScreen(
     coordinator: PlaybackCoordinator,
     onNavigate: (PlayerDestination) -> Unit,
     onDeviceRevoked: () -> Unit,
+    initialSeason: Int? = null,
+    highlightEpisode: Int? = null,
 ) {
     val scope = rememberCoroutineScope()
     var detail by remember { mutableStateOf<ShowDetail?>(null) }
@@ -1206,6 +1209,14 @@ fun ShowDetailScreen(
     val seasons = remember(show) {
         show.seasons.sortedBy { if (it.seasonNumber == 0) 999 else it.seasonNumber }
     }
+    var didApplyInitialSeason by remember(showId, initialSeason) { mutableStateOf(false) }
+    LaunchedEffect(seasons, initialSeason) {
+        if (!didApplyInitialSeason && initialSeason != null && seasons.isNotEmpty()) {
+            val idx = seasons.indexOfFirst { it.seasonNumber == initialSeason }
+            if (idx >= 0) selectedSeasonIndex = idx
+            didApplyInitialSeason = true
+        }
+    }
     val safeSeasonIndex = selectedSeasonIndex.coerceIn(0, (seasons.size - 1).coerceAtLeast(0))
     val activeSeason = seasons.getOrNull(safeSeasonIndex)
 
@@ -1239,7 +1250,19 @@ fun ShowDetailScreen(
     val ownedSeasonEps = activeSeason?.episodes?.count { it.owned } ?: 0
     val hasMissingInSeason = ownedSeasonEps < totalSeasonEps
 
+    val showListState = rememberLazyListState()
+    LaunchedEffect(activeEpisodes, highlightEpisode, activeSeason?.seasonNumber) {
+        if (highlightEpisode != null && (initialSeason == null || activeSeason?.seasonNumber == initialSeason)) {
+            val epIdx = activeEpisodes.indexOfFirst { it.episodeNumber == highlightEpisode }
+            if (epIdx >= 0) {
+                // Account for Hero + Overview + Seasons + Active Season Header items above episodes
+                showListState.animateScrollToItem((epIdx + 3).coerceAtLeast(0))
+            }
+        }
+    }
+
     LazyColumn(
+        state = showListState,
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(bottom = 32.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -1544,6 +1567,9 @@ fun ShowDetailScreen(
                     requestMode = showRequestMode,
                     stillUrl = api.artwork.episodeStill(ep.id),
                     api = api,
+                    initialExpanded = highlightEpisode != null &&
+                        ep.episodeNumber == highlightEpisode &&
+                        (initialSeason == null || activeSeason.seasonNumber == initialSeason),
                     onPlay = { playEpisode(activeSeason.seasonNumber, ep) },
                     onStartWatchParty = {
                         scope.launch {
@@ -1706,13 +1732,14 @@ private fun ShowEpisodeCard(
     requestMode: String = "ask",
     stillUrl: String,
     api: PlayerApiClient,
+    initialExpanded: Boolean = false,
     onPlay: () -> Unit,
     onStartWatchParty: () -> Unit = {},
     onReportIssue: () -> Unit = {},
     onPersonClick: (Int, String) -> Unit = { _, _ -> },
 ) {
     val scope = rememberCoroutineScope()
-    var expanded by remember(episode.id) { mutableStateOf(false) }
+    var expanded by remember(episode.id, initialExpanded) { mutableStateOf(initialExpanded) }
     var extra by remember(episode.id) { mutableStateOf<net.ssync.player.EpisodeExtra?>(null) }
     var extraLoading by remember(episode.id) { mutableStateOf(false) }
     var reqBusy by remember(episode.id) { mutableStateOf(false) }

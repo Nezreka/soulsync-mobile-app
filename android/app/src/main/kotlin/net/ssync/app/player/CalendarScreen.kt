@@ -816,7 +816,13 @@ fun CalendarScreen(
             onOpenShow = ep.showId?.takeIf { !ep.notInLibrary }?.let { sid ->
                 {
                     modalEpisode = null
-                    onOpenShow(sid)
+                    onNavigate(
+                        PlayerDestination.ShowDetail(
+                            showId = sid,
+                            initialSeason = ep.seasonNumber,
+                            highlightEpisode = ep.episodeNumber,
+                        ),
+                    )
                 }
             },
             onDismiss = { modalEpisode = null },

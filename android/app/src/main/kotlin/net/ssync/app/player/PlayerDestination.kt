@@ -12,12 +12,19 @@ sealed interface PlayerDestination {
     data object Movies : PlayerDestination
     data class MovieDetail(val movieId: Int) : PlayerDestination
     data object Tv : PlayerDestination
-    data class ShowDetail(val showId: Int) : PlayerDestination
+    data class ShowDetail(
+        val showId: Int,
+        val initialSeason: Int? = null,
+        val highlightEpisode: Int? = null,
+    ) : PlayerDestination
     data class EpisodeDetail(val showId: Int, val episodeId: Int) : PlayerDestination
     data class PersonDetail(val tmdbId: Int, val name: String) : PlayerDestination
     data object Music : PlayerDestination
     data class ArtistDetail(val artistId: Int) : PlayerDestination
-    data class AlbumDetail(val albumId: Int) : PlayerDestination
+    data class AlbumDetail(
+        val albumId: Int,
+        val highlightTrackId: Int? = null,
+    ) : PlayerDestination
     data class PlaylistDetail(val playlistId: Int) : PlayerDestination
     data object YouTube : PlayerDestination
     data class YouTubeChannel(val channelId: String, val title: String) : PlayerDestination

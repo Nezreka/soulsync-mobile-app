@@ -476,7 +476,7 @@ fun HomeScreen(
                                                 )
                                             }
                                             "track" -> if (parentInt != null) {
-                                                onNavigate(PlayerDestination.AlbumDetail(parentInt))
+                                                onNavigate(PlayerDestination.AlbumDetail(parentInt, highlightTrackId = idInt))
                                             } else {
                                                 onNavigate(PlayerDestination.Music)
                                             }
@@ -587,7 +587,15 @@ fun HomeScreen(
                                         parentId = ep.showId.toString(),
                                         onOpenDetails = { onNavigate(PlayerDestination.ShowDetail(ep.showId)) },
                                     ),
-                                    onClick = { onNavigate(PlayerDestination.ShowDetail(ep.showId)) },
+                                    onClick = {
+                                        onNavigate(
+                                            PlayerDestination.ShowDetail(
+                                                showId = ep.showId,
+                                                initialSeason = ep.seasonNumber,
+                                                highlightEpisode = ep.episodeNumber,
+                                            ),
+                                        )
+                                    },
                                 )
                             }
                         }

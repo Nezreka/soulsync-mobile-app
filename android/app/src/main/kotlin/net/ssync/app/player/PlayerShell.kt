@@ -1141,7 +1141,15 @@ private fun PlayerContent(
         PlayerDestination.Movies -> MoviesScreen(api, { onNavigate(PlayerDestination.MovieDetail(it)) }, onDeviceRevoked)
         is PlayerDestination.MovieDetail -> MovieDetailScreen(current.movieId, api, coordinator, onNavigate, onDeviceRevoked)
         PlayerDestination.Tv -> TvScreen(api, { onNavigate(PlayerDestination.ShowDetail(it)) }, onDeviceRevoked)
-        is PlayerDestination.ShowDetail -> ShowDetailScreen(current.showId, api, coordinator, onNavigate, onDeviceRevoked)
+        is PlayerDestination.ShowDetail -> ShowDetailScreen(
+            showId = current.showId,
+            api = api,
+            coordinator = coordinator,
+            onNavigate = onNavigate,
+            onDeviceRevoked = onDeviceRevoked,
+            initialSeason = current.initialSeason,
+            highlightEpisode = current.highlightEpisode,
+        )
         is PlayerDestination.EpisodeDetail -> EpisodeDetailScreen(current.showId, current.episodeId, api, coordinator, onNavigate, onDeviceRevoked)
         is PlayerDestination.PersonDetail -> PersonDetailScreen(current.tmdbId, current.name, api, onNavigate, onDeviceRevoked)
         PlayerDestination.Music -> MusicScreen(api, coordinator, onNavigate, onDeviceRevoked)
@@ -1152,6 +1160,7 @@ private fun PlayerContent(
             coordinator = coordinator,
             onDeviceRevoked = onDeviceRevoked,
             onArtistClick = { onNavigate(PlayerDestination.ArtistDetail(it)) },
+            highlightTrackId = current.highlightTrackId,
         )
         is PlayerDestination.PlaylistDetail -> PlaylistDetailScreen(current.playlistId, api, coordinator, onDeviceRevoked)
         PlayerDestination.YouTube -> YouTubeScreen(api, coordinator, { id, title -> onNavigate(PlayerDestination.YouTubeChannel(id, title)) }, onDeviceRevoked)
