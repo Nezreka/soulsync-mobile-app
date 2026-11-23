@@ -1305,6 +1305,7 @@ private fun MusicTrackRow(
     duration: String?,
     isActive: Boolean,
     showDivider: Boolean,
+    playable: Boolean = true,
     trailingActions: (@Composable () -> Unit)? = null,
     onClick: () -> Unit,
 ) {
@@ -1312,7 +1313,7 @@ private fun MusicTrackRow(
         modifier = Modifier
             .fillMaxWidth()
             .background(if (isActive) SoulSyncColors.Accent.copy(alpha = 0.09f) else Color.Transparent)
-            .clickable(onClick = onClick),
+            .clickable(enabled = playable, onClick = onClick),
     ) {
         Row(
             modifier = Modifier
@@ -1323,6 +1324,7 @@ private fun MusicTrackRow(
             Box(
                 modifier = Modifier
                     .size(48.dp)
+                    .alpha(if (playable) 1f else 0.45f)
                     .clip(RoundedCornerShape(8.dp))
                     .background(SoulSyncColors.CardRaised)
                     .border(
@@ -1354,15 +1356,45 @@ private fun MusicTrackRow(
                 }
             }
             Spacer(modifier = Modifier.width(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = title,
-                    color = if (isActive) SoulSyncColors.AccentLight else SoulSyncColors.TextPrimary,
-                    fontSize = 15.sp,
-                    fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Medium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .alpha(if (playable) 1f else 0.48f),
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text(
+                        text = title,
+                        color = when {
+                            isActive -> SoulSyncColors.AccentLight
+                            playable -> SoulSyncColors.TextPrimary
+                            else -> SoulSyncColors.TextSecondary
+                        },
+                        fontSize = 15.sp,
+                        fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    if (!playable) {
+                        Surface(
+                            shape = RoundedCornerShape(999.dp),
+                            color = Color.White.copy(alpha = 0.08f),
+                            border = BorderStroke(0.5.dp, Color.White.copy(alpha = 0.16f)),
+                        ) {
+                            Text(
+                                text = "MISSING",
+                                color = SoulSyncColors.TextSecondary,
+                                fontSize = 8.5.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                letterSpacing = 0.5.sp,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp),
+                            )
+                        }
+                    }
+                }
                 if (subtitle.isNotBlank()) {
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
@@ -1373,16 +1405,21 @@ private fun MusicTrackRow(
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
-            }
-            if (trailingActions != null) {
-                Spacer(modifier = Modifier.width(4.dp))
-                trailingActions()
+                if (playable && trailingActions != null) {
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(2.dp),
+                    ) {
+                        trailingActions()
+                    }
+                }
             }
             if (!duration.isNullOrBlank()) {
-                Spacer(modifier = Modifier.width(6.dp))
+                Spacer(modifier = Modifier.width(8.dp))
                 Text(
                     text = duration,
-                    color = SoulSyncColors.TextSecondary,
+                    color = SoulSyncColors.TextSecondary.copy(alpha = if (playable) 1f else 0.5f),
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Medium,
                 )
@@ -1744,7 +1781,7 @@ fun AlbumDetailScreen(
     val coverUrl = api.artwork.resolve(al.imageUrl) ?: api.artwork.albumArtwork(al.id)
     val activeTrackId = coordinator.activeItem?.takeIf { it.itemType == "track" }?.itemId
 
-    val playableTracks = al.tracks.filter { it.id != null && !it.isMissing }.map { t ->
+    val playableTracks = al.tracks.filter { it.isOwned }.map { t ->
         ActivePlayable(
             itemType = "track",
             itemId = t.id.toString(),
@@ -1752,10 +1789,11 @@ fun AlbumDetailScreen(
             subtitle = al.primaryArtist?.name ?: al.title,
             artworkUrl = coverUrl,
             streamUrl = api.streamUrl("track", t.id.toString()),
+            parentId = al.id.toString(),
         )
     }
     val missingEntries = al.tracks.mapIndexedNotNull { idx, t ->
-        if (t.isMissing || t.id == null) Triple(idx, t, "${t.id ?: "m-$idx"}") else null
+        if (!t.isOwned) Triple(idx, t, "${t.id ?: "m-$idx"}") else null
     }
     val unrequestedMissing = missingEntries.filter { (_, _, key) ->
         val st = reqState[key]
@@ -1994,7 +2032,7 @@ fun AlbumDetailScreen(
                 )
             }
 
-            val playable = !t.isMissing && t.id != null
+            val playable = t.isOwned
             val rowKey = "${t.id ?: "m-$idx"}"
             val st = reqState[rowKey]
             val isActive = playable && activeTrackId == t.id?.toString()
@@ -2173,19 +2211,26 @@ private fun AlbumTrackRow(
                         color = SoulSyncColors.TextSecondary,
                         fontSize = 11.5.sp,
                     )
+                } else if (trailingActions != null) {
+                    // 2-tier mobile layout: full width for the track title above,
+                    // crisp always-visible action buttons tucked neatly underneath!
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(2.dp),
+                    ) {
+                        trailingActions()
+                    }
                 }
             }
 
-            Spacer(modifier = Modifier.width(10.dp))
+            Spacer(modifier = Modifier.width(8.dp))
 
             if (playable) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    if (trailingActions != null) {
-                        trailingActions()
-                    }
                     if (!format.isNullOrBlank()) {
                         val isLossless = format == "FLAC" || format == "ALAC" || format == "WAV"
                         Surface(
@@ -2359,14 +2404,16 @@ fun PlaylistDetailScreen(
             }
         }
         itemsIndexed(pl.tracks) { idx, item ->
+            val isPlayable = item.trackId != null
             MusicTrackRow(
                 title = item.title,
                 subtitle = listOfNotNull(item.artist, item.album).joinToString(" · "),
                 artworkUrl = api.artwork.albumArtwork(item.albumId),
                 duration = formatTrackDuration(item.durationMs),
-                isActive = activeTrackId == item.trackId?.toString(),
+                isActive = isPlayable && activeTrackId == item.trackId?.toString(),
                 showDivider = idx < pl.tracks.lastIndex,
-                trailingActions = if (item.trackId != null) {
+                playable = isPlayable,
+                trailingActions = if (isPlayable) {
                     {
                         val songRef = SongRefPayload(
                             title = item.title,

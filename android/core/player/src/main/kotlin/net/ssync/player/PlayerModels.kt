@@ -346,8 +346,21 @@ data class LibTrack(
     val explicit: Boolean = false,
     @SerialName("is_missing")
     val isMissing: Boolean = false,
+    @SerialName("file_status")
+    val fileStatus: String? = null,
+    @SerialName("file_count")
+    val fileCount: Int = 0,
+    @SerialName("server_track_id")
+    val serverTrackId: String? = null,
     val file: LibTrackFile? = null,
-)
+) {
+    /** True only when this album track actually has a playable local/server file. */
+    val isOwned: Boolean
+        get() = id != null &&
+            !isMissing &&
+            !fileStatus.equals("missing", ignoreCase = true) &&
+            (file != null || fileCount > 0 || !serverTrackId.isNullOrBlank())
+}
 
 @Serializable
 data class LibArtistRef(
