@@ -544,33 +544,50 @@ private fun scheduleMusicBlocks(
     windowEndSec: Long,
 ): List<EpgProgram> {
     if (pool.isEmpty()) return emptyList()
-    val blockSec = 1800L // 30-min music blocks (matches desktop mergeIntoBlocks)
-    val progs = mutableListOf<EpgProgram>()
-    var t = windowStartSec
-    var i = 0
-    val baseHash = deterministicHash(channelId)
-    while (t < windowEndSec && i < 12) {
-        val lead = pool[((baseHash + i * 7L) % pool.size).toInt()]
-        val next = pool[((baseHash + i * 7L + 1L) % pool.size).toInt()]
-        val sub = listOf(lead.subtitle, next.subtitle)
-            .filter { it.isNotBlank() }
-            .distinct()
-            .joinToString(" · ")
-            .ifBlank { blurb }
-        progs += EpgProgram(
+    // Exact parity with desktop: schedule Day/Window programs with scheduleVideoPrograms,
+    // then mergeIntoBlocks(programs, minSeconds = 1800) + blockArtists(block, show = 2).
+    val rawPrograms = scheduleVideoPrograms(
+        channelId = channelId,
+        pool = pool,
+        ordered = false,
+        windowStartSec = windowStartSec,
+        windowEndSec = windowEndSec,
+    )
+    if (rawPrograms.isEmpty()) return emptyList()
+    val minSec = 1800L
+    val blocks = mutableListOf<MutableList<EpgProgram>>()
+    for (p in rawPrograms) {
+        val current = blocks.lastOrNull()
+        if (
+            current == null ||
+            current.last().endEpochSec != p.startEpochSec ||
+            (current.last().endEpochSec - current.first().startEpochSec) >= minSec
+        ) {
+            blocks.add(mutableListOf(p))
+        } else {
+            current.add(p)
+        }
+    }
+    return blocks.map { items ->
+        val lead = items.first()
+        val last = items.last()
+        val artists = items.mapNotNull { it.subtitle.trim().takeIf { s -> s.isNotEmpty() } }.distinct()
+        val sub = when {
+            artists.isEmpty() -> blurb
+            artists.size <= 2 -> artists.joinToString(", ")
+            else -> "${artists.take(2).joinToString(", ")} and ${artists.size - 2} more"
+        }
+        EpgProgram(
             itemType = "track",
             itemId = lead.itemId,
             detailId = lead.detailId,
-            title = "$channelName — ${lead.title}",
+            title = channelName,
             subtitle = sub,
-            artworkUrl = lead.posterUrl,
-            startEpochSec = t,
-            endEpochSec = t + blockSec,
+            artworkUrl = lead.artworkUrl,
+            startEpochSec = lead.startEpochSec,
+            endEpochSec = last.endEpochSec,
         )
-        t += blockSec
-        i++
     }
-    return progs
 }
 
 private data class RawChannel(
@@ -596,7 +613,7 @@ private fun buildDesktopParityChannels(
 ): List<EpgChannel> {
     val raw = mutableListOf<RawChannel>()
     val nowMs = System.currentTimeMillis()
-    val monthAgoMs = nowMs - 30L * 86_400_000L
+    val monthAgoMs = startOfLocalDayMs(nowMs) - 30L * 86_400_000L
 
     fun addChannel(c: RawChannel) {
         val playable = c.pool.filter { it.seconds >= 60 }
