@@ -287,28 +287,37 @@ private fun hasEnoughPool(pool: List<PoolItem>): Boolean {
     return false
 }
 
-private fun deterministicHash(seed: String): Long {
-    var h = 2166136261L
-    for (ch in seed) {
-        h = (h xor ch.code.toLong()) * 16777619L
-    }
-    return abs(h)
-}
+private const val GUIDE_MIN_SECONDS = 60
+private const val GUIDE_MAX_SECONDS = 6 * 60 * 60
 
-private fun deterministicSeed(text: String): Long {
-    var h = 2166136261L
+/** Exact 32-bit unsigned FNV-1a matching Desktop schedule.ts hashSeed() bit-for-bit */
+private fun hashSeed32(text: String): UInt {
+    var h = 0x811c9dc5u
     for (ch in text) {
-        h = (h xor ch.code.toLong()) * 16777619L
+        h = (h xor ch.code.toUInt()) * 0x01000193u
     }
     return h
 }
 
-private fun <T> seededShuffleFast(items: List<T>, seed: Long): List<T> {
+/** Exact mulberry32 PRNG matching Desktop schedule.ts seededRandom() bit-for-bit */
+private fun mulberry32(seed: UInt): () -> Double {
+    var a = seed
+    return {
+        a += 0x6d2b79f5u
+        var t = a
+        t = (t xor (t shr 15)) * (t or 1u)
+        t = t xor (t + ((t xor (t shr 7)) * (t or 61u)))
+        ((t xor (t shr 14)).toDouble()) / 4294967296.0
+    }
+}
+
+/** Exact Fisher-Yates matching Desktop schedule.ts seededShuffle() bit-for-bit */
+private fun <T> seededShuffle32(items: List<T>, seed: UInt): List<T> {
     if (items.size <= 1) return items
     val out = items.toMutableList()
-    val rng = java.util.Random(seed)
+    val rand = mulberry32(seed)
     for (i in out.lastIndex downTo 1) {
-        val j = rng.nextInt(i + 1)
+        val j = kotlin.math.floor(rand() * (i + 1)).toInt().coerceIn(0, i)
         val tmp = out[i]
         out[i] = out[j]
         out[j] = tmp
@@ -316,20 +325,63 @@ private fun <T> seededShuffleFast(items: List<T>, seed: Long): List<T> {
     return out
 }
 
-private fun isFilmHourEpochSec(epochSec: Long): Boolean {
+/** Exact lazy forward Fisher-Yates matching Desktop schedule.ts seededOrder() bit-for-bit */
+private fun <T> makeSeededDrawer(pool: List<T>, seed: UInt, salt: UInt): () -> T? {
+    if (pool.isEmpty()) return { null }
+    var lap = 0u
+    var rand = mulberry32(seed + salt)
+    var swapped = HashMap<Int, Int>(32)
+    var i = 0
+    return {
+        val n = pool.size
+        if (i >= n) {
+            lap += 1u
+            rand = mulberry32(seed + salt + lap)
+            swapped.clear()
+            i = 0
+        }
+        val j = i + kotlin.math.floor(rand() * (n - i)).toInt().coerceIn(0, n - i - 1)
+        val atJ = swapped[j] ?: j
+        swapped[j] = swapped[i] ?: i
+        i++
+        pool[atJ]
+    }
+}
+
+private fun startOfLocalDayMs(epochMs: Long): Long {
+    val cal = java.util.Calendar.getInstance().apply {
+        timeInMillis = epochMs
+        set(java.util.Calendar.HOUR_OF_DAY, 0)
+        set(java.util.Calendar.MINUTE, 0)
+        set(java.util.Calendar.SECOND, 0)
+        set(java.util.Calendar.MILLISECOND, 0)
+    }
+    return cal.timeInMillis
+}
+
+private fun dayKeyIso(dayStartMs: Long): String {
+    val cal = java.util.Calendar.getInstance().apply { timeInMillis = dayStartMs }
+    val y = cal.get(java.util.Calendar.YEAR)
+    val m = cal.get(java.util.Calendar.MONTH) + 1
+    val d = cal.get(java.util.Calendar.DAY_OF_MONTH)
+    return "%04d-%02d-%02d".format(Locale.US, y, m, d)
+}
+
+private fun isFilmHourEpochMs(epochMs: Long): Boolean {
     val cal = java.util.Calendar.getInstance()
-    cal.timeInMillis = epochSec * 1000L
+    cal.timeInMillis = epochMs
     val h = cal.get(java.util.Calendar.HOUR_OF_DAY)
     return h >= 18 || h < 2
 }
 
+private fun deterministicHash(seed: String): Long = hashSeed32(seed).toLong()
+
 /**
- * Cable/satellite-style video scheduler:
- * - O(distinctShows) instead of O(totalEpisodes log totalEpisodes) -> < 1ms per channel!
- * - Rotates evenly across distinct shows (so a 200-episode show doesn't drown out a 10-episode show)
- *   and never plays the same show back-to-back when >= 2 shows exist on the channel.
- * - Dayparts mixed movie+TV channels: TV shows by day, movies in evening prime time (6pm–2am).
- * - Ordered single-show/marathon channels play episodes strictly in order.
+ * Exact 1:1 port of Desktop schedule.ts (scheduleDay + programsInWindow):
+ * - Same 32-bit FNV-1a hashSeed + mulberry32 PRNG + zero-padded YYYY-MM-DD dayKey
+ * - Same cable-style show rotation (drawRotatedShows), dayparting (6pm-2am films),
+ *   and ordered marathon progression so Desktop and Android always air the EXACT
+ *   same title at the EXACT same minute on every channel!
  */
 private fun scheduleVideoPrograms(
     channelId: String,
@@ -338,135 +390,149 @@ private fun scheduleVideoPrograms(
     windowStartSec: Long,
     windowEndSec: Long,
 ): List<EpgProgram> {
-    if (pool.isEmpty()) return emptyList()
-    val cal = java.util.Calendar.getInstance().apply {
-        timeInMillis = windowStartSec * 1000L
-        set(java.util.Calendar.HOUR_OF_DAY, 0)
-        set(java.util.Calendar.MINUTE, 0)
-        set(java.util.Calendar.SECOND, 0)
-        set(java.util.Calendar.MILLISECOND, 0)
-    }
-    val dayStartSec = cal.timeInMillis / 1000L
-    val dayStamp = "${cal.get(java.util.Calendar.YEAR)}-${cal.get(java.util.Calendar.MONTH) + 1}-${cal.get(java.util.Calendar.DAY_OF_MONTH)}"
-    val daySeed = deterministicSeed("$channelId|$dayStamp")
+    val items = pool
+        .filter { it.seconds >= GUIDE_MIN_SECONDS }
+        .map { if (it.seconds > GUIDE_MAX_SECONDS) it.copy(seconds = GUIDE_MAX_SECONDS) else it }
+    if (items.isEmpty() || windowEndSec <= windowStartSec) return emptyList()
 
-    fun toProg(item: PoolItem, start: Long, dur: Long) = EpgProgram(
-        itemType = item.itemType,
-        itemId = item.itemId,
-        detailId = item.detailId,
-        title = item.title,
-        subtitle = item.subtitle,
-        artworkUrl = item.backdropUrl ?: item.posterUrl,
-        startEpochSec = start,
-        endEpochSec = start + dur,
-    )
+    val fromMs = windowStartSec * 1000L
+    val toMs = windowEndSec * 1000L
 
-    if (ordered) {
-        val dayIdx = (dayStartSec / 86400L).toInt()
-        var idx = abs(((deterministicHash(channelId) + dayIdx * 7L) % pool.size)).toInt()
-        var t = dayStartSec
-        val progs = mutableListOf<EpgProgram>()
+    fun scheduleDayExact(dayStartMs: Long): List<EpgProgram> {
+        val dayEndMs = dayStartMs + 24L * 60L * 60L * 1000L
+        val dayStamp = dayKeyIso(dayStartMs)
+        val seed = hashSeed32("$channelId|$dayStamp")
+        val out = mutableListOf<EpgProgram>()
+        var cursor = dayStartMs
+
+        fun place(item: PoolItem) {
+            if (cursor >= dayEndMs) return
+            val end = cursor + item.seconds.toLong() * 1000L
+            if (end - cursor >= GUIDE_MIN_SECONDS * 1000L) {
+                out += EpgProgram(
+                    itemType = item.itemType,
+                    itemId = item.itemId,
+                    detailId = item.detailId,
+                    title = item.title,
+                    subtitle = item.subtitle,
+                    artworkUrl = item.backdropUrl ?: item.posterUrl,
+                    startEpochSec = cursor / 1000L,
+                    endEpochSec = end / 1000L,
+                )
+            }
+            cursor = maxOf(cursor, end)
+        }
+
+        if (ordered) {
+            val dayIndex = kotlin.math.round(dayStartMs.toDouble() / 86400000.0).toLong()
+            var index = (((hashSeed32(channelId).toLong() + dayIndex * 7L) % items.size) + items.size).toInt() % items.size
+            var guard = 0
+            while (cursor < dayEndMs && guard < 400) {
+                place(items[index])
+                index = (index + 1) % items.size
+                guard++
+            }
+            return out
+        }
+
+        fun makeRotatedShowDrawer(subPool: List<PoolItem>, salt: UInt): () -> PoolItem? {
+            val byShow = LinkedHashMap<String, MutableList<PoolItem>>()
+            val nonEpisodes = mutableListOf<PoolItem>()
+            for (item in subPool) {
+                val showKey = if (item.itemType == "episode") {
+                    item.detailId?.let { "/player/tv/$it" } ?: item.title
+                } else null
+                if (showKey != null) {
+                    byShow.getOrPut(showKey) { mutableListOf() } += item
+                } else {
+                    nonEpisodes += item
+                }
+            }
+            val showKeys = byShow.keys.toMutableList()
+            if (showKeys.size < 2) return makeSeededDrawer(subPool, seed, salt)
+
+            val queues = HashMap<String, Pair<List<PoolItem>, Int>>(showKeys.size + 1)
+            val queueIdx = HashMap<String, Int>(showKeys.size + 1)
+            for (sk in showKeys) {
+                val eps = byShow[sk]!!
+                val startOffset = (hashSeed32("$channelId|$sk|$dayStamp") % eps.size.toUInt()).toInt()
+                queues[sk] = eps to startOffset
+                queueIdx[sk] = startOffset
+            }
+            if (nonEpisodes.isNotEmpty()) {
+                val shuffled = seededShuffle32(nonEpisodes, seed + salt + 31337u)
+                queues["__other__"] = shuffled to 0
+                queueIdx["__other__"] = 0
+                showKeys += "__other__"
+            }
+
+            var round = 0u
+            var roundOrder = seededShuffle32(showKeys, seed + salt)
+            var pos = 0
+            var lastShow: String? = null
+
+            return {
+                if (pos >= roundOrder.size) {
+                    round += 1u
+                    val nextOrder = seededShuffle32(showKeys, seed + salt + round * 997u).toMutableList()
+                    if (nextOrder.size > 1 && nextOrder[0] == lastShow) {
+                        val tmp = nextOrder[0]
+                        nextOrder[0] = nextOrder[1]
+                        nextOrder[1] = tmp
+                    }
+                    roundOrder = nextOrder
+                    pos = 0
+                }
+                val sk = roundOrder[pos++]
+                lastShow = sk
+                val list = queues[sk]!!.first
+                val cur = queueIdx[sk] ?: 0
+                val item = list[cur % list.size]
+                queueIdx[sk] = (cur + 1) % list.size
+                item
+            }
+        }
+
+        val films = items.filter { it.itemType == "movie" }
+        val shows = items.filter { it.itemType != "movie" }
         var guard = 0
-        while (t < windowEndSec && guard < 120) {
-            val item = pool[idx % pool.size]
-            val dur = item.seconds.coerceAtLeast(900).toLong()
-            if (t + dur > windowStartSec) progs += toProg(item, t, dur)
-            t += dur
-            idx++
+        if (films.isNotEmpty() && shows.isNotEmpty()) {
+            val drawFilm = makeSeededDrawer(films, seed, 1u)
+            val drawShow = makeRotatedShowDrawer(shows, 2u)
+            while (cursor < dayEndMs && guard < 400) {
+                val next = if (isFilmHourEpochMs(cursor)) drawFilm() else drawShow()
+                if (next == null) break
+                place(next)
+                guard++
+            }
+            return out
+        }
+
+        val drawAny = makeRotatedShowDrawer(items, 0u)
+        while (cursor < dayEndMs && guard < 400) {
+            val next = drawAny() ?: break
+            place(next)
             guard++
         }
-        return progs
+        return out
     }
 
-    // Separate movies vs TV/other so mixed channels can daypart cleanly
-    val movies = pool.filter { it.itemType == "movie" }
-    val nonMovies = pool.filter { it.itemType != "movie" }
-    val hasDaypart = movies.isNotEmpty() && nonMovies.isNotEmpty()
-
-    // Lazy O(1)-per-draw movie selector (never sorts 5,000 movies!)
-    val movieRng = java.util.Random(daySeed xor 0x517cc1b7L)
-    val movieSwaps = HashMap<Int, Int>(32)
-    var movieCursor = 0
-    fun drawMovie(): PoolItem {
-        val n = movies.size
-        if (movieCursor >= n) {
-            movieCursor = 0
-            movieSwaps.clear()
-        }
-        val i = movieCursor++
-        val j = i + movieRng.nextInt(n - i)
-        val atJ = movieSwaps[j] ?: j
-        movieSwaps[j] = movieSwaps[i] ?: i
-        return movies[atJ]
-    }
-
-    // Group episodes by show (detailId/title) for balanced cable-style rotation
-    val showsMap = LinkedHashMap<String, MutableList<PoolItem>>()
-    val otherItems = mutableListOf<PoolItem>()
-    for (item in nonMovies) {
-        if (item.itemType == "episode") {
-            val sk = item.detailId?.toString() ?: item.title
-            showsMap.getOrPut(sk) { mutableListOf() } += item
-        } else {
-            otherItems += item
-        }
-    }
-    val showKeys = showsMap.keys.toMutableList()
-    val showIdx = HashMap<String, Int>(showKeys.size + 1)
-    for (sk in showKeys) {
-        val eps = showsMap[sk]!!
-        showIdx[sk] = (abs(deterministicSeed("$channelId|$sk|$dayStamp")) % eps.size).toInt()
-    }
-    if (otherItems.isNotEmpty()) {
-        val shuffledOther = seededShuffleFast(otherItems.take(200), daySeed xor 0x9e3779b9L)
-        showsMap["__other__"] = shuffledOther.toMutableList()
-        showKeys += "__other__"
-        showIdx["__other__"] = 0
-    }
-
-    var round = 0
-    var roundOrder = seededShuffleFast(showKeys, daySeed)
-    var roundPos = 0
-    var lastShow: String? = null
-
-    fun drawShowItem(): PoolItem {
-        if (roundOrder.isEmpty()) return drawMovie()
-        if (roundPos >= roundOrder.size) {
-            round++
-            val nextOrder = seededShuffleFast(showKeys, daySeed + round * 997L).toMutableList()
-            if (nextOrder.size > 1 && nextOrder[0] == lastShow) {
-                val tmp = nextOrder[0]
-                nextOrder[0] = nextOrder[1]
-                nextOrder[1] = tmp
+    val result = mutableListOf<EpgProgram>()
+    var dayStart = startOfLocalDayMs(fromMs) - 24L * 60L * 60L * 1000L
+    while (dayStart < toMs) {
+        val programs = scheduleDayExact(dayStart)
+        val nextDayMs = startOfLocalDayMs(dayStart + 36L * 60L * 60L * 1000L)
+        val nextDaySec = nextDayMs / 1000L
+        for (p in programs) {
+            if (p.startEpochSec >= nextDaySec) break
+            val clippedEnd = minOf(p.endEpochSec, nextDaySec)
+            if (clippedEnd > windowStartSec && p.startEpochSec < windowEndSec) {
+                result += p.copy(endEpochSec = clippedEnd)
             }
-            roundOrder = nextOrder
-            roundPos = 0
         }
-        val sk = roundOrder[roundPos++]
-        lastShow = sk
-        val eps = showsMap[sk]!!
-        val i = showIdx[sk] ?: 0
-        showIdx[sk] = (i + 1) % eps.size
-        return eps[i]
+        dayStart = nextDayMs
     }
-
-    var t = dayStartSec
-    val progs = mutableListOf<EpgProgram>()
-    var guard = 0
-    while (t < windowEndSec && guard < 120) {
-        val item = when {
-            hasDaypart -> if (isFilmHourEpochSec(t)) drawMovie() else drawShowItem()
-            movies.isNotEmpty() && nonMovies.isEmpty() -> drawMovie()
-            else -> drawShowItem()
-        }
-        val dur = item.seconds.coerceAtLeast(900).toLong()
-        if (t + dur > windowStartSec) {
-            progs += toProg(item, t, dur)
-        }
-        t += dur
-        guard++
-    }
-    return progs
+    return result
 }
 
 private fun scheduleMusicBlocks(
