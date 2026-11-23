@@ -255,14 +255,18 @@ class SoulSyncCastController(private val appContext: Context) {
             }
         }
         val trimmedBase = baseUrl.trimEnd('/')
-        val isLocalLan = Regex("(192[.-]168[.-]|10[.-]|172[.-](1[6-9]|2\\d|3[01])[.-]|localhost|127\\.0\\.0\\.1)")
+        // If connected via a real Let's Encrypt hostname (e.g. *.connect.ssync.net),
+        // ALWAYS prefer HTTPS so Chromecast's HTTPS Styled Media Receiver never hits
+        // Mixed Content blocks (works on BOTH home Wi-Fi and remote neighbor Wi-Fi!).
+        // Only fall back to plain LAN HTTP if baseUrl is a raw IP with self-signed TLS.
+        val isRawLocalIp = Regex("^https?://(192\\.168\\.|10\\.|172\\.(1[6-9]|2\\d|3[01])\\.|localhost|127\\.0\\.0\\.1)")
             .containsMatchIn(trimmedBase)
-        val fullUrl = if (isLocalLan && !castInfo.streamUrl.isNullOrBlank()) {
+        val fullUrl = if (isRawLocalIp && !castInfo.streamUrl.isNullOrBlank()) {
             castInfo.streamUrl!!
         } else {
             trimmedBase + castInfo.streamPath
         }
-        val artBase = if (isLocalLan) castInfo.artworkBaseUrl?.trimEnd('/') else null
+        val artBase = if (isRawLocalIp) castInfo.artworkBaseUrl?.trimEnd('/') else null
         val resolvedArt = item.artworkUrl?.let { raw ->
             if (artBase != null && raw.startsWith(trimmedBase)) {
                 artBase + raw.removePrefix(trimmedBase)
