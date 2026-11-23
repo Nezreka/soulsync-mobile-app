@@ -804,6 +804,8 @@ data class DeviceProfileInfo(
 data class CastTokenResponse(
     val token: String,
     val streamPath: String,
+    val streamUrl: String? = null,
+    val artworkBaseUrl: String? = null,
     val contentType: String,
     val expiresIn: Int = 21600,
 )

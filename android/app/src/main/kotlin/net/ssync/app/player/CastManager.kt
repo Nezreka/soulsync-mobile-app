@@ -254,14 +254,23 @@ class SoulSyncCastController(private val appContext: Context) {
                 return false
             }
         }
-        val fullUrl = baseUrl.trimEnd('/') + castInfo.streamPath
+        val fullUrl = castInfo.streamUrl?.takeIf { it.isNotBlank() }
+            ?: (baseUrl.trimEnd('/') + castInfo.streamPath)
+        val artBase = castInfo.artworkBaseUrl?.trimEnd('/')
+        val resolvedArt = item.artworkUrl?.let { raw ->
+            if (artBase != null && raw.startsWith(baseUrl.trimEnd('/'))) {
+                artBase + raw.removePrefix(baseUrl.trimEnd('/'))
+            } else {
+                raw
+            }
+        }
         val mediaType = if (item.isVideo) MediaMetadata.MEDIA_TYPE_MOVIE else MediaMetadata.MEDIA_TYPE_MUSIC_TRACK
         val meta = MediaMetadata(mediaType).apply {
             putString(MediaMetadata.KEY_TITLE, item.title)
             if (item.subtitle.isNotBlank()) {
                 putString(MediaMetadata.KEY_SUBTITLE, item.subtitle)
             }
-            item.artworkUrl?.takeIf { it.startsWith("http") }?.let { art ->
+            resolvedArt?.takeIf { it.startsWith("http") }?.let { art ->
                 addImage(WebImage(Uri.parse(art)))
             }
         }

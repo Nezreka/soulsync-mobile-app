@@ -718,6 +718,8 @@ class PlayerApiClient(
             CastTokenResponse(
                 token = (root["token"] as? kotlinx.serialization.json.JsonPrimitive)?.content.orEmpty(),
                 streamPath = (root["stream_path"] as? kotlinx.serialization.json.JsonPrimitive)?.content.orEmpty(),
+                streamUrl = (root["stream_url"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.takeIf { it.isNotBlank() && it != "null" },
+                artworkBaseUrl = (root["artwork_base_url"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.takeIf { it.isNotBlank() && it != "null" },
                 contentType = (root["content_type"] as? kotlinx.serialization.json.JsonPrimitive)?.content
                     ?: "video/mp4",
                 expiresIn = (root["expires_in"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toIntOrNull()
