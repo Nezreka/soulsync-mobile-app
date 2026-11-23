@@ -323,6 +323,7 @@ fun VideoPlayerOverlay(
     }
 
     var watchedMarked by remember(item.itemType, item.itemId) { mutableStateOf(false) }
+    var lastPresenceBeatMs by remember(item.itemType, item.itemId) { mutableLongStateOf(0L) }
 
     LaunchedEffect(exoPlayer) {
         while (true) {
@@ -330,6 +331,31 @@ fun VideoPlayerOverlay(
                 positionMs = effectivePositionMs()
                 if (!usingTranscode && exoPlayer.duration > 0L) {
                     durationMs = exoPlayer.duration
+                }
+                val now = System.currentTimeMillis()
+                if (now - lastPresenceBeatMs >= 8_000L) {
+                    lastPresenceBeatMs = now
+                    val channelRef = item.channelId?.takeIf { it.isNotBlank() }?.let { cid ->
+                        net.ssync.player.PresenceChannelRef(
+                            id = cid,
+                            name = item.channelName.orEmpty(),
+                            number = item.channelNumber,
+                        )
+                    }
+                    scope.launch {
+                        api.sendPresence(
+                            itemType = item.itemType,
+                            itemId = item.itemId,
+                            title = item.title,
+                            subtitle = item.subtitle.ifBlank { null },
+                            artwork = item.artworkUrl,
+                            positionSeconds = positionMs / 1000.0,
+                            durationSeconds = durationMs.takeIf { it > 0L }?.let { it / 1000.0 },
+                            paused = !isPlaying,
+                            live = item.isLiveGuide,
+                            channel = channelRef,
+                        )
+                    }
                 }
                 if (
                     !watchedMarked &&

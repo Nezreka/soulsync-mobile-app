@@ -65,6 +65,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.intOrNull
@@ -85,6 +86,7 @@ import net.ssync.player.PlayerApiClient
 import net.ssync.player.PlaylistDetail
 import net.ssync.player.SavedGuideChannel
 import net.ssync.player.VideoCatalog
+import net.ssync.player.WatchingSession
 import java.text.Normalizer
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -1078,6 +1080,21 @@ fun GuideScreen(
     var picked by remember { mutableStateOf<Pair<EpgChannel, EpgProgram>?>(null) }
     var isLoading by remember { mutableStateOf(true) }
     var allChannels by remember { mutableStateOf<List<EpgChannel>>(emptyList()) }
+    var liveSessions by remember { mutableStateOf<List<WatchingSession>>(emptyList()) }
+    val viewersByChannel = remember(liveSessions) {
+        liveSessions
+            .filter { it.channel != null && it.channel!!.id.isNotBlank() }
+            .groupBy { it.channel!!.id }
+    }
+
+    LaunchedEffect(api) {
+        while (true) {
+            (api.fetchPresence() as? MusicApiResult.Success)?.let {
+                liveSessions = it.data.sessions
+            }
+            delay(8_000L)
+        }
+    }
 
     val nowSec = remember { System.currentTimeMillis() / 1000L }
     val windowStartSec = remember(nowSec) { ((nowSec - 1800L) / 1800L) * 1800L }
@@ -1240,6 +1257,9 @@ fun GuideScreen(
                     artworkUrl = t.posterUrl,
                     streamUrl = api.streamUrl("track", t.itemId),
                     isLiveGuide = true,
+                    channelId = ch.id,
+                    channelName = ch.name,
+                    channelNumber = ch.number,
                 )
             }
             if (queue.isNotEmpty()) coordinator.playAudio(queue.first(), queue.drop(1))
@@ -1249,6 +1269,7 @@ fun GuideScreen(
             } else {
                 0L
             }
+            val progDurMs = ((active.endEpochSec - active.startEpochSec).coerceAtLeast(0L)) * 1000L
             coordinator.playVideo(
                 ActivePlayable(
                     itemType = active.itemType,
@@ -1259,7 +1280,11 @@ fun GuideScreen(
                     streamUrl = api.streamUrl(active.itemType, active.itemId),
                     isVideo = true,
                     resumePositionMs = offsetMs,
+                    durationMs = progDurMs,
                     isLiveGuide = true,
+                    channelId = ch.id,
+                    channelName = ch.name,
+                    channelNumber = ch.number,
                 ),
             )
         }
@@ -1523,6 +1548,7 @@ fun GuideScreen(
                         }
                     }
                     items(section.channels, key = { "${section.key}:${it.id}" }) { ch ->
+                        val chViewers = viewersByChannel[ch.id].orEmpty()
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -1548,6 +1574,10 @@ fun GuideScreen(
                                             fontWeight = FontWeight.ExtraBold,
                                             modifier = Modifier.weight(1f),
                                         )
+                                        if (chViewers.isNotEmpty()) {
+                                            ChannelViewerAvatars(sessions = chViewers, api = api)
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                        }
                                         val isFav = ch.id in favorites
                                         Icon(
                                             imageVector = Icons.Default.Star,
@@ -1648,6 +1678,30 @@ fun GuideScreen(
                                             .fillMaxHeight()
                                             .background(SoulSyncColors.AccentLight),
                                     )
+
+                                    if (!ch.isMusic && chViewers.isNotEmpty()) {
+                                        chViewers.forEach { sess ->
+                                            val activeProg = ch.programs.lastOrNull { p ->
+                                                p.itemType == sess.itemType &&
+                                                    p.itemId == sess.itemId &&
+                                                    p.startEpochSec <= nowSec
+                                            }
+                                            if (activeProg != null) {
+                                                val pinEpochSec = (activeProg.startEpochSec + sess.resolvedPosition.toLong())
+                                                    .coerceAtMost(activeProg.endEpochSec)
+                                                if (pinEpochSec in windowStartSec..windowEndSec) {
+                                                    val pinX = (PX_PER_MIN * ((pinEpochSec - windowStartSec) / 60f) - 10.dp)
+                                                        .coerceAtLeast(0.dp)
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .offset(x = pinX, y = 4.dp),
+                                                    ) {
+                                                        ViewerAvatarDot(session = sess, api = api, size = 20.dp)
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -1728,6 +1782,47 @@ fun GuideScreen(
 }
 
 /** 4-tile poster mosaic channel logo (1:1 with desktop /player/guide ChannelLogo) */
+@Composable
+private fun ChannelViewerAvatars(sessions: List<WatchingSession>, api: PlayerApiClient) {
+    Row(
+        horizontalArrangement = Arrangement.spacedBy((-5).dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        sessions.take(3).forEach { s ->
+            ViewerAvatarDot(session = s, api = api, size = 16.dp)
+        }
+    }
+}
+
+@Composable
+private fun ViewerAvatarDot(
+    session: WatchingSession,
+    api: PlayerApiClient,
+    size: Dp = 18.dp,
+) {
+    val name = if (session.you) "You" else session.resolvedName
+    val avatarUrl = api.artwork.resolve(session.profile?.avatarUrl)
+    Box(
+        modifier = Modifier
+            .size(size)
+            .clip(CircleShape)
+            .background(SoulSyncColors.Accent)
+            .border(1.5.dp, SoulSyncColors.BgPrimary, CircleShape),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (!avatarUrl.isNullOrBlank()) {
+            SoulSyncArtwork(url = avatarUrl, contentDescription = name, modifier = Modifier.fillMaxSize())
+        } else {
+            Text(
+                text = name.firstOrNull()?.uppercase() ?: "?",
+                color = Color.White,
+                fontSize = 9.sp,
+                fontWeight = FontWeight.ExtraBold,
+            )
+        }
+    }
+}
+
 @Composable
 private fun ChannelMosaicLogo(urls: List<String>, isMusic: Boolean) {
     Box(

@@ -1400,6 +1400,7 @@ internal data class PresenceHeartbeatRequest(
     val duration: Double? = null,
     val playing: Boolean = true,
     val live: Boolean = false,
+    val channel: PresenceChannelRef? = null,
     val meta: ProgressMeta? = null,
 )
 

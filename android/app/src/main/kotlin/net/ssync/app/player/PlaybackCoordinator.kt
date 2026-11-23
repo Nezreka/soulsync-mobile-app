@@ -28,6 +28,9 @@ data class ActivePlayable(
     val partyId: String? = null,
     /** True when playing from the Live Guide: never save Continue Watching progress; only mark movies watched at >=92%. */
     val isLiveGuide: Boolean = false,
+    val channelId: String? = null,
+    val channelName: String? = null,
+    val channelNumber: Int? = null,
 )
 
 /**
@@ -125,6 +128,8 @@ class PlaybackCoordinator(
         showAudioSheet = false
         val videoItem = resolveOffline(item).copy(isVideo = true)
         activeItem = videoItem
+        positionMs = videoItem.resumePositionMs.coerceAtLeast(0L)
+        durationMs = videoItem.durationMs.coerceAtLeast(0L)
         val caster = castHandler
         if (caster != null) {
             scope.launch {
@@ -132,18 +137,18 @@ class PlaybackCoordinator(
                 if (handledByCast) {
                     showVideoOverlay = false
                     isPlaying = true
-                    reportPresence(videoItem, paused = false)
+                    reportPresence(videoItem, paused = false, overridePositionMs = positionMs, overrideDurationMs = durationMs)
                     return@launch
                 }
                 showVideoOverlay = true
                 isPlaying = true
-                reportPresence(videoItem, paused = false)
+                reportPresence(videoItem, paused = false, overridePositionMs = positionMs, overrideDurationMs = durationMs)
             }
             return
         }
         showVideoOverlay = true
         isPlaying = true
-        reportPresence(videoItem, paused = false)
+        reportPresence(videoItem, paused = false, overridePositionMs = positionMs, overrideDurationMs = durationMs)
     }
 
     private fun toRelativeArtwork(url: String?): String? {
@@ -261,6 +266,8 @@ class PlaybackCoordinator(
         controllerProvider()?.setPlaybackSpeed(next)
     }
 
+    private var lastAudioPresenceBeatMs = 0L
+
     fun syncAudioProgress() {
         val item = activeItem ?: return
         if (item.isVideo) return
@@ -268,6 +275,12 @@ class PlaybackCoordinator(
         positionMs = controller.currentPosition.coerceAtLeast(0L)
         durationMs = controller.duration.coerceAtLeast(0L)
         isPlaying = controller.isPlaying
+
+        val now = System.currentTimeMillis()
+        if (now - lastAudioPresenceBeatMs >= 10_000L) {
+            lastAudioPresenceBeatMs = now
+            reportPresence(item, paused = !isPlaying, overridePositionMs = positionMs, overrideDurationMs = durationMs)
+        }
 
         if (!item.isLiveGuide && positionMs > 0 && item.itemType in setOf("podcast", "audiobook")) {
             scope.launch {
@@ -282,17 +295,33 @@ class PlaybackCoordinator(
         }
     }
 
-    private fun reportPresence(item: ActivePlayable, paused: Boolean) {
+    private fun reportPresence(
+        item: ActivePlayable,
+        paused: Boolean,
+        overridePositionMs: Long? = null,
+        overrideDurationMs: Long? = null,
+    ) {
+        val posMs = (overridePositionMs ?: positionMs.takeIf { it > 0L } ?: item.resumePositionMs).coerceAtLeast(0L)
+        val durMs = (overrideDurationMs ?: durationMs.takeIf { it > 0L } ?: item.durationMs).coerceAtLeast(0L)
+        val channelRef = item.channelId?.takeIf { it.isNotBlank() }?.let { cid ->
+            net.ssync.player.PresenceChannelRef(
+                id = cid,
+                name = item.channelName.orEmpty(),
+                number = item.channelNumber,
+            )
+        }
         scope.launch {
             api.sendPresence(
                 itemType = item.itemType,
                 itemId = item.itemId,
                 title = item.title,
                 subtitle = item.subtitle.ifBlank { null },
-                artwork = item.artworkUrl,
-                positionSeconds = positionMs / 1000.0,
-                durationSeconds = item.durationMs.takeIf { it > 0 }?.let { it / 1000.0 },
+                artwork = toRelativeArtwork(item.artworkUrl),
+                positionSeconds = posMs / 1000.0,
+                durationSeconds = durMs.takeIf { it > 0L }?.let { it / 1000.0 },
                 paused = paused,
+                live = item.isLiveGuide,
+                channel = channelRef,
             )
         }
     }

@@ -509,6 +509,8 @@ class PlayerApiClient(
         positionSeconds: Double = 0.0,
         durationSeconds: Double? = null,
         paused: Boolean = false,
+        live: Boolean = false,
+        channel: PresenceChannelRef? = null,
     ): MusicApiResult<Unit> = withContext(Dispatchers.IO) {
         val payload = PresenceHeartbeatRequest(
             session = presenceSessionId,
@@ -517,7 +519,8 @@ class PlayerApiClient(
             position = positionSeconds.coerceAtLeast(0.0),
             duration = durationSeconds?.takeIf { it > 0.0 },
             playing = !paused,
-            live = false,
+            live = live,
+            channel = channel,
             meta = ProgressMeta(
                 title = title.takeIf { it.isNotBlank() },
                 subtitle = subtitle?.takeIf { it.isNotBlank() },
