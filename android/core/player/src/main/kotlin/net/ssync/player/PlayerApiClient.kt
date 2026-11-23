@@ -844,6 +844,8 @@ class PlayerApiClient(
         title: String,
         year: String? = null,
         posterUrl: String? = null,
+        season: Int? = null,
+        episode: Int? = null,
         get: Boolean = false,
     ): MusicApiResult<VideoRequestResult> = withContext(Dispatchers.IO) {
         val payload = VideoRequestPayload(
@@ -852,6 +854,8 @@ class PlayerApiClient(
             title = title,
             year = year,
             posterUrl = posterUrl,
+            season = season,
+            episode = episode,
             get = get,
         )
         val req = Request.Builder()

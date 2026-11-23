@@ -1149,6 +1149,7 @@ fun ShowDetailScreen(
     var pendingRequest by remember { mutableStateOf<UnownedTitleTarget?>(null) }
     var issueTarget by remember { mutableStateOf<ReportIssueTarget?>(null) }
     var showTmdbId by remember { mutableStateOf<Int?>(null) }
+    var showRequestMode by remember { mutableStateOf("ask") }
 
     LaunchedEffect(showId, api) {
         isLoading = true
@@ -1159,6 +1160,9 @@ fun ShowDetailScreen(
         }
         (api.fetchVideoCatalog() as? MusicApiResult.Success)?.let { cat ->
             showTmdbId = cat.data.shows.firstOrNull { it.id == showId }?.tmdbId
+        }
+        (api.fetchVideoRequestOptions() as? MusicApiResult.Success)?.let { opts ->
+            showRequestMode = opts.data.show
         }
         (api.fetchWatchlist() as? MusicApiResult.Success)?.let { list ->
             inWatchlist = list.data.any { it.itemType == "show" && it.itemId == showId.toString() }
@@ -1524,8 +1528,10 @@ fun ShowDetailScreen(
                 val epCode = "S${activeSeason.seasonNumber.toString().padStart(2, '0')}E${ep.episodeNumber.toString().padStart(2, '0')}"
                 ShowEpisodeCard(
                     episode = ep,
+                    showTitle = show.title,
                     seasonNumber = activeSeason.seasonNumber,
                     showTmdbId = showTmdbId,
+                    requestMode = showRequestMode,
                     stillUrl = api.artwork.episodeStill(ep.id),
                     api = api,
                     onPlay = { playEpisode(activeSeason.seasonNumber, ep) },
@@ -1684,8 +1690,10 @@ fun ShowDetailScreen(
 @Composable
 private fun ShowEpisodeCard(
     episode: net.ssync.player.DetailEpisode,
+    showTitle: String,
     seasonNumber: Int,
     showTmdbId: Int?,
+    requestMode: String = "ask",
     stillUrl: String,
     api: PlayerApiClient,
     onPlay: () -> Unit,
@@ -1693,9 +1701,59 @@ private fun ShowEpisodeCard(
     onReportIssue: () -> Unit = {},
     onPersonClick: (Int, String) -> Unit = { _, _ -> },
 ) {
+    val scope = rememberCoroutineScope()
     var expanded by remember(episode.id) { mutableStateOf(false) }
     var extra by remember(episode.id) { mutableStateOf<net.ssync.player.EpisodeExtra?>(null) }
     var extraLoading by remember(episode.id) { mutableStateOf(false) }
+    var reqBusy by remember(episode.id) { mutableStateOf(false) }
+    var reqResult by remember(episode.id) { mutableStateOf<VideoRequestResult?>(null) }
+    var reqError by remember(episode.id) { mutableStateOf<String?>(null) }
+
+    val canRequest = !episode.owned && showTmdbId != null && showTmdbId > 0 && requestMode != "none"
+    val reqDone = reqResult is VideoRequestResult.Got ||
+        reqResult is VideoRequestResult.Asked ||
+        reqResult is VideoRequestResult.OnTheWay ||
+        reqResult is VideoRequestResult.Owned
+    val reqLabel = when (val r = reqResult) {
+        VideoRequestResult.Got -> "Added to wishlist ✓"
+        is VideoRequestResult.Asked -> if (r.already) "Already requested ✓" else "Requested ✓"
+        VideoRequestResult.OnTheWay -> "On the way ✓"
+        VideoRequestResult.Owned -> "In library ✓"
+        else -> when {
+            reqBusy -> "Requesting…"
+            requestMode == "download" -> "Get Episode"
+            else -> "Request Episode"
+        }
+    }
+
+    fun triggerEpisodeRequest() {
+        val tid = showTmdbId ?: return
+        if (!canRequest || reqBusy || reqDone) return
+        reqBusy = true
+        reqError = null
+        scope.launch {
+            when (
+                val res = api.requestVideoTitle(
+                    kind = "episode",
+                    tmdbId = tid,
+                    title = showTitle,
+                    season = seasonNumber,
+                    episode = episode.episodeNumber,
+                    get = requestMode == "download",
+                )
+            ) {
+                is MusicApiResult.Success -> {
+                    reqResult = res.data
+                    if (res.data is VideoRequestResult.Error) {
+                        reqError = (res.data as VideoRequestResult.Error).message
+                    }
+                }
+                MusicApiResult.DeviceRevoked -> Unit
+                is MusicApiResult.Error -> reqError = res.message
+            }
+            reqBusy = false
+        }
+    }
 
     LaunchedEffect(expanded, showTmdbId, seasonNumber, episode.episodeNumber) {
         if (expanded && extra == null && showTmdbId != null && showTmdbId > 0) {
@@ -1964,7 +2022,7 @@ private fun ShowEpisodeCard(
                     )
                 }
 
-                // Action buttons: Play, Watch Party, Report Issue
+                // Action buttons: Play/Watch Party (owned) OR Request Episode (missing), plus Report Issue
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1994,10 +2052,37 @@ private fun ShowEpisodeCard(
                         ) {
                             Text("🍿 Party", color = SoulSyncColors.AccentLight, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                         }
+                    } else if (canRequest) {
+                        Button(
+                            onClick = { triggerEpisodeRequest() },
+                            enabled = !reqBusy && !reqDone,
+                            shape = CircleShape,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (reqDone) SoulSyncColors.Card else SoulSyncColors.Accent,
+                                contentColor = if (reqDone) SoulSyncColors.AccentLight else SoulSyncColors.OnAccent,
+                            ),
+                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+                            modifier = Modifier.weight(1f).height(38.dp),
+                        ) {
+                            Icon(
+                                imageVector = if (reqDone) Icons.Default.Check else Icons.Default.Download,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp),
+                            )
+                            Spacer(modifier = Modifier.width(5.dp))
+                            Text(reqLabel, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                        }
                     }
                     ReportIssuePillButton(
                         onClick = onReportIssue,
                         compact = true,
+                    )
+                }
+                if (reqError != null) {
+                    Text(
+                        text = reqError!!,
+                        color = Color(0xFFFF7A7A),
+                        fontSize = 11.5.sp,
                     )
                 }
 

@@ -883,6 +883,8 @@ internal data class VideoRequestPayload(
     val year: String? = null,
     @SerialName("poster_url")
     val posterUrl: String? = null,
+    val season: Int? = null,
+    val episode: Int? = null,
     val get: Boolean = false,
 )
 
