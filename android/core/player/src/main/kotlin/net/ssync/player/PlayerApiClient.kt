@@ -402,6 +402,8 @@ class PlayerApiClient(
         execute(req) { }
     }
 
+    private val presenceSessionId: String = "android-" + java.util.UUID.randomUUID().toString().take(12)
+
     suspend fun sendPresence(
         itemType: String,
         itemId: String,
@@ -413,14 +415,19 @@ class PlayerApiClient(
         paused: Boolean = false,
     ): MusicApiResult<Unit> = withContext(Dispatchers.IO) {
         val payload = PresenceHeartbeatRequest(
+            session = presenceSessionId,
             itemType = itemType,
             itemId = itemId,
-            title = title,
-            subtitle = subtitle,
-            artwork = artwork,
-            positionSeconds = positionSeconds,
-            durationSeconds = durationSeconds,
-            paused = paused,
+            position = positionSeconds.coerceAtLeast(0.0),
+            duration = durationSeconds?.takeIf { it > 0.0 },
+            playing = !paused,
+            live = false,
+            meta = ProgressMeta(
+                title = title.takeIf { it.isNotBlank() },
+                subtitle = subtitle?.takeIf { it.isNotBlank() },
+                artwork = artwork?.takeIf { it.isNotBlank() },
+                backdrop = artwork?.takeIf { it.isNotBlank() },
+            ),
         )
         val req = Request.Builder()
             .url("$base/api/player/presence")
@@ -430,7 +437,7 @@ class PlayerApiClient(
     }
 
     suspend fun clearPresence(): MusicApiResult<Unit> = withContext(Dispatchers.IO) {
-        val req = Request.Builder().url("$base/api/player/presence").delete().build()
+        val req = Request.Builder().url("$base/api/player/presence?session=${encodeSeg(presenceSessionId)}").delete().build()
         execute(req) { }
     }
 
@@ -475,14 +482,14 @@ class PlayerApiClient(
 
     // ── Home Layout (Shared / Per-Device Customizable Dashboard) ─────────────
 
-    suspend fun fetchHomeLayout(device: String = "phone"): MusicApiResult<HomeLayoutResponse> =
+    suspend fun fetchHomeLayout(device: String = "android-phone"): MusicApiResult<HomeLayoutResponse> =
         getJson("$base/api/player/home-layout?device=$device") { body ->
             json.decodeFromString<HomeLayoutResponse>(body)
         }
 
     suspend fun saveHomeLayout(
         layout: HomeLayout,
-        device: String = "phone",
+        device: String = "android-phone",
         shared: Boolean = true,
     ): MusicApiResult<HomeLayoutResponse> = withContext(Dispatchers.IO) {
         val payload = HomeLayoutPutRequest(layout = layout, device = if (shared) null else device, shared = shared)

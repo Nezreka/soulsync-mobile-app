@@ -1093,18 +1093,16 @@ internal data class PlayerSettingsEnvelope(val settings: PlayerSettings = Player
 
 @Serializable
 internal data class PresenceHeartbeatRequest(
+    val session: String,
     @SerialName("item_type")
     val itemType: String,
     @SerialName("item_id")
     val itemId: String,
-    val title: String,
-    val subtitle: String? = null,
-    val artwork: String? = null,
-    @SerialName("position_seconds")
-    val positionSeconds: Double,
-    @SerialName("duration_seconds")
-    val durationSeconds: Double? = null,
-    val paused: Boolean = false,
+    val position: Double,
+    val duration: Double? = null,
+    val playing: Boolean = true,
+    val live: Boolean = false,
+    val meta: ProgressMeta? = null,
 )
 
 @Serializable
