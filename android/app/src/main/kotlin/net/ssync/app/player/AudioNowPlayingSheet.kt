@@ -37,17 +37,13 @@ import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Lyrics
-import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
-import androidx.compose.material.icons.filled.Speed
-import androidx.compose.material.icons.filled.StopCircle
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Slider
@@ -114,7 +110,6 @@ fun AudioNowPlayingSheet(
     var sleepSecondsLeft by remember { mutableIntStateOf(0) }
     var shuffleOn by remember { mutableStateOf(false) }
     var repeatOn by remember { mutableStateOf(false) }
-    var showMoreMenu by remember { mutableStateOf(false) }
     var addPlaylistTarget by remember { mutableStateOf<SongRefPayload?>(null) }
 
     val isTrack = item.itemType == "track"
@@ -217,68 +212,23 @@ fun AudioNowPlayingSheet(
                     }
                 }
 
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    if (onOpenCast != null) {
-                        IconButton(
-                            onClick = onOpenCast,
-                            modifier = Modifier.size(38.dp),
-                        ) {
-                            Icon(
-                                imageVector = if (castConnected) Icons.Default.CastConnected else Icons.Default.Cast,
-                                contentDescription = "Cast",
-                                tint = if (castConnected) SoulSyncColors.AccentLight else Color.White.copy(alpha = 0.85f),
-                                modifier = Modifier.size(20.dp),
-                            )
-                        }
+                if (onOpenCast != null) {
+                    IconButton(
+                        onClick = onOpenCast,
+                        modifier = Modifier
+                            .size(38.dp)
+                            .clip(CircleShape)
+                            .background(Color.White.copy(alpha = 0.08f)),
+                    ) {
+                        Icon(
+                            imageVector = if (castConnected) Icons.Default.CastConnected else Icons.Default.Cast,
+                            contentDescription = "Cast",
+                            tint = if (castConnected) SoulSyncColors.AccentLight else Color.White.copy(alpha = 0.85f),
+                            modifier = Modifier.size(20.dp),
+                        )
                     }
-                    Box {
-                        IconButton(
-                            onClick = { showMoreMenu = true },
-                            modifier = Modifier
-                                .size(38.dp)
-                                .clip(CircleShape)
-                                .background(Color.White.copy(alpha = 0.08f)),
-                        ) {
-                            Icon(Icons.Default.MoreHoriz, contentDescription = "More options", tint = Color.White)
-                        }
-                        DropdownMenu(
-                            expanded = showMoreMenu,
-                            onDismissRequest = { showMoreMenu = false },
-                            containerColor = Color(0xFF181A26),
-                        ) {
-                            DropdownMenuItem(
-                                text = { Text("Playback speed (${coordinator.playbackSpeed}x)", color = Color.White) },
-                                leadingIcon = { Icon(Icons.Default.Speed, contentDescription = null, tint = SoulSyncColors.AccentLight) },
-                                onClick = {
-                                    coordinator.cycleSpeed()
-                                    showMoreMenu = false
-                                },
-                            )
-                            DropdownMenuItem(
-                                text = {
-                                    val lbl = if (sleepSecondsLeft > 0) "Sleep timer (${sleepSecondsLeft / 60}m left)" else "Sleep timer"
-                                    Text(lbl, color = Color.White)
-                                },
-                                leadingIcon = { Icon(Icons.Default.Bedtime, contentDescription = null, tint = SoulSyncColors.AccentLight) },
-                                onClick = {
-                                    val curMin = if (sleepSecondsLeft > 0) (sleepSecondsLeft + 59) / 60 else 0
-                                    val idx = SLEEP_PRESETS_MIN.indexOfFirst { it > curMin }
-                                    val nextMin = if (idx >= 0) SLEEP_PRESETS_MIN[idx] else 0
-                                    sleepSecondsLeft = nextMin * 60
-                                    showMoreMenu = false
-                                },
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Stop & clear player", color = Color(0xFFFDA4AF)) },
-                                leadingIcon = { Icon(Icons.Default.StopCircle, contentDescription = null, tint = Color(0xFFFDA4AF)) },
-                                onClick = {
-                                    showMoreMenu = false
-                                    coordinator.stopPlayback()
-                                    onDismiss()
-                                },
-                            )
-                        }
-                    }
+                } else {
+                    Spacer(modifier = Modifier.size(38.dp))
                 }
             }
 
@@ -545,27 +495,60 @@ fun AudioNowPlayingSheet(
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            // 5. Balanced 5-Icon Plexamp Transport Row (NO awkward Stop button!)
+            // 5. Balanced 7-Control Transport Row:
+            //    Left: [Prev] [Stop] [Next]  |  Center: [Play/Pause]  |  Right: [Shuffle] [Loop] [Speed]
+            val speed = coordinator.playbackSpeed
+            val speedLabel = if (speed == speed.toInt().toFloat()) "${speed.toInt()}x" else "${speed}x"
+            val speedActive = speed != 1.0f
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                IconButton(onClick = { shuffleOn = !shuffleOn }) {
-                    Icon(
-                        Icons.Default.Shuffle,
-                        contentDescription = "Shuffle",
-                        tint = if (shuffleOn) SoulSyncColors.AccentLight else Color.White.copy(alpha = 0.55f),
-                        modifier = Modifier.size(22.dp),
-                    )
+                // Left side: Prev (farthest left), Stop, Next
+                Row(
+                    modifier = Modifier.weight(1f),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    IconButton(onClick = { coordinator.skipPrevious() }, modifier = Modifier.size(38.dp)) {
+                        Icon(
+                            Icons.Default.SkipPrevious,
+                            contentDescription = "Previous",
+                            tint = Color.White,
+                            modifier = Modifier.size(28.dp),
+                        )
+                    }
+                    IconButton(
+                        onClick = {
+                            coordinator.stopPlayback()
+                            onDismiss()
+                        },
+                        modifier = Modifier.size(38.dp),
+                    ) {
+                        Icon(
+                            Icons.Default.Stop,
+                            contentDescription = "Stop",
+                            tint = Color(0xFFFDA4AF),
+                            modifier = Modifier.size(26.dp),
+                        )
+                    }
+                    IconButton(onClick = { coordinator.skipNext() }, modifier = Modifier.size(38.dp)) {
+                        Icon(
+                            Icons.Default.SkipNext,
+                            contentDescription = "Next",
+                            tint = Color.White,
+                            modifier = Modifier.size(28.dp),
+                        )
+                    }
                 }
-                IconButton(onClick = { coordinator.skipPrevious() }, modifier = Modifier.size(48.dp)) {
-                    Icon(Icons.Default.SkipPrevious, contentDescription = "Previous", tint = Color.White, modifier = Modifier.size(36.dp))
-                }
+
+                Spacer(modifier = Modifier.width(6.dp))
+
+                // Center: Play / Pause
                 IconButton(
                     onClick = { coordinator.togglePlayPause() },
                     modifier = Modifier
-                        .size(68.dp)
+                        .size(64.dp)
                         .shadow(16.dp, CircleShape, spotColor = Color.White.copy(alpha = 0.4f))
                         .clip(CircleShape)
                         .background(Color.White)
@@ -575,19 +558,56 @@ fun AudioNowPlayingSheet(
                         imageVector = if (coordinator.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
                         contentDescription = if (coordinator.isPlaying) "Pause" else "Play",
                         tint = Color.Black,
-                        modifier = Modifier.size(36.dp),
+                        modifier = Modifier.size(34.dp),
                     )
                 }
-                IconButton(onClick = { coordinator.skipNext() }, modifier = Modifier.size(48.dp)) {
-                    Icon(Icons.Default.SkipNext, contentDescription = "Next", tint = Color.White, modifier = Modifier.size(36.dp))
-                }
-                IconButton(onClick = { repeatOn = !repeatOn }) {
-                    Icon(
-                        Icons.Default.Repeat,
-                        contentDescription = "Repeat",
-                        tint = if (repeatOn) SoulSyncColors.AccentLight else Color.White.copy(alpha = 0.55f),
-                        modifier = Modifier.size(22.dp),
-                    )
+
+                Spacer(modifier = Modifier.width(6.dp))
+
+                // Right side: Shuffle, Loop, Speed
+                Row(
+                    modifier = Modifier.weight(1f),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    IconButton(onClick = { shuffleOn = !shuffleOn }, modifier = Modifier.size(38.dp)) {
+                        Icon(
+                            Icons.Default.Shuffle,
+                            contentDescription = "Shuffle",
+                            tint = if (shuffleOn) SoulSyncColors.AccentLight else Color.White.copy(alpha = 0.6f),
+                            modifier = Modifier.size(20.dp),
+                        )
+                    }
+                    IconButton(onClick = { repeatOn = !repeatOn }, modifier = Modifier.size(38.dp)) {
+                        Icon(
+                            Icons.Default.Repeat,
+                            contentDescription = "Loop",
+                            tint = if (repeatOn) SoulSyncColors.AccentLight else Color.White.copy(alpha = 0.6f),
+                            modifier = Modifier.size(20.dp),
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .height(30.dp)
+                            .clip(RoundedCornerShape(999.dp))
+                            .background(if (speedActive) SoulSyncColors.Accent.copy(alpha = 0.24f) else Color.White.copy(alpha = 0.08f))
+                            .border(
+                                1.dp,
+                                if (speedActive) SoulSyncColors.Accent.copy(alpha = 0.6f) else Color.White.copy(alpha = 0.14f),
+                                RoundedCornerShape(999.dp),
+                            )
+                            .clickable { coordinator.cycleSpeed() }
+                            .padding(horizontal = 7.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = speedLabel,
+                            color = if (speedActive) SoulSyncColors.AccentLight else Color.White.copy(alpha = 0.82f),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                        )
+                    }
                 }
             }
 
