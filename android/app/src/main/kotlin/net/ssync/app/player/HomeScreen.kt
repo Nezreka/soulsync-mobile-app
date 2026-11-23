@@ -1,5 +1,9 @@
 package net.ssync.app.player
 
+import android.view.TextureView
+import androidx.annotation.OptIn
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -34,10 +38,14 @@ import androidx.compose.material.icons.filled.Podcasts
 import androidx.compose.material.icons.filled.SmartDisplay
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Tv
+import androidx.compose.material.icons.automirrored.filled.VolumeOff
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -47,16 +55,26 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.okhttp.OkHttpDataSource
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import okhttp3.OkHttpClient
 import net.ssync.pairing.theme.SoulSyncColors
 import net.ssync.pairing.ui.dpadFocusable
 import net.ssync.player.HomeLayout
@@ -79,11 +97,13 @@ private data class BillboardSlide(
     val backdropUrl: String,
     val posterUrl: String,
     val addedAt: String,
+    val previewStreamUrl: String? = null,
 )
 
 @Composable
 fun HomeScreen(
     api: PlayerApiClient,
+    pinnedHttpClient: OkHttpClient,
     coordinator: PlaybackCoordinator,
     onNavigate: (PlayerDestination) -> Unit,
     onDeviceRevoked: () -> Unit,
@@ -182,12 +202,14 @@ fun HomeScreen(
                     backdropUrl = api.artwork.movieBackdrop(m.id),
                     posterUrl = api.artwork.moviePoster(m.id),
                     addedAt = m.addedAt.orEmpty(),
+                    previewStreamUrl = api.streamUrl("movie", m.id.toString()),
                 )
             }
         val showSlides = catalog.shows
             .sortedByDescending { it.addedAt.orEmpty() }
             .take(3)
             .map { s ->
+                val firstEpId = s.episodes.firstOrNull()?.firstOrNull()?.toString()?.trim('"')
                 BillboardSlide(
                     kind = "show",
                     id = s.id,
@@ -203,6 +225,7 @@ fun HomeScreen(
                     backdropUrl = api.artwork.showBackdrop(s.id),
                     posterUrl = api.artwork.showPoster(s.id),
                     addedAt = s.addedAt.orEmpty(),
+                    previewStreamUrl = firstEpId?.let { api.streamUrl("episode", it) },
                 )
             }
         (movieSlides + showSlides)
@@ -225,10 +248,13 @@ fun HomeScreen(
         onHasHeroChanged(showBillboard)
     }
 
-    LaunchedEffect(billboardSlides.size) {
+    var heroMuted by remember { mutableStateOf(true) }
+    var heroVideoReady by remember { mutableStateOf(false) }
+
+    LaunchedEffect(billboardSlides.size, heroVideoReady) {
         if (billboardSlides.size > 1) {
             while (true) {
-                delay(8_000L)
+                delay(if (heroVideoReady) 18_000L else 8_000L)
                 billboardIndex = (billboardIndex + 1) % billboardSlides.size
             }
         }
@@ -260,6 +286,7 @@ fun HomeScreen(
                 val hero = billboardSlides[billboardIndex % billboardSlides.size]
                 val saved = watchlist.any { it.itemType == hero.kind && it.itemId == hero.id.toString() }
                 val logoKey = hero.tmdbId?.let { "${hero.kind}:$it" }
+                val allowHeroVideo = coordinator.activeItem == null && !scrolled && hero.previewStreamUrl != null
                 Box {
                     HeroSpotlight(
                         title = hero.title,
@@ -268,6 +295,18 @@ fun HomeScreen(
                         eyebrow = hero.eyebrow,
                         logoUrl = logoKey?.let { logos[it] }?.let { api.artwork.resolve(it) },
                         inWatchlist = saved,
+                        backgroundVideo = if (allowHeroVideo) {
+                            {
+                                HeroVideoBackdrop(
+                                    streamUrl = hero.previewStreamUrl!!,
+                                    pinnedHttpClient = pinnedHttpClient,
+                                    muted = heroMuted,
+                                    onReadyChanged = { heroVideoReady = it },
+                                )
+                            }
+                        } else {
+                            null
+                        },
                         onPlay = {
                             if (hero.kind == "movie") {
                                 coordinator.playVideo(
@@ -297,6 +336,25 @@ fun HomeScreen(
                             }
                         },
                     )
+                    if (allowHeroVideo && heroVideoReady) {
+                        IconButton(
+                            onClick = { heroMuted = !heroMuted },
+                            modifier = Modifier
+                                .align(Alignment.BottomEnd)
+                                .padding(end = 16.dp, bottom = 50.dp)
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .background(Color.Black.copy(alpha = 0.56f))
+                                .border(1.dp, Color.White.copy(alpha = 0.22f), CircleShape),
+                        ) {
+                            Icon(
+                                imageVector = if (heroMuted) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeUp,
+                                contentDescription = if (heroMuted) "Unmute preview" else "Mute preview",
+                                tint = Color.White,
+                                modifier = Modifier.size(18.dp),
+                            )
+                        }
+                    }
                     if (billboardSlides.size > 1) {
                         Row(
                             modifier = Modifier
@@ -357,13 +415,23 @@ fun HomeScreen(
                                     ?.takeIf { it.isNotBlank() && !it.equals("Untitled", ignoreCase = true) }
                                     ?: catalogTitle
                                     ?: item.itemId
-                                val resolvedArt = api.artwork.resolve(item.meta?.backdrop ?: item.meta?.artwork)
-                                    ?: api.artwork.forItem(
-                                        itemType = item.itemType,
-                                        itemId = item.itemId,
-                                        preferBackdrop = true,
-                                        parentId = item.meta?.parentId,
-                                    )
+                                val resolvedArt = if (item.itemType == "youtube") {
+                                    val ytCatalogThumb = catalog.youtube
+                                        .firstOrNull { it.id == item.itemId || it.youtubeId == item.itemId }
+                                        ?.thumbnailUrl
+                                    val metaArt = (item.meta?.backdrop ?: item.meta?.artwork)
+                                        ?.takeIf { it.isNotBlank() && !it.contains("/api/image-proxy") }
+                                    api.artwork.resolve(metaArt ?: ytCatalogThumb)
+                                        ?: api.artwork.forItem("youtube", item.itemId, preferBackdrop = true)
+                                } else {
+                                    api.artwork.resolve(item.meta?.backdrop ?: item.meta?.artwork)
+                                        ?: api.artwork.forItem(
+                                            itemType = item.itemType,
+                                            itemId = item.itemId,
+                                            preferBackdrop = true,
+                                            parentId = item.meta?.parentId,
+                                        )
+                                }
                                 WideMediaCard(
                                     title = displayTitle,
                                     subtitle = item.meta?.subtitle ?: item.itemType.replaceFirstChar { it.uppercase() },
@@ -771,4 +839,124 @@ private fun QuickJumpStrip(onNavigate: (PlayerDestination) -> Unit) {
             }
         }
     }
+}
+
+/**
+ * Netflix / Apple TV style muted live video preview inside the Home Hero Billboard.
+ * Uses TextureView (so it clips & fades smoothly inside LazyColumn) + ExoPlayer with our
+ * authenticated OkHttpDataSource, seeks 10% into the title to skip black studio logos,
+ * and silently falls back to the high-res backdrop image on any codec/network error.
+ */
+@OptIn(UnstableApi::class)
+@Composable
+private fun HeroVideoBackdrop(
+    streamUrl: String,
+    pinnedHttpClient: OkHttpClient,
+    muted: Boolean,
+    onReadyChanged: (Boolean) -> Unit,
+) {
+    val context = LocalContext.current
+    var startPreview by remember(streamUrl) { mutableStateOf(false) }
+    var firstFrameRendered by remember(streamUrl) { mutableStateOf(false) }
+
+    LaunchedEffect(streamUrl) {
+        firstFrameRendered = false
+        onReadyChanged(false)
+        delay(1_400L)
+        startPreview = true
+    }
+
+    if (!startPreview) return
+
+    val exoPlayer = remember(streamUrl) {
+        val dataSourceFactory = OkHttpDataSource.Factory(pinnedHttpClient)
+        ExoPlayer.Builder(context)
+            .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory))
+            .build()
+            .apply {
+                volume = 0f
+                repeatMode = Player.REPEAT_MODE_ONE
+                setMediaItem(MediaItem.fromUri(streamUrl))
+                prepare()
+                playWhenReady = true
+            }
+    }
+
+    LaunchedEffect(exoPlayer, muted) {
+        exoPlayer.volume = if (muted) 0f else 0.85f
+    }
+
+    var textureViewRef by remember(streamUrl) { mutableStateOf<TextureView?>(null) }
+
+    DisposableEffect(exoPlayer) {
+        var soughtPreview = false
+        val listener = object : Player.Listener {
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                if (playbackState == Player.STATE_READY && !soughtPreview) {
+                    val dur = exoPlayer.duration
+                    if (dur > 60_000L) {
+                        soughtPreview = true
+                        exoPlayer.seekTo((dur * 0.10).toLong().coerceAtMost(180_000L))
+                    }
+                }
+            }
+
+            override fun onRenderedFirstFrame() {
+                firstFrameRendered = true
+                onReadyChanged(true)
+            }
+
+            override fun onVideoSizeChanged(videoSize: androidx.media3.common.VideoSize) {
+                val tv = textureViewRef ?: return
+                if (videoSize.width > 0 && videoSize.height > 0 && tv.width > 0 && tv.height > 0) {
+                    val viewW = tv.width.toFloat()
+                    val viewH = tv.height.toFloat()
+                    val videoRatio = videoSize.width.toFloat() / videoSize.height.toFloat()
+                    val viewRatio = viewW / viewH
+                    val scaleX: Float
+                    val scaleY: Float
+                    if (videoRatio > viewRatio) {
+                        scaleX = videoRatio / viewRatio
+                        scaleY = 1f
+                    } else {
+                        scaleX = 1f
+                        scaleY = viewRatio / videoRatio
+                    }
+                    val matrix = android.graphics.Matrix()
+                    matrix.setScale(scaleX, scaleY, viewW / 2f, viewH / 2f)
+                    tv.setTransform(matrix)
+                }
+            }
+
+            override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                firstFrameRendered = false
+                onReadyChanged(false)
+            }
+        }
+        exoPlayer.addListener(listener)
+        onDispose {
+            exoPlayer.removeListener(listener)
+            exoPlayer.clearVideoTextureView(textureViewRef)
+            exoPlayer.release()
+            onReadyChanged(false)
+        }
+    }
+
+    val videoAlpha by animateFloatAsState(
+        targetValue = if (firstFrameRendered) 1f else 0f,
+        animationSpec = tween(durationMillis = 650),
+        label = "hero_video_fade",
+    )
+
+    AndroidView(
+        factory = { ctx ->
+            TextureView(ctx).also { tv ->
+                textureViewRef = tv
+                exoPlayer.setVideoTextureView(tv)
+            }
+        },
+        modifier = Modifier
+            .fillMaxSize()
+            .alpha(videoAlpha),
+    )
 }

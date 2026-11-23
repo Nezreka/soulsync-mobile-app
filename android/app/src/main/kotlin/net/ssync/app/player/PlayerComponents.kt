@@ -124,6 +124,7 @@ fun HeroSpotlight(
     onPlay: () -> Unit,
     onDetails: (() -> Unit)? = null,
     onToggleWatchlist: (() -> Unit)? = null,
+    backgroundVideo: (@Composable () -> Unit)? = null,
 ) {
     val chips = subtitle.split("•").map { it.trim() }.filter { it.isNotEmpty() }
     val imageLoader = LocalSoulSyncImageLoader.current
@@ -139,6 +140,7 @@ fun HeroSpotlight(
             contentDescription = title,
             modifier = Modifier.fillMaxSize(),
         )
+        backgroundVideo?.invoke()
         // Top vignette for transparent header legibility + bottom ink fade into canvas
         Box(
             modifier = Modifier

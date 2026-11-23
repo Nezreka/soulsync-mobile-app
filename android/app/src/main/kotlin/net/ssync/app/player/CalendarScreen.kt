@@ -22,21 +22,28 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Movie
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -192,11 +199,22 @@ private fun formatRangeLabel(startIso: String, days: Int): String {
 }
 
 private fun calendarEpisodeArt(ep: CalendarEpisode, api: PlayerApiClient): String? {
+    val epId = ep.id
+    val showId = ep.showId
+    if (!ep.notInLibrary && ep.hasStill && epId != null) return api.artwork.episodeStill(epId)
     if (!ep.stillUrl.isNullOrBlank()) return api.artwork.resolve(ep.stillUrl)
-    ep.showId?.let { return api.artwork.showBackdrop(it) }
+    if (!ep.notInLibrary && showId != null && ep.showHasBackdrop) return api.artwork.showBackdrop(showId)
     if (!ep.backdropUrl.isNullOrBlank()) return api.artwork.resolve(ep.backdropUrl)
+    if (!ep.notInLibrary && showId != null) return api.artwork.showPoster(showId)
     if (!ep.posterUrl.isNullOrBlank()) return api.artwork.resolve(ep.posterUrl)
     return null
+}
+
+private fun calendarEpisodeBackdrop(ep: CalendarEpisode, api: PlayerApiClient): String? {
+    val showId = ep.showId
+    if (!ep.notInLibrary && showId != null && ep.showHasBackdrop) return api.artwork.showBackdrop(showId)
+    if (!ep.backdropUrl.isNullOrBlank()) return api.artwork.resolve(ep.backdropUrl)
+    return calendarEpisodeArt(ep, api)
 }
 
 private fun calendarMovieArt(m: CalendarMovie, api: PlayerApiClient): String? {
@@ -237,6 +255,8 @@ fun CalendarScreen(
     var movies by remember { mutableStateOf<List<CalendarMovie>>(emptyList()) }
     var requestMode by remember { mutableStateOf("none") }
     val requestedKeys = remember { mutableStateMapOf<String, String>() }
+    var modalEpisode by remember { mutableStateOf<CalendarEpisode?>(null) }
+    var modalMovie by remember { mutableStateOf<CalendarMovie?>(null) }
 
     LaunchedEffect(api, weekStart, scopeMode) {
         loading = true
@@ -691,7 +711,7 @@ fun CalendarScreen(
                             requestVerb = requestVerb,
                             requestState = reqState,
                             onRequest = { requestMovie(m) },
-                            onClick = if (libId != null) ({ onOpenMovie(libId) }) else null,
+                            onClick = { modalMovie = m },
                         )
                     } else {
                         ManagerStyleTile(
@@ -704,7 +724,7 @@ fun CalendarScreen(
                             requestVerb = requestVerb,
                             requestState = reqState,
                             onRequest = { requestMovie(m) },
-                            onClick = if (libId != null) ({ onOpenMovie(libId) }) else null,
+                            onClick = { modalMovie = m },
                         )
                     }
                 }
@@ -757,7 +777,7 @@ fun CalendarScreen(
                                 requestVerb = requestVerb,
                                 requestState = reqState,
                                 onRequest = { requestEpisode(ep) },
-                                onClick = if (epShowId != null && !ep.notInLibrary) ({ onOpenShow(epShowId) }) else null,
+                                onClick = { modalEpisode = ep },
                             )
                         } else {
                             ManagerStyleTile(
@@ -770,13 +790,61 @@ fun CalendarScreen(
                                 requestVerb = requestVerb,
                                 requestState = reqState,
                                 onRequest = { requestEpisode(ep) },
-                                onClick = if (epShowId != null && !ep.notInLibrary) ({ onOpenShow(epShowId) }) else null,
+                                onClick = { modalEpisode = ep },
                             )
                         }
                     }
                 }
             }
         }
+    }
+
+    modalEpisode?.let { ep ->
+        val reqKey = "ep:${ep.resolvedTmdbId}:${ep.seasonNumber}:${ep.episodeNumber}"
+        val reqState = requestedKeys[reqKey]
+        val aired = ep.airDate <= todayIso
+        val showReq = canRequest && aired && ep.acq == "missing" && ep.resolvedTmdbId != null
+        CalendarEpisodeModal(
+            ep = ep,
+            api = api,
+            todayIso = todayIso,
+            showRequest = showReq,
+            requestVerb = requestVerb,
+            requestMode = requestMode,
+            requestState = reqState,
+            onRequest = { requestEpisode(ep) },
+            onOpenShow = ep.showId?.takeIf { !ep.notInLibrary }?.let { sid ->
+                {
+                    modalEpisode = null
+                    onOpenShow(sid)
+                }
+            },
+            onDismiss = { modalEpisode = null },
+        )
+    }
+
+    modalMovie?.let { m ->
+        val reqKey = "movie:${m.tmdbId}"
+        val reqState = requestedKeys[reqKey]
+        val aired = m.effectiveDate <= todayIso
+        val showReq = canRequest && aired && m.acq == "missing" && m.tmdbId > 0
+        CalendarMovieModal(
+            movie = m,
+            api = api,
+            todayIso = todayIso,
+            showRequest = showReq,
+            requestVerb = requestVerb,
+            requestMode = requestMode,
+            requestState = reqState,
+            onRequest = { requestMovie(m) },
+            onOpenMovie = m.effectiveLibraryId?.let { lid ->
+                {
+                    modalMovie = null
+                    onOpenMovie(lid)
+                }
+            },
+            onDismiss = { modalMovie = null },
+        )
     }
 }
 
@@ -980,6 +1048,7 @@ private fun CalendarVisualCard(
                 if (artUrl != null) {
                     AsyncImage(
                         model = artUrl,
+                        imageLoader = LocalSoulSyncImageLoader.current,
                         contentDescription = title,
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxSize(),
@@ -1042,6 +1111,451 @@ private fun CalendarVisualCard(
                         Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(14.dp))
                         Spacer(modifier = Modifier.width(4.dp))
                         Text(if (requestState == "loading") "…" else requestVerb, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ── Manager-Style Calendar Detail Modals (Backdrop + Still + Info + Actions) ─
+
+@Composable
+private fun CalendarEpisodeModal(
+    ep: CalendarEpisode,
+    api: PlayerApiClient,
+    todayIso: String,
+    showRequest: Boolean,
+    requestVerb: String,
+    requestMode: String,
+    requestState: String?,
+    onRequest: () -> Unit,
+    onOpenShow: (() -> Unit)?,
+    onDismiss: () -> Unit,
+) {
+    val effectiveAcq = if (requestState == "done") "wishlist" else ep.acq
+    val backdropUrl = calendarEpisodeBackdrop(ep, api)
+    val stillUrl = calendarEpisodeArt(ep, api)
+    val eyebrow = listOfNotNull(
+        ep.network?.takeIf { it.isNotBlank() },
+        ep.showYear?.toString(),
+        ep.showStatus?.takeIf { it.isNotBlank() },
+    ).joinToString(" · ")
+    val (dateHeading, isToday) = formatDayHeading(ep.airDate, todayIso)
+    val time12 = formatAirTime12h(ep.airsTime) ?: "Anytime"
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Surface(
+            shape = RoundedCornerShape(22.dp),
+            color = Color(0xFF131520),
+            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.12f)),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 24.dp),
+        ) {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+            ) {
+                // Full-bleed Backdrop Hero with scrim + Close button
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(190.dp)
+                        .background(Color(0xFF0C0E16)),
+                ) {
+                    if (backdropUrl != null) {
+                        AsyncImage(
+                            model = backdropUrl,
+                            imageLoader = LocalSoulSyncImageLoader.current,
+                            contentDescription = ep.showTitle,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(
+                                Brush.verticalGradient(
+                                    listOf(
+                                        Color.Black.copy(alpha = 0.25f),
+                                        Color(0xFF131520).copy(alpha = 0.65f),
+                                        Color(0xFF131520),
+                                    ),
+                                ),
+                            ),
+                    )
+                    IconButton(
+                        onClick = onDismiss,
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(10.dp)
+                            .size(34.dp)
+                            .clip(CircleShape)
+                            .background(Color.Black.copy(alpha = 0.58f))
+                            .border(1.dp, Color.White.copy(alpha = 0.18f), CircleShape),
+                    ) {
+                        Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White, modifier = Modifier.size(18.dp))
+                    }
+                    Column(
+                        modifier = Modifier
+                            .align(Alignment.BottomStart)
+                            .padding(horizontal = 18.dp, vertical = 14.dp),
+                        verticalArrangement = Arrangement.spacedBy(3.dp),
+                    ) {
+                        if (eyebrow.isNotBlank()) {
+                            Text(
+                                text = eyebrow.uppercase(),
+                                color = SoulSyncColors.AccentLight,
+                                fontSize = 10.5.sp,
+                                fontWeight = FontWeight.Bold,
+                                letterSpacing = 0.8.sp,
+                            )
+                        }
+                        Text(
+                            text = ep.showTitle,
+                            color = Color.White,
+                            fontSize = 22.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+
+                // Body: Episode Still + Metadata + Status Pill + Synopsis
+                Column(
+                    modifier = Modifier.padding(horizontal = 18.dp, vertical = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(14.dp),
+                        verticalAlignment = Alignment.Top,
+                    ) {
+                        if (stillUrl != null) {
+                            Box(
+                                modifier = Modifier
+                                    .width(126.dp)
+                                    .aspectRatio(16f / 9f)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(Color(0xFF1B1E2E))
+                                    .border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(10.dp)),
+                            ) {
+                                AsyncImage(
+                                    model = stillUrl,
+                                    imageLoader = LocalSoulSyncImageLoader.current,
+                                    contentDescription = ep.title,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize(),
+                                )
+                            }
+                        }
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            Text(
+                                text = "S${ep.seasonNumber} · E${ep.episodeNumber}",
+                                color = SoulSyncColors.AccentLight,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                            )
+                            Text(
+                                text = ep.title?.takeIf { it.isNotBlank() } ?: "Episode ${ep.episodeNumber}",
+                                color = Color.White,
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                text = "$dateHeading · $time12" + if (isToday) " · Today" else "",
+                                color = SoulSyncColors.TextSecondary,
+                                fontSize = 12.sp,
+                            )
+                        }
+                    }
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Surface(
+                            shape = CircleShape,
+                            color = acqColor(effectiveAcq).copy(alpha = 0.15f),
+                            border = BorderStroke(1.dp, acqColor(effectiveAcq).copy(alpha = 0.4f)),
+                        ) {
+                            Box(modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)) {
+                                ManagerStatusInline(acq = effectiveAcq, progress = ep.progress)
+                            }
+                        }
+                        ep.runtimeMinutes?.takeIf { it > 0 }?.let { mins ->
+                            Text("$mins min", color = SoulSyncColors.TextSecondary, fontSize = 12.sp)
+                        }
+                        ep.rating?.takeIf { it > 0.0 }?.let { r ->
+                            Text("★ ${"%.1f".format(r)}", color = Color(0xFFFBBF24), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+
+                    Text(
+                        text = ep.overview?.takeIf { it.isNotBlank() } ?: "No episode synopsis yet.",
+                        color = if (ep.overview.isNullOrBlank()) SoulSyncColors.TextSecondary else Color.White.copy(alpha = 0.84f),
+                        fontSize = 13.5.sp,
+                        lineHeight = 20.sp,
+                    )
+
+                    // Action Footer: Request (if missing) + Go to episode/show (if in library)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 4.dp, bottom = 6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        if (showRequest && requestState != "done") {
+                            Button(
+                                onClick = onRequest,
+                                enabled = requestState != "loading",
+                                shape = RoundedCornerShape(999.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = SoulSyncColors.Accent),
+                                modifier = Modifier.weight(1f).height(44.dp),
+                            ) {
+                                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = if (requestState == "loading") "Requesting…" else "$requestVerb episode",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp,
+                                )
+                            }
+                        } else if (requestState == "done") {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Icon(Icons.Default.Check, contentDescription = null, tint = Color(0xFF22C55E), modifier = Modifier.size(16.dp))
+                                Text(
+                                    text = if (requestMode == "download") "On wishlist" else "Requested",
+                                    color = Color(0xFF22C55E),
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                )
+                            }
+                        }
+
+                        if (onOpenShow != null) {
+                            val primaryOpen = !(showRequest && requestState != "done")
+                            if (primaryOpen) {
+                                Button(
+                                    onClick = onOpenShow,
+                                    shape = RoundedCornerShape(999.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = SoulSyncColors.Accent),
+                                    modifier = Modifier.weight(1f).height(44.dp),
+                                ) {
+                                    Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = if (ep.acq == "owned") "Go to episode" else "Open show",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 13.sp,
+                                    )
+                                }
+                            } else {
+                                OutlinedButton(
+                                    onClick = onOpenShow,
+                                    shape = RoundedCornerShape(999.dp),
+                                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f)),
+                                    modifier = Modifier.weight(1f).height(44.dp),
+                                ) {
+                                    Text("Open show", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CalendarMovieModal(
+    movie: CalendarMovie,
+    api: PlayerApiClient,
+    todayIso: String,
+    showRequest: Boolean,
+    requestVerb: String,
+    requestMode: String,
+    requestState: String?,
+    onRequest: () -> Unit,
+    onOpenMovie: (() -> Unit)?,
+    onDismiss: () -> Unit,
+) {
+    val effectiveAcq = if (requestState == "done") "wishlist" else movie.acq
+    val artUrl = calendarMovieArt(movie, api)
+    val eyebrow = listOfNotNull(
+        if (movie.effectiveType == "cinema") "In cinemas" else "Home release",
+        movie.year?.toString(),
+    ).joinToString(" · ")
+    val (dateHeading, isToday) = if (movie.effectiveDate.isNotBlank()) {
+        formatDayHeading(movie.effectiveDate, todayIso)
+    } else {
+        "TBA" to false
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Surface(
+            shape = RoundedCornerShape(22.dp),
+            color = Color(0xFF131520),
+            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.12f)),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 24.dp),
+        ) {
+            Column {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(190.dp)
+                        .background(Color(0xFF0C0E16)),
+                ) {
+                    if (artUrl != null) {
+                        AsyncImage(
+                            model = artUrl,
+                            imageLoader = LocalSoulSyncImageLoader.current,
+                            contentDescription = movie.title,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(
+                                Brush.verticalGradient(
+                                    listOf(
+                                        Color.Black.copy(alpha = 0.25f),
+                                        Color(0xFF131520).copy(alpha = 0.65f),
+                                        Color(0xFF131520),
+                                    ),
+                                ),
+                            ),
+                    )
+                    IconButton(
+                        onClick = onDismiss,
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(10.dp)
+                            .size(34.dp)
+                            .clip(CircleShape)
+                            .background(Color.Black.copy(alpha = 0.58f))
+                            .border(1.dp, Color.White.copy(alpha = 0.18f), CircleShape),
+                    ) {
+                        Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White, modifier = Modifier.size(18.dp))
+                    }
+                    Column(
+                        modifier = Modifier
+                            .align(Alignment.BottomStart)
+                            .padding(horizontal = 18.dp, vertical = 14.dp),
+                        verticalArrangement = Arrangement.spacedBy(3.dp),
+                    ) {
+                        if (eyebrow.isNotBlank()) {
+                            Text(
+                                text = eyebrow.uppercase(),
+                                color = SoulSyncColors.AccentLight,
+                                fontSize = 10.5.sp,
+                                fontWeight = FontWeight.Bold,
+                                letterSpacing = 0.8.sp,
+                            )
+                        }
+                        Text(
+                            text = movie.title,
+                            color = Color.White,
+                            fontSize = 22.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+
+                Column(
+                    modifier = Modifier.padding(horizontal = 18.dp, vertical = 14.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Text(
+                        text = dateHeading + if (isToday) " · Today" else "",
+                        color = SoulSyncColors.TextSecondary,
+                        fontSize = 13.sp,
+                    )
+                    Surface(
+                        shape = CircleShape,
+                        color = acqColor(effectiveAcq).copy(alpha = 0.15f),
+                        border = BorderStroke(1.dp, acqColor(effectiveAcq).copy(alpha = 0.4f)),
+                    ) {
+                        Box(modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)) {
+                            ManagerStatusInline(acq = effectiveAcq, progress = movie.progress)
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 4.dp, bottom = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        if (showRequest && requestState != "done") {
+                            Button(
+                                onClick = onRequest,
+                                enabled = requestState != "loading",
+                                shape = RoundedCornerShape(999.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = SoulSyncColors.Accent),
+                                modifier = Modifier.weight(1f).height(44.dp),
+                            ) {
+                                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = if (requestState == "loading") "Requesting…" else "$requestVerb movie",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp,
+                                )
+                            }
+                        } else if (requestState == "done") {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Icon(Icons.Default.Check, contentDescription = null, tint = Color(0xFF22C55E), modifier = Modifier.size(16.dp))
+                                Text(
+                                    text = if (requestMode == "download") "On wishlist" else "Requested",
+                                    color = Color(0xFF22C55E),
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                )
+                            }
+                        }
+
+                        if (onOpenMovie != null) {
+                            Button(
+                                onClick = onOpenMovie,
+                                shape = RoundedCornerShape(999.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = SoulSyncColors.Accent),
+                                modifier = Modifier.weight(1f).height(44.dp),
+                            ) {
+                                Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Open movie", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            }
+                        }
                     }
                 }
             }

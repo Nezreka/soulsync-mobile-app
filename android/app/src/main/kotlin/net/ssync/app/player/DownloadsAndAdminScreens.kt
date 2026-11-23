@@ -365,6 +365,7 @@ fun DownloadsScreen(
                             if (!item.artworkUrl.isNullOrBlank()) {
                                 AsyncImage(
                                     model = item.artworkUrl,
+                                    imageLoader = LocalSoulSyncImageLoader.current,
                                     contentDescription = item.title,
                                     contentScale = ContentScale.Crop,
                                     modifier = Modifier.fillMaxSize(),
@@ -400,8 +401,10 @@ fun DownloadsScreen(
 @Composable
 fun AdminUsersScreen(
     api: PlayerApiClient,
+    coordinator: PlaybackCoordinator,
     onDeviceRevoked: () -> Unit,
 ) {
+    var activeTab by remember { mutableStateOf("admin") } // "admin" | "mine"
     val scope = rememberCoroutineScope()
     var overview by remember { mutableStateOf<AdminUsersOverview?>(null) }
     var loading by remember { mutableStateOf(true) }
@@ -423,11 +426,48 @@ fun AdminUsersScreen(
         loading = false
     }
 
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(bottom = 110.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
+    Column(modifier = Modifier.fillMaxSize()) {
+        // Unified Admin Hub Segmented Switcher: Users & Devices | My Downloads
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 10.dp)
+                .clip(CircleShape)
+                .background(Color(0xFF141620))
+                .border(1.dp, Color.White.copy(alpha = 0.1f), CircleShape)
+                .padding(3.dp),
+        ) {
+            listOf("admin" to "Users & Devices", "mine" to "My Downloads").forEach { (id, label) ->
+                val on = activeTab == id
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(CircleShape)
+                        .background(if (on) SoulSyncColors.Accent.copy(alpha = 0.28f) else Color.Transparent)
+                        .clickable { activeTab = id }
+                        .padding(vertical = 8.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = label,
+                        color = if (on) Color.White else SoulSyncColors.TextSecondary,
+                        fontSize = 13.sp,
+                        fontWeight = if (on) FontWeight.Bold else FontWeight.Medium,
+                    )
+                }
+            }
+        }
+
+        if (activeTab == "mine") {
+            DownloadsScreen(api = api, coordinator = coordinator)
+            return
+        }
+
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(bottom = 110.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
         item {
             Column(
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
@@ -633,6 +673,7 @@ fun AdminUsersScreen(
                     }
                 }
             }
+        }
         }
     }
 }

@@ -351,6 +351,7 @@ fun PlayerShell(
                                         current = current,
                                         record = currentRecord,
                                         api = api,
+                                        pinnedHttpClient = pinnedClient,
                                         coordinator = coordinator,
                                         openHomeEditor = openHomeEditor,
                                         onConsumeHomeEditor = { openHomeEditor = false },
@@ -996,7 +997,6 @@ private fun PlayerSidebar(
         SidebarItem(Icons.Default.Home, "Home", current is PlayerDestination.Home, collapsed) { onNavigate(PlayerDestination.Home) }
         SidebarItem(Icons.Default.LiveTv, "Live Guide", current is PlayerDestination.Guide, collapsed) { onNavigate(PlayerDestination.Guide) }
         SidebarItem(Icons.Default.CalendarMonth, "Calendar", current is PlayerDestination.Calendar, collapsed) { onNavigate(PlayerDestination.Calendar) }
-        SidebarItem(Icons.Default.Download, "Downloads", current is PlayerDestination.Downloads, collapsed) { onNavigate(PlayerDestination.Downloads) }
         SidebarItem(Icons.Default.Bookmark, "Watchlist", current is PlayerDestination.Watchlist, collapsed) { onNavigate(PlayerDestination.Watchlist) }
         SidebarItem(
             icon = Icons.Default.Group,
@@ -1019,7 +1019,19 @@ private fun PlayerSidebar(
         HorizontalDivider(color = SoulSyncColors.Line, modifier = Modifier.padding(vertical = 10.dp))
 
         if (isAdmin) {
-            SidebarItem(Icons.Default.AdminPanelSettings, "Users & Downloads", current is PlayerDestination.AdminUsers, collapsed) { onNavigate(PlayerDestination.AdminUsers) }
+            SidebarItem(
+                Icons.Default.AdminPanelSettings,
+                "Users & Downloads",
+                current is PlayerDestination.AdminUsers || current is PlayerDestination.Downloads,
+                collapsed,
+            ) { onNavigate(PlayerDestination.AdminUsers) }
+        } else {
+            SidebarItem(
+                Icons.Default.Download,
+                "Downloads",
+                current is PlayerDestination.Downloads,
+                collapsed,
+            ) { onNavigate(PlayerDestination.Downloads) }
         }
         SidebarItem(Icons.Default.Settings, "Player Settings", current is PlayerDestination.Settings, collapsed) { onNavigate(PlayerDestination.Settings) }
         if (showCollapseToggle) {
@@ -1086,6 +1098,7 @@ private fun PlayerContent(
     current: PlayerDestination,
     record: PairedServerRecord,
     api: PlayerApiClient,
+    pinnedHttpClient: okhttp3.OkHttpClient,
     coordinator: PlaybackCoordinator,
     openHomeEditor: Boolean,
     onConsumeHomeEditor: () -> Unit,
@@ -1100,6 +1113,7 @@ private fun PlayerContent(
     when (current) {
         PlayerDestination.Home -> HomeScreen(
             api = api,
+            pinnedHttpClient = pinnedHttpClient,
             coordinator = coordinator,
             onNavigate = onNavigate,
             onDeviceRevoked = onDeviceRevoked,
@@ -1111,7 +1125,7 @@ private fun PlayerContent(
         PlayerDestination.Guide -> GuideScreen(api, coordinator, onDeviceRevoked, onNavigate)
         PlayerDestination.Calendar -> CalendarScreen(api, onNavigate, onDeviceRevoked)
         PlayerDestination.Downloads -> DownloadsScreen(api, coordinator)
-        PlayerDestination.AdminUsers -> AdminUsersScreen(api, onDeviceRevoked)
+        PlayerDestination.AdminUsers -> AdminUsersScreen(api, coordinator, onDeviceRevoked)
         PlayerDestination.Movies -> MoviesScreen(api, { onNavigate(PlayerDestination.MovieDetail(it)) }, onDeviceRevoked)
         is PlayerDestination.MovieDetail -> MovieDetailScreen(current.movieId, api, coordinator, onNavigate, onDeviceRevoked)
         PlayerDestination.Tv -> TvScreen(api, { onNavigate(PlayerDestination.ShowDetail(it)) }, onDeviceRevoked)

@@ -476,6 +476,18 @@ data class CalendarEpisode(
     val backdropUrl: String? = null,
     @SerialName("poster_url")
     val posterUrl: String? = null,
+    @SerialName("has_still")
+    val hasStill: Boolean = false,
+    @SerialName("show_has_backdrop")
+    val showHasBackdrop: Boolean = false,
+    val overview: String? = null,
+    @SerialName("runtime_minutes")
+    val runtimeMinutes: Int? = null,
+    val rating: Double? = null,
+    @SerialName("show_year")
+    val showYear: Int? = null,
+    @SerialName("show_status")
+    val showStatus: String? = null,
     @SerialName("not_in_library")
     val notInLibrary: Boolean = false,
     val acq: String = "upcoming",
