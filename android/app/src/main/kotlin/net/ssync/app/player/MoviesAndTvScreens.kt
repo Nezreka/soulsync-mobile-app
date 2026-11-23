@@ -128,6 +128,17 @@ fun MovieDetailScreen(
     }
 
     var pendingRequest by remember { mutableStateOf<UnownedTitleTarget?>(null) }
+    var issueTarget by remember { mutableStateOf<ReportIssueTarget?>(null) }
+    val directors = remember(movie.crew) { movie.crew.filter { it.job == "Director" } }
+    val discoveryRails = rememberRelatedDiscoveryRails(
+        kind = "movie",
+        selfId = movie.id,
+        cast = movie.cast,
+        leadCrew = directors,
+        studioOrNetwork = movie.studio,
+        franchiseCollection = extras?.collection,
+        api = api,
+    )
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -184,6 +195,22 @@ fun MovieDetailScreen(
                 }
             }
         }
+        item {
+            Row(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                ReportIssuePillButton(
+                    onClick = {
+                        issueTarget = ReportIssueTarget(
+                            entityType = "movie",
+                            entityId = movie.id,
+                            title = movie.title,
+                        )
+                    },
+                )
+            }
+        }
         if (movie.cast.isNotEmpty()) {
             item {
                 MediaRail(title = "Cast") {
@@ -204,6 +231,22 @@ fun MovieDetailScreen(
                 }
             }
         }
+        relatedDiscoveryRails(
+            rails = discoveryRails,
+            onNavigate = onNavigate,
+            onRequestUnowned = { card ->
+                if (card.tmdbId > 0) {
+                    pendingRequest = UnownedTitleTarget(
+                        kind = card.kind,
+                        tmdbId = card.tmdbId,
+                        title = card.title,
+                        year = card.subtitle,
+                        subtitle = if (card.kind == "show") "TV Show" else "Movie",
+                        posterUrl = card.artworkUrl,
+                    )
+                }
+            },
+        )
         val similar = (extras?.recommendations.orEmpty() + extras?.similar.orEmpty()).distinctBy { it.tmdbId }.take(16)
         if (similar.isNotEmpty()) {
             item {
@@ -268,6 +311,14 @@ fun MovieDetailScreen(
             api = api,
             onDeviceRevoked = onDeviceRevoked,
             onDismiss = { pendingRequest = null },
+        )
+    }
+    if (issueTarget != null) {
+        ReportIssueSheet(
+            target = issueTarget!!,
+            api = api,
+            onDeviceRevoked = onDeviceRevoked,
+            onDismiss = { issueTarget = null },
         )
     }
 }
@@ -1096,6 +1147,8 @@ fun ShowDetailScreen(
     var ownedOnly by remember { mutableStateOf(false) }
     var overviewExpanded by remember { mutableStateOf(false) }
     var pendingRequest by remember { mutableStateOf<UnownedTitleTarget?>(null) }
+    var issueTarget by remember { mutableStateOf<ReportIssueTarget?>(null) }
+    var showTmdbId by remember { mutableStateOf<Int?>(null) }
 
     LaunchedEffect(showId, api) {
         isLoading = true
@@ -1103,6 +1156,9 @@ fun ShowDetailScreen(
             is MusicApiResult.Success -> detail = res.data
             MusicApiResult.DeviceRevoked -> onDeviceRevoked()
             is MusicApiResult.Error -> Unit
+        }
+        (api.fetchVideoCatalog() as? MusicApiResult.Success)?.let { cat ->
+            showTmdbId = cat.data.shows.firstOrNull { it.id == showId }?.tmdbId
         }
         (api.fetchWatchlist() as? MusicApiResult.Success)?.let { list ->
             inWatchlist = list.data.any { it.itemType == "show" && it.itemId == showId.toString() }
@@ -1121,6 +1177,17 @@ fun ShowDetailScreen(
         EmptyBox("Couldn't load show details.")
         return
     }
+
+    val creators = remember(show.crew) { show.crew.filter { it.job == "Creator" } }
+    val discoveryRails = rememberRelatedDiscoveryRails(
+        kind = "show",
+        selfId = show.id,
+        cast = show.cast,
+        leadCrew = creators,
+        studioOrNetwork = show.network,
+        franchiseCollection = null,
+        api = api,
+    )
 
     val seasons = remember(show) {
         show.seasons.sortedBy { if (it.seasonNumber == 0) 999 else it.seasonNumber }
@@ -1194,6 +1261,23 @@ fun ShowDetailScreen(
                     }
                 },
             )
+        }
+
+        item {
+            Row(
+                modifier = Modifier.padding(horizontal = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                ReportIssuePillButton(
+                    onClick = {
+                        issueTarget = ReportIssueTarget(
+                            entityType = "show",
+                            entityId = show.id,
+                            title = show.title,
+                        )
+                    },
+                )
+            }
         }
 
         // 2. Genre pills + Expandable Tagline / Overview
@@ -1437,9 +1521,13 @@ fun ShowDetailScreen(
 
             // 5. Apple TV+ / Infuse-Grade Expandable Episode Cards
             items(activeEpisodes, key = { it.id }) { ep ->
+                val epCode = "S${activeSeason.seasonNumber.toString().padStart(2, '0')}E${ep.episodeNumber.toString().padStart(2, '0')}"
                 ShowEpisodeCard(
                     episode = ep,
+                    seasonNumber = activeSeason.seasonNumber,
+                    showTmdbId = showTmdbId,
                     stillUrl = api.artwork.episodeStill(ep.id),
+                    api = api,
                     onPlay = { playEpisode(activeSeason.seasonNumber, ep) },
                     onStartWatchParty = {
                         scope.launch {
@@ -1457,6 +1545,16 @@ fun ShowDetailScreen(
                             )
                             onNavigate(PlayerDestination.WatchingNow)
                         }
+                    },
+                    onReportIssue = {
+                        issueTarget = ReportIssueTarget(
+                            entityType = "episode",
+                            entityId = ep.id,
+                            title = "${show.title} · $epCode${ep.title?.let { " — $it" } ?: ""}",
+                        )
+                    },
+                    onPersonClick = { pid, name ->
+                        onNavigate(PlayerDestination.PersonDetail(pid, name))
                     },
                 )
             }
@@ -1483,6 +1581,24 @@ fun ShowDetailScreen(
                 }
             }
         }
+
+        // 6b. Plex-style Discovery Rails (Collections, Cast/Creator, Network)
+        relatedDiscoveryRails(
+            rails = discoveryRails,
+            onNavigate = onNavigate,
+            onRequestUnowned = { card ->
+                if (card.tmdbId > 0) {
+                    pendingRequest = UnownedTitleTarget(
+                        kind = card.kind,
+                        tmdbId = card.tmdbId,
+                        title = card.title,
+                        year = card.subtitle,
+                        subtitle = if (card.kind == "show") "TV Show" else "Movie",
+                        posterUrl = card.artworkUrl,
+                    )
+                }
+            },
+        )
 
         // 7. More Like This Rail (Owned vs Request poster cards)
         val similar = (extras?.recommendations.orEmpty() + extras?.similar.orEmpty())
@@ -1555,16 +1671,41 @@ fun ShowDetailScreen(
             onDismiss = { pendingRequest = null },
         )
     }
+    if (issueTarget != null) {
+        ReportIssueSheet(
+            target = issueTarget!!,
+            api = api,
+            onDeviceRevoked = onDeviceRevoked,
+            onDismiss = { issueTarget = null },
+        )
+    }
 }
 
 @Composable
 private fun ShowEpisodeCard(
     episode: net.ssync.player.DetailEpisode,
+    seasonNumber: Int,
+    showTmdbId: Int?,
     stillUrl: String,
+    api: PlayerApiClient,
     onPlay: () -> Unit,
     onStartWatchParty: () -> Unit = {},
+    onReportIssue: () -> Unit = {},
+    onPersonClick: (Int, String) -> Unit = { _, _ -> },
 ) {
     var expanded by remember(episode.id) { mutableStateOf(false) }
+    var extra by remember(episode.id) { mutableStateOf<net.ssync.player.EpisodeExtra?>(null) }
+    var extraLoading by remember(episode.id) { mutableStateOf(false) }
+
+    LaunchedEffect(expanded, showTmdbId, seasonNumber, episode.episodeNumber) {
+        if (expanded && extra == null && showTmdbId != null && showTmdbId > 0) {
+            extraLoading = true
+            (api.fetchEpisodeExtra(showTmdbId, seasonNumber, episode.episodeNumber) as? MusicApiResult.Success)?.let {
+                extra = it.data
+            }
+            extraLoading = false
+        }
+    }
 
     Surface(
         modifier = Modifier
@@ -1756,21 +1897,80 @@ private fun ShowEpisodeCard(
                 }
             }
 
-            // Expanded inline details: Full synopsis + Play + Watch Party
+            // Expanded inline details: Badges, Full synopsis, Actions, Crew & Guest Stars
             if (expanded) {
-                if (!episode.overview.isNullOrBlank()) {
+                val fullOverview = episode.overview?.takeIf { it.isNotBlank() } ?: extra?.overview
+                val epCode = "S${seasonNumber.toString().padStart(2, '0')}E${episode.episodeNumber.toString().padStart(2, '0')}"
+                val epRating = episode.rating?.takeIf { it > 0 } ?: extra?.rating?.takeIf { it > 0 }
+                val epRuntime = episode.runtimeMinutes?.takeIf { it > 0 } ?: extra?.runtimeMinutes?.takeIf { it > 0 }
+
+                // Technical & episode info chips
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    item {
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(999.dp))
+                                .background(SoulSyncColors.Accent.copy(alpha = 0.16f))
+                                .border(1.dp, SoulSyncColors.Accent.copy(alpha = 0.45f), RoundedCornerShape(999.dp))
+                                .padding(horizontal = 8.dp, vertical = 3.dp),
+                        ) {
+                            Text(epCode, color = SoulSyncColors.AccentLight, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                    episode.resolution?.takeIf { it.isNotBlank() }?.let { res ->
+                        item {
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(999.dp))
+                                    .background(Color.White.copy(alpha = 0.08f))
+                                    .padding(horizontal = 8.dp, vertical = 3.dp),
+                            ) {
+                                Text(res.uppercase(), color = Color.White, fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold)
+                            }
+                        }
+                    }
+                    epRating?.let { r ->
+                        item {
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(999.dp))
+                                    .background(Color(0x33F5C518))
+                                    .padding(horizontal = 8.dp, vertical = 3.dp),
+                            ) {
+                                Text("★ ${"%.1f".format(r)}", color = Color(0xFFF5C518), fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                    epRuntime?.let { mins ->
+                        item {
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(999.dp))
+                                    .background(Color.White.copy(alpha = 0.07f))
+                                    .padding(horizontal = 8.dp, vertical = 3.dp),
+                            ) {
+                                Text("${mins} min", color = SoulSyncColors.TextSoft, fontSize = 10.5.sp)
+                            }
+                        }
+                    }
+                }
+
+                if (!fullOverview.isNullOrBlank()) {
                     Text(
-                        text = episode.overview.orEmpty(),
+                        text = fullOverview,
                         color = SoulSyncColors.TextSoft,
                         fontSize = 13.sp,
                         lineHeight = 19.sp,
                     )
                 }
-                if (episode.owned) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
+
+                // Action buttons: Play, Watch Party, Report Issue
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (episode.owned) {
                         Button(
                             onClick = onPlay,
                             shape = CircleShape,
@@ -1778,22 +1978,132 @@ private fun ShowEpisodeCard(
                                 containerColor = SoulSyncColors.Accent,
                                 contentColor = SoulSyncColors.OnAccent,
                             ),
-                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
+                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
                             modifier = Modifier.weight(1f).height(38.dp),
                         ) {
                             Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(17.dp))
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("Play Episode", fontSize = 12.5.sp, fontWeight = FontWeight.Bold)
+                            Text("Play", fontSize = 12.5.sp, fontWeight = FontWeight.Bold)
                         }
                         OutlinedButton(
                             onClick = onStartWatchParty,
                             shape = CircleShape,
                             border = BorderStroke(1.dp, SoulSyncColors.Accent.copy(alpha = 0.55f)),
-                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
                             modifier = Modifier.height(38.dp),
                         ) {
-                            Text("🍿 Watch Party", color = SoulSyncColors.AccentLight, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                            Text("🍿 Party", color = SoulSyncColors.AccentLight, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                         }
+                    }
+                    ReportIssuePillButton(
+                        onClick = onReportIssue,
+                        compact = true,
+                    )
+                }
+
+                // Episode Crew (Director / Writer)
+                val crewList = extra?.crew.orEmpty()
+                if (crewList.isNotEmpty()) {
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(crewList.take(6)) { c ->
+                            Row(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(999.dp))
+                                    .background(Color.White.copy(alpha = 0.05f))
+                                    .border(1.dp, SoulSyncColors.Line, RoundedCornerShape(999.dp))
+                                    .clickable(enabled = (c.tmdbId ?: 0) > 0) {
+                                        c.tmdbId?.let { pid -> onPersonClick(pid, c.name) }
+                                    }
+                                    .padding(horizontal = 10.dp, vertical = 5.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                Text(
+                                    text = "${c.job}:",
+                                    color = SoulSyncColors.TextSecondary,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                                Text(
+                                    text = c.name,
+                                    color = Color.White,
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.Medium,
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // Guest Stars portrait rail
+                val guests = extra?.guestStars.orEmpty()
+                if (guests.isNotEmpty()) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            text = "GUEST STARS & CAST",
+                            color = SoulSyncColors.TextSecondary,
+                            fontSize = 10.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 0.8.sp,
+                        )
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            items(guests.take(15)) { g ->
+                                Column(
+                                    modifier = Modifier
+                                        .width(74.dp)
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .clickable(enabled = (g.tmdbId ?: 0) > 0) {
+                                            g.tmdbId?.let { pid -> onPersonClick(pid, g.name) }
+                                        },
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                                ) {
+                                    SoulSyncArtwork(
+                                        url = api.artwork.resolve(g.photo),
+                                        contentDescription = g.name,
+                                        fallbackIcon = Icons.Default.Person,
+                                        modifier = Modifier
+                                            .size(62.dp)
+                                            .clip(CircleShape)
+                                            .background(SoulSyncColors.Surface)
+                                            .border(1.dp, SoulSyncColors.Line, CircleShape),
+                                    )
+                                    Text(
+                                        text = g.name,
+                                        color = Color.White,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                    if (!g.character.isNullOrBlank()) {
+                                        Text(
+                                            text = g.character!!,
+                                            color = SoulSyncColors.TextSecondary,
+                                            fontSize = 10.sp,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else if (extraLoading) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(14.dp),
+                            strokeWidth = 1.8.dp,
+                            color = SoulSyncColors.AccentLight,
+                        )
+                        Text(
+                            text = "Loading guest cast & credits…",
+                            color = SoulSyncColors.TextSecondary,
+                            fontSize = 11.5.sp,
+                        )
                     }
                 }
             }

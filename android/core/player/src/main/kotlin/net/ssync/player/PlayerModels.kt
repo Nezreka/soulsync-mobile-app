@@ -180,6 +180,15 @@ data class CastMember(
 )
 
 @Serializable
+data class CrewMember(
+    val name: String,
+    val job: String = "",
+    @SerialName("tmdb_id")
+    val tmdbId: Int? = null,
+    val photo: String? = null,
+)
+
+@Serializable
 data class MovieDetail(
     val id: Int,
     val title: String,
@@ -198,6 +207,7 @@ data class MovieDetail(
     val hasBackdrop: Boolean = false,
     val studio: String? = null,
     val cast: List<CastMember> = emptyList(),
+    val crew: List<CrewMember> = emptyList(),
     val watched: Boolean? = null,
 )
 
@@ -252,6 +262,7 @@ data class ShowDetail(
     @SerialName("has_backdrop")
     val hasBackdrop: Boolean = false,
     val cast: List<CastMember> = emptyList(),
+    val crew: List<CrewMember> = emptyList(),
     val seasons: List<DetailSeason> = emptyList(),
 )
 
@@ -975,11 +986,68 @@ data class ExtraTitle(
 }
 
 @Serializable
+data class FranchiseCollection(
+    val id: Int = 0,
+    val name: String? = null,
+    val poster: String? = null,
+    val items: List<ExtraTitle> = emptyList(),
+)
+
+@Serializable
 data class TitleExtras(
     val trailer: TrailerInfo? = null,
     val keywords: List<String> = emptyList(),
     val recommendations: List<ExtraTitle> = emptyList(),
     val similar: List<ExtraTitle> = emptyList(),
+    val collection: FranchiseCollection? = null,
+)
+
+@Serializable
+data class StudioCollection(
+    val id: Int,
+    val name: String,
+    @SerialName("media_type")
+    val mediaType: String = "movie",
+    val summary: String? = null,
+    val poster: String? = null,
+    val members: List<Int> = emptyList(),
+)
+
+@Serializable
+internal data class StudioCollectionsEnvelope(
+    val collections: List<StudioCollection> = emptyList(),
+)
+
+@Serializable
+data class EpisodeExtra(
+    @SerialName("guest_stars")
+    val guestStars: List<CastMember> = emptyList(),
+    val crew: List<CrewMember> = emptyList(),
+    @SerialName("still_url")
+    val stillUrl: String? = null,
+    val rating: Double? = null,
+    val overview: String? = null,
+    @SerialName("runtime_minutes")
+    val runtimeMinutes: Int? = null,
+    @SerialName("air_date")
+    val airDate: String? = null,
+)
+
+@Serializable
+internal data class VideoIssueCreateRequest(
+    @SerialName("entity_type")
+    val entityType: String,
+    @SerialName("entity_id")
+    val entityId: Int,
+    val category: String,
+    val title: String,
+    val description: String? = null,
+)
+
+@Serializable
+internal data class VideoIssueResponse(
+    val success: Boolean = false,
+    val error: String? = null,
 )
 
 @Serializable

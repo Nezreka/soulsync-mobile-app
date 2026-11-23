@@ -521,6 +521,42 @@ class PlayerApiClient(
             json.decodeFromString<PersonDetail>(body)
         }
 
+    suspend fun fetchCollections(): MusicApiResult<List<StudioCollection>> =
+        getJson("$base/api/player/collections") { body ->
+            json.decodeFromString<StudioCollectionsEnvelope>(body).collections
+        }
+
+    suspend fun fetchEpisodeExtra(tmdbId: Int, season: Int, episode: Int): MusicApiResult<EpisodeExtra> =
+        getJson("$base/api/video/episode/$tmdbId/$season/$episode") { body ->
+            json.decodeFromString<EpisodeExtra>(body)
+        }
+
+    suspend fun submitVideoIssue(
+        entityType: String,
+        entityId: Int,
+        category: String,
+        title: String,
+        description: String? = null,
+    ): MusicApiResult<Unit> = withContext(Dispatchers.IO) {
+        val payload = VideoIssueCreateRequest(
+            entityType = entityType,
+            entityId = entityId,
+            category = category,
+            title = title,
+            description = description?.trim()?.takeIf { it.isNotEmpty() },
+        )
+        val req = Request.Builder()
+            .url("$base/api/video/issues")
+            .post(json.encodeToString(VideoIssueCreateRequest.serializer(), payload).toRequestBody(JSON_MEDIA_TYPE))
+            .build()
+        execute(req) { body ->
+            val resp = runCatching { json.decodeFromString<VideoIssueResponse>(body) }.getOrNull()
+            if (resp != null && !resp.success) {
+                throw IllegalStateException(resp.error ?: "Could not submit issue")
+            }
+        }
+    }
+
     suspend fun fetchNotes(itemType: String, itemId: String): MusicApiResult<List<PlayerNote>> =
         getJson("$base/api/player/notes/$itemType/$itemId") { body ->
             json.decodeFromString<NotesEnvelope>(body).notes
