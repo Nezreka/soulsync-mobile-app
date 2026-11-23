@@ -1,9 +1,13 @@
 package net.ssync.app.player
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -308,6 +312,7 @@ val LocalPlayerSettings = androidx.compose.runtime.staticCompositionLocalOf {
     net.ssync.player.PlayerSettings()
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun PosterCard(
     title: String,
@@ -316,8 +321,11 @@ fun PosterCard(
     badge: String? = null,
     progress: Float? = null,
     width: Dp = 122.dp,
+    contextItem: MediaContextItem? = null,
     onClick: () -> Unit,
 ) {
+    val openContext = LocalMediaContextMenu.current
+    val haptic = LocalHapticFeedback.current
     val cardPrefs = LocalPlayerSettings.current
     val effectiveBadge = androidx.compose.runtime.remember(badge, cardPrefs) {
         val raw = badge?.trim().orEmpty()
@@ -342,7 +350,15 @@ fun PosterCard(
         modifier = Modifier
             .width(width)
             .dpadFocusable(RoundedCornerShape(10.dp))
-            .clickable(onClick = onClick),
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = contextItem?.let { ci ->
+                    {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        openContext(ci)
+                    }
+                },
+            ),
     ) {
         Card(
             shape = RoundedCornerShape(10.dp),
@@ -406,6 +422,7 @@ fun PosterCard(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun SquareMediaCard(
     title: String,
@@ -413,13 +430,24 @@ fun SquareMediaCard(
     artworkUrl: String?,
     fallbackIcon: ImageVector = Icons.Default.MusicNote,
     width: Dp = 132.dp,
+    contextItem: MediaContextItem? = null,
     onClick: () -> Unit,
 ) {
+    val openContext = LocalMediaContextMenu.current
+    val haptic = LocalHapticFeedback.current
     Column(
         modifier = Modifier
             .width(width)
             .dpadFocusable(RoundedCornerShape(10.dp))
-            .clickable(onClick = onClick),
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = contextItem?.let { ci ->
+                    {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        openContext(ci)
+                    }
+                },
+            ),
     ) {
         Card(
             shape = RoundedCornerShape(10.dp),
@@ -455,6 +483,7 @@ fun SquareMediaCard(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun WideMediaCard(
     title: String,
@@ -462,13 +491,24 @@ fun WideMediaCard(
     artworkUrl: String?,
     progress: Float? = null,
     width: Dp = 228.dp,
+    contextItem: MediaContextItem? = null,
     onClick: () -> Unit,
 ) {
+    val openContext = LocalMediaContextMenu.current
+    val haptic = LocalHapticFeedback.current
     Column(
         modifier = Modifier
             .width(width)
             .dpadFocusable(RoundedCornerShape(10.dp))
-            .clickable(onClick = onClick),
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = contextItem?.let { ci ->
+                    {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        openContext(ci)
+                    }
+                },
+            ),
     ) {
         Card(
             shape = RoundedCornerShape(10.dp),
@@ -528,6 +568,7 @@ fun RankedPosterCard(
     rank: Int,
     title: String,
     artworkUrl: String?,
+    contextItem: MediaContextItem? = null,
     onClick: () -> Unit,
 ) {
     Row(
@@ -548,6 +589,7 @@ fun RankedPosterCard(
             title = title,
             artworkUrl = artworkUrl,
             width = 116.dp,
+            contextItem = contextItem,
             onClick = onClick,
         )
     }

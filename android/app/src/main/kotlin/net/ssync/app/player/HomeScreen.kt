@@ -437,6 +437,24 @@ fun HomeScreen(
                                     subtitle = item.meta?.subtitle ?: item.itemType.replaceFirstChar { it.uppercase() },
                                     artworkUrl = resolvedArt,
                                     progress = item.progressFraction,
+                                    contextItem = MediaContextItem(
+                                        itemType = item.itemType,
+                                        itemId = item.itemId,
+                                        title = displayTitle,
+                                        subtitle = item.meta?.subtitle.orEmpty(),
+                                        artworkUrl = resolvedArt,
+                                        streamUrl = api.streamUrl(item.itemType, item.itemId),
+                                        isVideo = item.itemType in setOf("movie", "episode", "youtube"),
+                                        parentId = item.meta?.parentId,
+                                        onOpenDetails = {
+                                            when (item.itemType) {
+                                                "movie" -> idInt?.let { onNavigate(PlayerDestination.MovieDetail(it)) }
+                                                "show" -> idInt?.let { onNavigate(PlayerDestination.ShowDetail(it)) }
+                                                "episode" -> parentInt?.let { onNavigate(PlayerDestination.ShowDetail(it)) }
+                                                "track" -> parentInt?.let { onNavigate(PlayerDestination.AlbumDetail(it)) }
+                                            }
+                                        },
+                                    ),
                                     onClick = {
                                         when (item.itemType) {
                                             "movie" -> if (idInt != null) onNavigate(PlayerDestination.MovieDetail(idInt))
@@ -525,6 +543,19 @@ fun HomeScreen(
                                         ?: w.itemType.replaceFirstChar { it.uppercase() },
                                     artworkUrl = art,
                                     width = cardWidth,
+                                    contextItem = MediaContextItem(
+                                        itemType = w.itemType,
+                                        itemId = w.itemId,
+                                        title = title,
+                                        subtitle = movie?.year?.toString() ?: show?.year?.toString().orEmpty(),
+                                        artworkUrl = art,
+                                        streamUrl = if (w.itemType == "movie") api.streamUrl("movie", w.itemId) else null,
+                                        isVideo = true,
+                                        onOpenDetails = {
+                                            if (w.itemType == "movie" && idInt != null) onNavigate(PlayerDestination.MovieDetail(idInt))
+                                            if (w.itemType == "show" && idInt != null) onNavigate(PlayerDestination.ShowDetail(idInt))
+                                        },
+                                    ),
                                     onClick = {
                                         if (w.itemType == "movie" && idInt != null) onNavigate(PlayerDestination.MovieDetail(idInt))
                                         if (w.itemType == "show" && idInt != null) onNavigate(PlayerDestination.ShowDetail(idInt))
@@ -545,6 +576,17 @@ fun HomeScreen(
                                     subtitle = "S${ep.seasonNumber} E${ep.episodeNumber}" +
                                         (ep.title?.let { " · $it" } ?: ""),
                                     artworkUrl = art,
+                                    contextItem = MediaContextItem(
+                                        itemType = "episode",
+                                        itemId = ep.id.toString(),
+                                        title = "${ep.showTitle} · S${ep.seasonNumber}E${ep.episodeNumber}",
+                                        subtitle = ep.title.orEmpty(),
+                                        artworkUrl = art,
+                                        streamUrl = api.streamUrl("episode", ep.id.toString()),
+                                        isVideo = true,
+                                        parentId = ep.showId.toString(),
+                                        onOpenDetails = { onNavigate(PlayerDestination.ShowDetail(ep.showId)) },
+                                    ),
                                     onClick = { onNavigate(PlayerDestination.ShowDetail(ep.showId)) },
                                 )
                             }
@@ -556,11 +598,22 @@ fun HomeScreen(
                         val top10 = catalog.movies.sortedByDescending { it.rating ?: 0.0 }.take(10)
                         MediaRail("Top 10 in Your Library") {
                             itemsIndexed(top10, key = { _, m -> "${row.id}-${m.id}" }) { idx, m ->
+                                val movieCtx = MediaContextItem(
+                                    itemType = "movie",
+                                    itemId = m.id.toString(),
+                                    title = m.title,
+                                    subtitle = m.year?.toString().orEmpty(),
+                                    artworkUrl = api.artwork.moviePoster(m.id),
+                                    streamUrl = api.streamUrl("movie", m.id.toString()),
+                                    isVideo = true,
+                                    onOpenDetails = { onNavigate(PlayerDestination.MovieDetail(m.id)) },
+                                )
                                 if (row.style == "ranked") {
                                     RankedPosterCard(
                                         rank = idx + 1,
                                         title = m.title,
                                         artworkUrl = api.artwork.moviePoster(m.id),
+                                        contextItem = movieCtx,
                                         onClick = { onNavigate(PlayerDestination.MovieDetail(m.id)) },
                                     )
                                 } else {
@@ -570,6 +623,7 @@ fun HomeScreen(
                                         artworkUrl = api.artwork.moviePoster(m.id),
                                         badge = m.rating?.let { "%.1f".format(it) },
                                         width = cardWidth,
+                                        contextItem = movieCtx,
                                         onClick = { onNavigate(PlayerDestination.MovieDetail(m.id)) },
                                     )
                                 }
@@ -586,6 +640,15 @@ fun HomeScreen(
                                     rank = idx + 1,
                                     title = s.title,
                                     artworkUrl = api.artwork.showPoster(s.id),
+                                    contextItem = MediaContextItem(
+                                        itemType = "show",
+                                        itemId = s.id.toString(),
+                                        title = s.title,
+                                        subtitle = "${s.episodeCount} episodes",
+                                        artworkUrl = api.artwork.showPoster(s.id),
+                                        isVideo = true,
+                                        onOpenDetails = { onNavigate(PlayerDestination.ShowDetail(s.id)) },
+                                    ),
                                     onClick = { onNavigate(PlayerDestination.ShowDetail(s.id)) },
                                 )
                             }
@@ -596,11 +659,22 @@ fun HomeScreen(
                     item(key = "row-movies") {
                         MediaRail("Recently Added Movies", actionLabel = "All", onAction = { onNavigate(PlayerDestination.Movies) }) {
                             items(sortedMovies.take(20), key = { it.id }) { m ->
+                                val mCtx = MediaContextItem(
+                                    itemType = "movie",
+                                    itemId = m.id.toString(),
+                                    title = m.title,
+                                    subtitle = m.year?.toString().orEmpty(),
+                                    artworkUrl = api.artwork.moviePoster(m.id),
+                                    streamUrl = api.streamUrl("movie", m.id.toString()),
+                                    isVideo = true,
+                                    onOpenDetails = { onNavigate(PlayerDestination.MovieDetail(m.id)) },
+                                )
                                 if (row.style == "wide") {
                                     WideMediaCard(
                                         title = m.title,
                                         subtitle = m.year?.toString(),
                                         artworkUrl = api.artwork.movieBackdrop(m.id),
+                                        contextItem = mCtx,
                                         onClick = { onNavigate(PlayerDestination.MovieDetail(m.id)) },
                                     )
                                 } else {
@@ -610,6 +684,7 @@ fun HomeScreen(
                                         artworkUrl = api.artwork.moviePoster(m.id),
                                         badge = m.rating?.let { "%.1f".format(it) },
                                         width = cardWidth,
+                                        contextItem = mCtx,
                                         onClick = { onNavigate(PlayerDestination.MovieDetail(m.id)) },
                                     )
                                 }
@@ -627,6 +702,15 @@ fun HomeScreen(
                                     artworkUrl = api.artwork.showPoster(show.id),
                                     badge = show.rating?.let { "%.1f".format(it) },
                                     width = cardWidth,
+                                    contextItem = MediaContextItem(
+                                        itemType = "show",
+                                        itemId = show.id.toString(),
+                                        title = show.title,
+                                        subtitle = "${show.episodeCount} episodes",
+                                        artworkUrl = api.artwork.showPoster(show.id),
+                                        isVideo = true,
+                                        onOpenDetails = { onNavigate(PlayerDestination.ShowDetail(show.id)) },
+                                    ),
                                     onClick = { onNavigate(PlayerDestination.ShowDetail(show.id)) },
                                 )
                             }
@@ -637,10 +721,20 @@ fun HomeScreen(
                     item(key = "row-music") {
                         MediaRail("Recently Added Music", actionLabel = "Library", onAction = { onNavigate(PlayerDestination.Music) }) {
                             items(albums.take(20), key = { it.id }) { album ->
+                                val alArt = api.artwork.resolve(album.imageUrl) ?: api.artwork.albumArtwork(album.id)
                                 SquareMediaCard(
                                     title = album.title,
                                     subtitle = album.artistName,
-                                    artworkUrl = api.artwork.resolve(album.imageUrl) ?: api.artwork.albumArtwork(album.id),
+                                    artworkUrl = alArt,
+                                    contextItem = MediaContextItem(
+                                        itemType = "album",
+                                        itemId = album.id.toString(),
+                                        title = album.title,
+                                        subtitle = album.artistName.orEmpty(),
+                                        artworkUrl = alArt,
+                                        isVideo = false,
+                                        onOpenDetails = { onNavigate(PlayerDestination.AlbumDetail(album.id)) },
+                                    ),
                                     onClick = { onNavigate(PlayerDestination.AlbumDetail(album.id)) },
                                 )
                             }
@@ -651,10 +745,22 @@ fun HomeScreen(
                     item(key = "row-yt") {
                         MediaRail("YouTube", actionLabel = "All", onAction = { onNavigate(PlayerDestination.YouTube) }) {
                             items(catalog.youtube.take(15), key = { it.id }) { yt ->
+                                val ytArt = api.artwork.resolve(yt.thumbnailUrl)
+                                    ?: api.artwork.forItem("youtube", yt.id)
                                 WideMediaCard(
                                     title = yt.title,
                                     subtitle = yt.channelTitle,
-                                    artworkUrl = api.artwork.resolve(yt.thumbnailUrl),
+                                    artworkUrl = ytArt,
+                                    contextItem = MediaContextItem(
+                                        itemType = "youtube",
+                                        itemId = yt.id,
+                                        title = yt.title,
+                                        subtitle = yt.channelTitle.orEmpty(),
+                                        artworkUrl = ytArt,
+                                        streamUrl = api.streamUrl("youtube", yt.id),
+                                        isVideo = true,
+                                        parentId = yt.channelId,
+                                    ),
                                     onClick = {
                                         coordinator.playVideo(
                                             ActivePlayable(
@@ -679,11 +785,21 @@ fun HomeScreen(
                     item(key = "row-podcasts") {
                         MediaRail("Podcasts", actionLabel = "All", onAction = { onNavigate(PlayerDestination.Podcasts) }) {
                             items(podcasts.take(15), key = { it.id }) { sub ->
+                                val podArt = api.artwork.resolve(sub.artworkUrl)
                                 SquareMediaCard(
                                     title = sub.title,
                                     subtitle = sub.author,
-                                    artworkUrl = api.artwork.resolve(sub.artworkUrl),
+                                    artworkUrl = podArt,
                                     fallbackIcon = Icons.Default.Podcasts,
+                                    contextItem = MediaContextItem(
+                                        itemType = "podcast",
+                                        itemId = sub.id.toString(),
+                                        title = sub.title,
+                                        subtitle = sub.author.orEmpty(),
+                                        artworkUrl = podArt,
+                                        isVideo = false,
+                                        onOpenDetails = { onNavigate(PlayerDestination.PodcastDetail(sub)) },
+                                    ),
                                     onClick = { onNavigate(PlayerDestination.PodcastDetail(sub)) },
                                 )
                             }
@@ -694,11 +810,22 @@ fun HomeScreen(
                     item(key = "row-books") {
                         MediaRail("Audiobooks", actionLabel = "All", onAction = { onNavigate(PlayerDestination.Audiobooks) }) {
                             items(books.take(15), key = { it.asin }) { book ->
+                                val bookArt = api.artwork.resolve(book.coverUrl) ?: api.artwork.audiobookCover(book.asin)
                                 SquareMediaCard(
                                     title = book.title,
                                     subtitle = book.author,
-                                    artworkUrl = api.artwork.resolve(book.coverUrl) ?: api.artwork.audiobookCover(book.asin),
+                                    artworkUrl = bookArt,
                                     fallbackIcon = Icons.Default.Headphones,
+                                    contextItem = MediaContextItem(
+                                        itemType = "audiobook",
+                                        itemId = book.asin,
+                                        title = book.title,
+                                        subtitle = book.author.orEmpty(),
+                                        artworkUrl = bookArt,
+                                        streamUrl = api.streamUrl("audiobook", book.asin),
+                                        isVideo = false,
+                                        onOpenDetails = { onNavigate(PlayerDestination.AudiobookDetail(book)) },
+                                    ),
                                     onClick = { onNavigate(PlayerDestination.AudiobookDetail(book)) },
                                 )
                             }
@@ -717,6 +844,16 @@ fun HomeScreen(
                                         subtitle = m.year?.toString(),
                                         artworkUrl = api.artwork.moviePoster(m.id),
                                         width = cardWidth,
+                                        contextItem = MediaContextItem(
+                                            itemType = "movie",
+                                            itemId = m.id.toString(),
+                                            title = m.title,
+                                            subtitle = m.year?.toString().orEmpty(),
+                                            artworkUrl = api.artwork.moviePoster(m.id),
+                                            streamUrl = api.streamUrl("movie", m.id.toString()),
+                                            isVideo = true,
+                                            onOpenDetails = { onNavigate(PlayerDestination.MovieDetail(m.id)) },
+                                        ),
                                         onClick = { onNavigate(PlayerDestination.MovieDetail(m.id)) },
                                     )
                                 }

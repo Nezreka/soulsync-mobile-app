@@ -1,9 +1,13 @@
 package net.ssync.app.player
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -671,13 +675,23 @@ fun MusicScreen(
                         item {
                             MediaRail(title = "Recently added albums") {
                                 items(albums.take(18), key = { "fy-al-${it.id}" }) { album ->
+                                    val alArt = api.artwork.resolve(album.imageUrl ?: album.remoteImageUrl)
                                     AlbumGridTile(
                                         title = album.title,
                                         subtitle = listOfNotNull(album.artistName, album.year?.toString()).joinToString(" · "),
-                                        artworkUrl = api.artwork.resolve(album.imageUrl ?: album.remoteImageUrl),
+                                        artworkUrl = alArt,
                                         tracksPresent = album.tracksPresent,
                                         trackCount = album.trackCount,
                                         modifier = Modifier.width(142.dp),
+                                        contextItem = MediaContextItem(
+                                            itemType = "album",
+                                            itemId = album.id.toString(),
+                                            title = album.title,
+                                            subtitle = album.artistName.orEmpty(),
+                                            artworkUrl = alArt,
+                                            isVideo = false,
+                                            onOpenDetails = { onNavigate(PlayerDestination.AlbumDetail(album.id)) },
+                                        ),
                                         onClick = { onNavigate(PlayerDestination.AlbumDetail(album.id)) },
                                     )
                                 }
@@ -1012,6 +1026,7 @@ private fun ArtistMixCard(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun AlbumGridTile(
     title: String,
@@ -1022,13 +1037,24 @@ private fun AlbumGridTile(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     mosaicUrls: List<String> = emptyList(),
+    contextItem: MediaContextItem? = null,
 ) {
+    val openContext = LocalMediaContextMenu.current
+    val haptic = LocalHapticFeedback.current
     val isIncomplete = trackCount > 0 && tracksPresent in 1 until trackCount
     Column(
         modifier = modifier
             .clip(RoundedCornerShape(12.dp))
             .dpadFocusable(RoundedCornerShape(12.dp))
-            .clickable(onClick = onClick),
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = contextItem?.let { ci ->
+                    {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        openContext(ci)
+                    }
+                },
+            ),
     ) {
         Box(
             modifier = Modifier
@@ -1721,16 +1747,26 @@ private fun DiscographyRailSection(
             horizontalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             items(releases, key = { it.id }) { album ->
+                val alArt = api.artwork.resolve(album.imageUrl ?: album.remoteImageUrl)
+                    ?: api.artwork.albumArtwork(album.id)
                 AlbumGridTile(
                     title = album.title,
                     subtitle = listOfNotNull(
                         album.year?.toString(),
                         if (album.trackCount > 0) "${album.trackCount} tracks" else null,
                     ).joinToString(" · "),
-                    artworkUrl = api.artwork.resolve(album.imageUrl ?: album.remoteImageUrl)
-                        ?: api.artwork.albumArtwork(album.id),
+                    artworkUrl = alArt,
                     tracksPresent = album.tracksPresent,
                     trackCount = album.trackCount,
+                    contextItem = MediaContextItem(
+                        itemType = "album",
+                        itemId = album.id.toString(),
+                        title = album.title,
+                        subtitle = album.artistName.orEmpty(),
+                        artworkUrl = alArt,
+                        isVideo = false,
+                        onOpenDetails = { onAlbumClick(album.id) },
+                    ),
                     onClick = { onAlbumClick(album.id) },
                     modifier = Modifier.width(148.dp),
                 )
@@ -2047,6 +2083,27 @@ fun AlbumDetailScreen(
                 isActive = isActive,
                 requestStatus = if (playable) null else st,
                 showDivider = idx < al.tracks.lastIndex,
+                contextItem = MediaContextItem(
+                    itemType = "track",
+                    itemId = t.id?.toString() ?: "m-$idx",
+                    title = t.title,
+                    subtitle = al.primaryArtist?.name ?: al.title,
+                    artworkUrl = coverUrl,
+                    streamUrl = if (playable && t.id != null) api.streamUrl("track", t.id.toString()) else null,
+                    isVideo = false,
+                    parentId = al.id.toString(),
+                    owned = playable,
+                    onRequest = if (!playable) ({ scope.launch { requestTrack(idx, t, rowKey) } }) else null,
+                    songRef = if (playable) {
+                        SongRefPayload(
+                            title = t.title,
+                            artist = al.primaryArtist?.name ?: "Unknown Artist",
+                            album = al.title,
+                            durationMs = t.duration,
+                            lib2TrackId = t.id,
+                        )
+                    } else null,
+                ),
                 trailingActions = if (playable) {
                     {
                         val songRef = SongRefPayload(
@@ -2097,6 +2154,7 @@ fun AlbumDetailScreen(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun AlbumTrackRow(
     trackNumber: Int,
@@ -2108,14 +2166,25 @@ private fun AlbumTrackRow(
     isActive: Boolean,
     requestStatus: String?,
     showDivider: Boolean,
+    contextItem: MediaContextItem? = null,
     trailingActions: (@Composable () -> Unit)? = null,
     onClick: () -> Unit,
 ) {
+    val openContext = LocalMediaContextMenu.current
+    val haptic = LocalHapticFeedback.current
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .background(if (isActive) SoulSyncColors.Accent.copy(alpha = 0.09f) else Color.Transparent)
-            .clickable(onClick = onClick),
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = contextItem?.let { ci ->
+                    {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        openContext(ci)
+                    }
+                },
+            ),
     ) {
         Row(
             modifier = Modifier

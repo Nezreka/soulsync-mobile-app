@@ -244,6 +244,7 @@ fun PlayerShell(
     var homeHasHero by remember { mutableStateOf(false) }
     var watchingOthersCount by remember { mutableIntStateOf(0) }
     var activeAvatarUrl by remember { mutableStateOf<String?>(null) }
+    var contextMenuItem by remember { mutableStateOf<MediaContextItem?>(null) }
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
 
     LaunchedEffect(api, currentRecord.profileId, profileEpoch) {
@@ -309,6 +310,7 @@ fun PlayerShell(
     CompositionLocalProvider(
         LocalSoulSyncImageLoader provides imageLoader,
         LocalPlayerSettings provides playerSettings,
+        LocalMediaContextMenu provides { contextMenuItem = it },
     ) {
         BoxWithConstraints(
             modifier = Modifier
@@ -522,6 +524,16 @@ fun PlayerShell(
                         navigateTo(PlayerDestination.YouTubeChannel(channelId, videoItem.subtitle.ifBlank { "Channel" }))
                     },
                     onClose = { pos, dur -> coordinator.closeVideo(pos, dur) },
+                )
+            }
+
+            contextMenuItem?.let { item ->
+                MediaContextMenuSheet(
+                    item = item,
+                    api = api,
+                    coordinator = coordinator,
+                    onNavigate = { navigateTo(it) },
+                    onDismiss = { contextMenuItem = null },
                 )
             }
         }
