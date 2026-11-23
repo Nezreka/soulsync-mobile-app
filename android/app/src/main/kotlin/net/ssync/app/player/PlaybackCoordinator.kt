@@ -57,6 +57,7 @@ class PlaybackCoordinator(
         private set
     var showAudioSheet by mutableStateOf(false)
     var showVideoOverlay by mutableStateOf(false)
+    var isVideoMinimized by mutableStateOf(false)
     var lyricsText by mutableStateOf<String?>(null)
         private set
 
@@ -69,6 +70,7 @@ class PlaybackCoordinator(
         val resolvedItem = resolveOffline(item)
         val resolvedUpcoming = upcoming.map { resolveOffline(it) }
         showVideoOverlay = false
+        isVideoMinimized = false
         activeItem = resolvedItem
         queue = listOf(resolvedItem) + resolvedUpcoming
         lyricsText = null
@@ -126,6 +128,7 @@ class PlaybackCoordinator(
         // Pause background audio when starting video
         controllerProvider()?.pause()
         showAudioSheet = false
+        isVideoMinimized = false
         val videoItem = resolveOffline(item).copy(isVideo = true)
         activeItem = videoItem
         positionMs = videoItem.resumePositionMs.coerceAtLeast(0L)
@@ -181,12 +184,42 @@ class PlaybackCoordinator(
         )
     }
 
+    fun minimizeVideo(currentPositionMs: Long, currentDurationMs: Long) {
+        val current = activeItem ?: return
+        if (!current.isVideo) return
+        positionMs = currentPositionMs.coerceAtLeast(0L)
+        if (currentDurationMs > 0L) durationMs = currentDurationMs
+        showVideoOverlay = false
+        isVideoMinimized = true
+    }
+
+    fun expandVideo() {
+        val current = activeItem ?: return
+        if (!current.isVideo) return
+        isVideoMinimized = false
+        showVideoOverlay = true
+    }
+
+    fun detachWatchParty() {
+        val current = activeItem ?: return
+        if (current.partyId != null) {
+            activeItem = current.copy(partyId = null)
+        }
+    }
+
     fun closeVideo(lastPositionMs: Long, totalDurationMs: Long) {
         val current = activeItem
         showVideoOverlay = false
+        isVideoMinimized = false
         isPlaying = false
+        if (current?.isVideo == true) {
+            activeItem = null
+        }
         if (current != null) {
             scope.launch {
+                if (!current.partyId.isNullOrBlank()) {
+                    api.leaveWatchParty(current.partyId)
+                }
                 val reachedCredits = totalDurationMs > 0 && lastPositionMs >= (totalDurationMs * 0.92)
                 if (current.isLiveGuide) {
                     // Guide playback never appears in Continue Watching; only tracks watched state for movies.
@@ -239,6 +272,7 @@ class PlaybackCoordinator(
         }
         showAudioSheet = false
         showVideoOverlay = false
+        isVideoMinimized = false
         isPlaying = false
         activeItem = null
         queue = emptyList()

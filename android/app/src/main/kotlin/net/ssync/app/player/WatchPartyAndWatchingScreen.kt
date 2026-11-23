@@ -1621,19 +1621,38 @@ private fun WatchPartyRoomDialog(
                                         }
                                     }
                                 }
-                                if (p.isHost) {
-                                    OutlinedButton(
-                                        onClick = {
-                                            scope.launch {
-                                                api.deleteWatchParty(p.id)
-                                                onDismiss()
-                                            }
-                                        },
-                                        shape = CircleShape,
-                                        border = BorderStroke(1.dp, SoulSyncColors.Line),
-                                        modifier = Modifier.fillMaxWidth().height(36.dp),
-                                    ) {
-                                        Text("End Watch Party", color = SoulSyncColors.TextSecondary, fontSize = 12.sp)
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    if (p.isMember) {
+                                        OutlinedButton(
+                                            onClick = {
+                                                scope.launch {
+                                                    api.leaveWatchParty(p.id)
+                                                    coordinator.detachWatchParty()
+                                                    onDismiss()
+                                                }
+                                            },
+                                            shape = CircleShape,
+                                            border = BorderStroke(1.dp, Color(0xFFF43F5E).copy(alpha = 0.45f)),
+                                            modifier = Modifier.weight(1f).height(36.dp),
+                                        ) {
+                                            Text("Leave Watch Party", color = Color(0xFFFDA4AF), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                    }
+                                    if (p.isHost) {
+                                        OutlinedButton(
+                                            onClick = {
+                                                scope.launch {
+                                                    api.deleteWatchParty(p.id)
+                                                    coordinator.detachWatchParty()
+                                                    onDismiss()
+                                                }
+                                            },
+                                            shape = CircleShape,
+                                            border = BorderStroke(1.dp, SoulSyncColors.Line),
+                                            modifier = Modifier.weight(1f).height(36.dp),
+                                        ) {
+                                            Text("End Watch Party", color = SoulSyncColors.TextSecondary, fontSize = 12.sp)
+                                        }
                                     }
                                 }
                             }

@@ -456,6 +456,14 @@ class PlayerApiClient(
         execute(req) { json.decodeFromString<WatchPartyEnvelope>(it).party }
     }
 
+    suspend fun leaveWatchParty(partyId: String): MusicApiResult<Unit> = withContext(Dispatchers.IO) {
+        val req = Request.Builder()
+            .url("$base/api/player/parties/${encodeSeg(partyId)}/leave")
+            .post("{}".toRequestBody(JSON_MEDIA_TYPE))
+            .build()
+        execute(req) { }
+    }
+
     suspend fun updateWatchPartyState(
         partyId: String,
         action: String? = null,

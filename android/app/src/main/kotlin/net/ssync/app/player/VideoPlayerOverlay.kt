@@ -46,6 +46,8 @@ import androidx.compose.material.icons.filled.CastConnected
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Forward10
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Replay10
@@ -55,6 +57,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
@@ -116,9 +119,13 @@ fun VideoPlayerOverlay(
     item: ActivePlayable,
     api: PlayerApiClient,
     pinnedHttpClient: OkHttpClient,
+    minimized: Boolean = false,
     castConnected: Boolean = false,
     onOpenCast: (() -> Unit)? = null,
     onOpenChannel: ((String) -> Unit)? = null,
+    onMinimize: ((positionMs: Long, durationMs: Long) -> Unit)? = null,
+    onExpand: (() -> Unit)? = null,
+    onLeaveParty: (() -> Unit)? = null,
     onClose: (positionMs: Long, durationMs: Long) -> Unit,
 ) {
     val context = LocalContext.current
@@ -379,23 +386,192 @@ fun VideoPlayerOverlay(
         }
     }
 
-    // True immersive fullscreen while video player is open (auto-restores system bars on close)
-    DisposableEffect(context) {
+    // True immersive fullscreen while video player is open in fullscreen (restores system bars when minimized or closed)
+    DisposableEffect(context, minimized) {
         val window = (context as? Activity)?.window
         val controller = window?.let { WindowCompat.getInsetsController(it, it.decorView) }
-        controller?.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-        controller?.hide(WindowInsetsCompat.Type.systemBars())
+        if (!minimized) {
+            controller?.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            controller?.hide(WindowInsetsCompat.Type.systemBars())
+        } else {
+            controller?.show(WindowInsetsCompat.Type.systemBars())
+        }
         onDispose {
             controller?.show(WindowInsetsCompat.Type.systemBars())
         }
     }
 
-    // Auto-hide cinema HUD after 3.5s while playing
-    LaunchedEffect(showHud, isPlaying, hudPoke, showTracksSheet) {
-        if (showHud && isPlaying && !showTracksSheet) {
+    // Auto-hide cinema HUD after 3.5s while playing in fullscreen
+    LaunchedEffect(showHud, isPlaying, hudPoke, showTracksSheet, minimized) {
+        if (!minimized && showHud && isPlaying && !showTracksSheet) {
             delay(3500L)
             showHud = false
         }
+    }
+
+    if (minimized) {
+        val frac = if (durationMs > 0L) {
+            (positionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
+        } else {
+            0f
+        }
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .navigationBarsPadding()
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            contentAlignment = Alignment.BottomCenter,
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(Color(0xF20D111C))
+                    .border(1.dp, Color.White.copy(alpha = 0.16f), RoundedCornerShape(16.dp))
+                    .clickable { onExpand?.invoke() },
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    // Live 16:9 Mini Video Frame
+                    Box(
+                        modifier = Modifier
+                            .width(110.dp)
+                            .height(62.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(Color.Black)
+                            .border(1.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(10.dp))
+                            .clickable { onExpand?.invoke() },
+                    ) {
+                        AndroidView(
+                            factory = { ctx ->
+                                PlayerView(ctx).apply {
+                                    player = exoPlayer
+                                    useController = false
+                                    this.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                                    layoutParams = FrameLayout.LayoutParams(
+                                        ViewGroup.LayoutParams.MATCH_PARENT,
+                                        ViewGroup.LayoutParams.MATCH_PARENT,
+                                    )
+                                }
+                            },
+                            update = { view ->
+                                if (view.player !== exoPlayer) {
+                                    view.player = exoPlayer
+                                }
+                            },
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    }
+
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clickable { onExpand?.invoke() },
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            if (!item.partyId.isNullOrBlank()) {
+                                Text(
+                                    text = "🍿 PARTY",
+                                    color = SoulSyncColors.AccentLight,
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(4.dp))
+                                        .background(SoulSyncColors.Accent.copy(alpha = 0.22f))
+                                        .padding(horizontal = 5.dp, vertical = 1.dp),
+                                )
+                            }
+                            Text(
+                                text = item.title,
+                                color = Color.White,
+                                fontSize = 13.5.sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        Text(
+                            text = item.subtitle.ifBlank { "${formatVideoTime(positionMs)} / ${formatVideoTime(durationMs)}" },
+                            color = SoulSyncColors.TextSecondary,
+                            fontSize = 11.5.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+
+                    IconButton(
+                        onClick = {
+                            val pid = item.partyId
+                            if (!pid.isNullOrBlank()) {
+                                val wasPlaying = exoPlayer.isPlaying
+                                val posSec = effectivePositionMs() / 1000.0
+                                if (wasPlaying) {
+                                    exoPlayer.pause()
+                                    scope.launch {
+                                        api.updateWatchPartyState(pid, action = "pause", position = posSec)
+                                    }
+                                } else {
+                                    scope.launch {
+                                        api.updateWatchPartyState(pid, action = "resume", position = posSec)
+                                    }
+                                }
+                            } else {
+                                if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
+                            }
+                        },
+                        modifier = Modifier.size(36.dp),
+                    ) {
+                        Icon(
+                            imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                            contentDescription = if (isPlaying) "Pause" else "Play",
+                            tint = Color.White,
+                        )
+                    }
+
+                    IconButton(
+                        onClick = { onExpand?.invoke() },
+                        modifier = Modifier.size(34.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.KeyboardArrowUp,
+                            contentDescription = "Expand video",
+                            tint = Color.White,
+                        )
+                    }
+
+                    IconButton(
+                        onClick = { onClose(effectivePositionMs(), effectiveDurationMs()) },
+                        modifier = Modifier.size(34.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Close video",
+                            tint = SoulSyncColors.TextSecondary,
+                        )
+                    }
+                }
+                if (durationMs > 0L) {
+                    LinearProgressIndicator(
+                        progress = { frac },
+                        color = SoulSyncColors.AccentLight,
+                        trackColor = Color.White.copy(alpha = 0.12f),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(2.5.dp),
+                    )
+                }
+            }
+        }
+        return
     }
 
     Box(
@@ -511,7 +687,7 @@ fun VideoPlayerOverlay(
                     .fillMaxSize()
                     .background(Color.Black.copy(alpha = 0.36f)),
             ) {
-                // Top Bar: Close + Title (+ clickable Channel/Show subtitle) + Cast icon
+                // Top Bar: Minimize + Title (+ clickable Channel/Show subtitle) + Cast + Close
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -527,7 +703,11 @@ fun VideoPlayerOverlay(
                 ) {
                     IconButton(
                         onClick = {
-                            onClose(effectivePositionMs(), effectiveDurationMs())
+                            if (onMinimize != null) {
+                                onMinimize(effectivePositionMs(), effectiveDurationMs())
+                            } else {
+                                onClose(effectivePositionMs(), effectiveDurationMs())
+                            }
                         },
                         modifier = Modifier
                             .size(40.dp)
@@ -535,7 +715,11 @@ fun VideoPlayerOverlay(
                             .background(Color.White.copy(alpha = 0.12f))
                             .dpadFocusable(CircleShape),
                     ) {
-                        Icon(Icons.Default.Close, contentDescription = "Close video", tint = Color.White)
+                        Icon(
+                            imageVector = if (onMinimize != null) Icons.Default.KeyboardArrowDown else Icons.Default.Close,
+                            contentDescription = "Minimize video",
+                            tint = Color.White,
+                        )
                     }
                     Spacer(modifier = Modifier.width(12.dp))
                     val canJumpToChannel = item.itemType == "youtube" && !item.parentId.isNullOrBlank() && onOpenChannel != null
@@ -608,6 +792,24 @@ fun VideoPlayerOverlay(
                             imageVector = if (castConnected) Icons.Default.CastConnected else Icons.Default.Cast,
                             contentDescription = "Cast",
                             tint = if (castConnected) SoulSyncColors.AccentLight else Color.White,
+                            modifier = Modifier.size(20.dp),
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    IconButton(
+                        onClick = {
+                            onClose(effectivePositionMs(), effectiveDurationMs())
+                        },
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(CircleShape)
+                            .background(Color.White.copy(alpha = 0.12f))
+                            .dpadFocusable(CircleShape),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Stop and close video",
+                            tint = Color.White,
                             modifier = Modifier.size(20.dp),
                         )
                     }
@@ -823,6 +1025,13 @@ fun VideoPlayerOverlay(
                 onSeekMs = { seekOrTranscode(it) },
                 hudVisible = showHud,
                 onInteract = { hudPoke++ },
+                onLeaveParty = {
+                    val pid = item.partyId
+                    scope.launch {
+                        api.leaveWatchParty(pid)
+                    }
+                    onLeaveParty?.invoke()
+                },
                 modifier = Modifier.fillMaxSize(),
             )
         }
@@ -1124,6 +1333,7 @@ private fun WatchPartyFullscreenReactions(
     onSeekMs: (Long) -> Unit,
     hudVisible: Boolean,
     onInteract: () -> Unit,
+    onLeaveParty: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val scope = rememberCoroutineScope()
@@ -1560,6 +1770,22 @@ private fun WatchPartyFullscreenReactions(
                             muted = !muted
                         }
                         .padding(horizontal = 8.dp, vertical = 4.dp),
+                )
+                Text(
+                    text = "Leave",
+                    color = Color(0xFFFDA4AF),
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    modifier = Modifier
+                        .padding(start = 2.dp)
+                        .clip(CircleShape)
+                        .background(Color(0x38F43F5E))
+                        .border(1.dp, Color(0x77F43F5E), CircleShape)
+                        .clickable {
+                            onInteract()
+                            onLeaveParty()
+                        }
+                        .padding(horizontal = 9.dp, vertical = 4.dp),
                 )
             }
         }

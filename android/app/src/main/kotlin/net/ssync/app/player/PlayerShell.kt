@@ -279,7 +279,7 @@ fun PlayerShell(
     ) {
         when {
             drawerState.isOpen -> scope.launch { drawerState.close() }
-            coordinator.showVideoOverlay -> coordinator.closeVideo(coordinator.positionMs, coordinator.durationMs)
+            coordinator.showVideoOverlay -> coordinator.minimizeVideo(coordinator.positionMs, coordinator.durationMs)
             coordinator.showAudioSheet -> coordinator.showAudioSheet = false
             else -> popBack()
         }
@@ -512,17 +512,21 @@ fun PlayerShell(
             }
 
             val videoItem = coordinator.activeItem
-            if (coordinator.showVideoOverlay && videoItem != null) {
+            if (videoItem != null && videoItem.isVideo && (coordinator.showVideoOverlay || coordinator.isVideoMinimized)) {
                 VideoPlayerOverlay(
                     item = videoItem,
                     api = api,
                     pinnedHttpClient = pinnedClient,
+                    minimized = coordinator.isVideoMinimized,
                     castConnected = castController.isConnected,
                     onOpenCast = { showCastSheet = true },
                     onOpenChannel = { channelId ->
-                        coordinator.closeVideo(coordinator.positionMs, coordinator.durationMs)
+                        coordinator.minimizeVideo(coordinator.positionMs, coordinator.durationMs)
                         navigateTo(PlayerDestination.YouTubeChannel(channelId, videoItem.subtitle.ifBlank { "Channel" }))
                     },
+                    onMinimize = { pos, dur -> coordinator.minimizeVideo(pos, dur) },
+                    onExpand = { coordinator.expandVideo() },
+                    onLeaveParty = { coordinator.detachWatchParty() },
                     onClose = { pos, dur -> coordinator.closeVideo(pos, dur) },
                 )
             }
