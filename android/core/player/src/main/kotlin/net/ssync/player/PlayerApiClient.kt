@@ -31,6 +31,9 @@ class PlayerApiClient(
     private val base = baseUrl.trimEnd('/')
     val artwork = PlayerArtwork(base)
 
+    @Volatile private var cachedVideoCatalog: Pair<Long, VideoCatalog>? = null
+    @Volatile private var cachedMusicChannels: Pair<Long, List<MusicChannel>>? = null
+
     fun streamUrl(itemType: String, itemId: String): String =
         "$base/api/player/stream/$itemType/$itemId"
 
@@ -41,11 +44,21 @@ class PlayerApiClient(
             json.decodeFromString<ContinueResponse>(body).items
         }
 
-    suspend fun fetchVideoCatalog(): MusicApiResult<VideoCatalog> =
-        getJson("$base/api/player/video-catalog") { body ->
+    suspend fun fetchVideoCatalog(forceRefresh: Boolean = false): MusicApiResult<VideoCatalog> {
+        val now = System.currentTimeMillis()
+        val hit = cachedVideoCatalog
+        if (!forceRefresh && hit != null && now - hit.first < 5 * 60_000L) {
+            return MusicApiResult.Success(hit.second)
+        }
+        val res = getJson("$base/api/player/video-catalog") { body ->
             val root = json.parseToJsonElement(body).jsonObject
             VideoCatalogDecoder.decode(root)
         }
+        if (res is MusicApiResult.Success) {
+            cachedVideoCatalog = now to res.data
+        }
+        return res
+    }
 
     // ── Movies & TV Detail ───────────────────────────────────────────────────
 
@@ -216,8 +229,13 @@ class PlayerApiClient(
             }
         }
 
-    suspend fun fetchMusicChannels(): MusicApiResult<List<MusicChannel>> =
-        getJson("$base/api/player/music-channels") { body ->
+    suspend fun fetchMusicChannels(forceRefresh: Boolean = false): MusicApiResult<List<MusicChannel>> {
+        val now = System.currentTimeMillis()
+        val hit = cachedMusicChannels
+        if (!forceRefresh && hit != null && now - hit.first < 10 * 60_000L) {
+            return MusicApiResult.Success(hit.second)
+        }
+        val res = getJson("$base/api/player/music-channels") { body ->
             val root = json.parseToJsonElement(body).jsonObject
             val arr = root["channels"] as? JsonArray ?: return@getJson emptyList()
             arr.mapNotNull { el ->
@@ -259,10 +277,20 @@ class PlayerApiClient(
                 )
             }
         }
+        if (res is MusicApiResult.Success) {
+            cachedMusicChannels = now to res.data
+        }
+        return res
+    }
 
     suspend fun fetchGuideFavorites(): MusicApiResult<Set<String>> =
         getJson("$base/api/player/guide/favorites") { body ->
             json.decodeFromString<GuideFavoritesEnvelope>(body).channels.toSet()
+        }
+
+    suspend fun fetchGuideFavoritesList(): MusicApiResult<List<String>> =
+        getJson("$base/api/player/guide/favorites") { body ->
+            json.decodeFromString<GuideFavoritesEnvelope>(body).channels
         }
 
     suspend fun fetchWatchlist(): MusicApiResult<List<WatchlistItem>> =

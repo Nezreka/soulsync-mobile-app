@@ -61,10 +61,12 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import net.ssync.pairing.theme.SoulSyncColors
@@ -465,9 +467,11 @@ private fun buildDesktopParityChannels(
         }
     }
     genreMap.entries
-        .sortedWith(compareByDescending<Map.Entry<String, Pair<MutableList<CatalogMovie>, MutableList<CatalogShow>>>> {
-            it.value.first.size + it.value.second.size
-        }.thenBy { it.key })
+        .sortedWith(
+            compareByDescending<Map.Entry<String, Pair<MutableList<CatalogMovie>, MutableList<CatalogShow>>>> {
+                it.value.first.size + it.value.second.size
+            }.thenBy(String.CASE_INSENSITIVE_ORDER) { it.key },
+        )
         .forEach { (genreName, pair) ->
             val (gm, gs) = pair
             val blurb = listOfNotNull(
@@ -490,7 +494,10 @@ private fun buildDesktopParityChannels(
         .groupBy { it.network!! }
         .entries
         .filter { it.value.size >= 2 }
-        .sortedWith(compareByDescending<Map.Entry<String, List<CatalogShow>>> { it.value.size }.thenBy { it.key })
+        .sortedWith(
+            compareByDescending<Map.Entry<String, List<CatalogShow>>> { it.value.size }
+                .thenBy(String.CASE_INSENSITIVE_ORDER) { it.key },
+        )
         .forEach { (net, list) ->
             addChannel(
                 RawChannel(
@@ -628,7 +635,10 @@ private fun buildDesktopParityChannels(
         .groupBy { it.studio!! }
         .entries
         .filter { it.value.size >= 6 }
-        .sortedWith(compareByDescending<Map.Entry<String, List<CatalogMovie>>> { it.value.size }.thenBy { it.key })
+        .sortedWith(
+            compareByDescending<Map.Entry<String, List<CatalogMovie>>> { it.value.size }
+                .thenBy(String.CASE_INSENSITIVE_ORDER) { it.key },
+        )
         .forEach { (studio, list) ->
             addChannel(
                 RawChannel(
@@ -644,7 +654,10 @@ private fun buildDesktopParityChannels(
         .groupBy { it.collection!! }
         .entries
         .filter { it.value.size >= 3 }
-        .sortedWith(compareByDescending<Map.Entry<String, List<CatalogMovie>>> { it.value.size }.thenBy { it.key })
+        .sortedWith(
+            compareByDescending<Map.Entry<String, List<CatalogMovie>>> { it.value.size }
+                .thenBy(String.CASE_INSENSITIVE_ORDER) { it.key },
+        )
         .forEach { (col, list) ->
             val inOrder = list.sortedBy { it.year ?: 0 }
             addChannel(
@@ -845,7 +858,8 @@ fun GuideScreen(
     var musicChannels by remember { mutableStateOf<List<MusicChannel>>(emptyList()) }
     var savedChannels by remember { mutableStateOf<List<SavedGuideChannel>>(emptyList()) }
     var lineup by remember { mutableStateOf<List<GuideLineupEntry>>(emptyList()) }
-    var favorites by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var favoritesList by remember { mutableStateOf<List<String>>(emptyList()) }
+    val favorites = remember(favoritesList) { favoritesList.toSet() }
     var viewMode by remember { mutableStateOf(GuideViewMode.GRID) }
     var filter by remember { mutableStateOf(GuideFilter.ALL) }
     var channelQuery by remember { mutableStateOf("") }
@@ -854,48 +868,58 @@ fun GuideScreen(
 
     LaunchedEffect(api) {
         isLoading = true
-        coroutineScope {
+        // Phase 1 (fast): load video catalog (cached), saved channels, lineup, and favorites.
+        // Dismiss the loading screen immediately once video channels are ready!
+        val revoked = coroutineScope {
             val vDef = async { api.fetchVideoCatalog() }
             val sDef = async { api.fetchSavedGuideChannels() }
             val lDef = async { api.fetchGuideLineup() }
-            val mDef = async { api.fetchMusicChannels() }
-            val fDef = async { api.fetchGuideFavorites() }
-            val songsDef = async { api.fetchSongs(limit = 150, page = 1) }
-            val plDef = async { api.fetchPlaylists() }
+            val fDef = async { api.fetchGuideFavoritesList() }
 
             val v = vDef.await()
             val s = sDef.await()
             val l = lDef.await()
-            val m = mDef.await()
             val f = fDef.await()
-            val songs = songsDef.await()
-            val pls = plDef.await()
 
             if (v is MusicApiResult.DeviceRevoked || s is MusicApiResult.DeviceRevoked) {
-                onDeviceRevoked()
-                return@coroutineScope
+                return@coroutineScope true
             }
             (v as? MusicApiResult.Success)?.let { catalog = it.data }
             (s as? MusicApiResult.Success)?.let { savedChannels = it.data }
             (l as? MusicApiResult.Success)?.let { lineup = it.data }
-            (m as? MusicApiResult.Success)?.let { musicChannels = it.data }
-            (f as? MusicApiResult.Success)?.let { favorites = it.data }
-            (songs as? MusicApiResult.Success)?.let { musicPoolSongs = it.data }
+            (f as? MusicApiResult.Success)?.let { favoritesList = it.data }
+            false
+        }
+        if (revoked) {
+            onDeviceRevoked()
+            return@LaunchedEffect
+        }
+        isLoading = false
 
-            // Fetch up to 8 user playlists (trackCount > 2) in parallel, matching desktop
+        // Phase 2 (progressive, non-blocking): stream in music channels, songs & playlists
+        // in the background so the Guide renders immediately without waiting on music DB scans.
+        launch {
+            (api.fetchMusicChannels() as? MusicApiResult.Success)?.let { musicChannels = it.data }
+        }
+        launch {
+            (api.fetchSongs(limit = 150, page = 1) as? MusicApiResult.Success)?.let { musicPoolSongs = it.data }
+        }
+        launch {
+            val pls = api.fetchPlaylists()
             val candidatePlaylists = (pls as? MusicApiResult.Success)?.data
                 ?.filter { it.kind == "yours" && it.trackCount > 2 }
                 ?.take(8)
                 .orEmpty()
             if (candidatePlaylists.isNotEmpty()) {
-                playlistDetails = candidatePlaylists.mapNotNull { p ->
-                    p.idString.toIntOrNull()?.let { pid ->
-                        async { (api.fetchPlaylistDetail(pid) as? MusicApiResult.Success)?.data }
-                    }
-                }.awaitAll().filterNotNull()
+                playlistDetails = coroutineScope {
+                    candidatePlaylists.mapNotNull { p ->
+                        p.idString.toIntOrNull()?.let { pid ->
+                            async { (api.fetchPlaylistDetail(pid) as? MusicApiResult.Success)?.data }
+                        }
+                    }.awaitAll().filterNotNull()
+                }
             }
         }
-        isLoading = false
     }
 
     if (isLoading) {
@@ -909,21 +933,24 @@ fun GuideScreen(
     val windowEndSec = windowStartSec + windowMinutes * 60L
     val nowOffsetMin = ((nowSec - windowStartSec).coerceAtLeast(0L) / 60f)
 
-    val allChannels = remember(catalog, musicPoolSongs, playlistDetails, musicChannels, savedChannels, lineup, windowStartSec) {
-        buildDesktopParityChannels(
-            catalog = catalog,
-            musicPoolSongs = musicPoolSongs,
-            playlists = playlistDetails,
-            musicChannels = musicChannels,
-            savedChannels = savedChannels,
-            lineup = lineup,
-            api = api,
-            windowStartSec = windowStartSec,
-            windowEndSec = windowEndSec,
-        )
+    var allChannels by remember { mutableStateOf<List<EpgChannel>>(emptyList()) }
+    LaunchedEffect(catalog, musicPoolSongs, playlistDetails, musicChannels, savedChannels, lineup, windowStartSec) {
+        allChannels = withContext(Dispatchers.Default) {
+            buildDesktopParityChannels(
+                catalog = catalog,
+                musicPoolSongs = musicPoolSongs,
+                playlists = playlistDetails,
+                musicChannels = musicChannels,
+                savedChannels = savedChannels,
+                lineup = lineup,
+                api = api,
+                windowStartSec = windowStartSec,
+                windowEndSec = windowEndSec,
+            )
+        }
     }
 
-    val groupedSections = remember(allChannels, filter, favorites, channelQuery) {
+    val groupedSections = remember(allChannels, filter, favoritesList, favorites, channelQuery) {
         val q = channelQuery.trim().lowercase()
         fun matchesQuery(ch: EpgChannel): Boolean {
             if (q.isEmpty()) return true
@@ -941,10 +968,11 @@ fun GuideScreen(
         }
 
         val shown = allChannels.filter { matchesFilter(it) && matchesQuery(it) }
+        val byId = allChannels.associateBy { it.id }
         val sections = mutableListOf<ChannelGroupSection>()
 
-        if (filter == GuideFilter.ALL && favorites.isNotEmpty()) {
-            val favChs = allChannels.filter { it.id in favorites && matchesQuery(it) }
+        if (filter == GuideFilter.ALL && favoritesList.isNotEmpty()) {
+            val favChs = favoritesList.mapNotNull { byId[it] }.filter { matchesQuery(it) }
             if (favChs.isNotEmpty()) {
                 sections += ChannelGroupSection("favorites", "Favorites", favChs)
             }
@@ -1291,9 +1319,9 @@ fun GuideScreen(
                                             modifier = Modifier
                                                 .size(13.dp)
                                                 .clickable {
-                                                    val updated = if (isFav) favorites - ch.id else favorites + ch.id
-                                                    favorites = updated
-                                                    scope.launch { api.saveGuideFavorites(updated.toList()) }
+                                                    val updated = if (isFav) favoritesList.filterNot { it == ch.id } else favoritesList + ch.id
+                                                    favoritesList = updated
+                                                    scope.launch { api.saveGuideFavorites(updated) }
                                                 },
                                         )
                                     }

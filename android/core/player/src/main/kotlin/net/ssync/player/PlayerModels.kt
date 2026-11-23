@@ -1305,9 +1305,11 @@ internal object VideoCatalogDecoder {
         return arr.mapNotNull { item ->
             when (item) {
                 is JsonArray -> {
+                    val rawEps = (item.col("episodes") as? JsonArray)
+                        ?.mapNotNull { it as? JsonArray }
+                        .orEmpty()
                     val epsCount = item.col("episode_count").intOrNullSafe()
-                        ?: (item.col("episodes") as? JsonArray)?.size
-                        ?: 0
+                        ?: rawEps.size
                     CatalogShow(
                         id = item.col("id").intOrNullSafe() ?: return@mapNotNull null,
                         title = item.col("title").strOrNull() ?: return@mapNotNull null,
@@ -1321,22 +1323,29 @@ internal object VideoCatalogDecoder {
                         hasBackdrop = item.col("has_backdrop").boolOrNull() ?: false,
                         episodeCount = epsCount,
                         tmdbId = item.col("tmdb_id").intOrNullSafe(),
+                        episodes = rawEps,
                     )
                 }
-                is JsonObject -> CatalogShow(
-                    id = item["id"].intOrNullSafe() ?: return@mapNotNull null,
-                    title = item["title"].strOrNull() ?: return@mapNotNull null,
-                    year = item["year"].intOrNullSafe(),
-                    network = item["network"].strOrNull(),
-                    contentRating = item["content_rating"].strOrNull(),
-                    rating = item["rating"].doubleOrNullSafe(),
-                    genres = parseGenreIds(item["genres"] ?: item["genre_ids"], genreMap),
-                    addedAt = item["added_at"].strOrNull(),
-                    hasPoster = item["has_poster"].boolOrNull() ?: true,
-                    hasBackdrop = item["has_backdrop"].boolOrNull() ?: false,
-                    episodeCount = item["episode_count"].intOrNullSafe() ?: 0,
-                    tmdbId = item["tmdb_id"].intOrNullSafe(),
-                )
+                is JsonObject -> {
+                    val rawEps = (item["episodes"] as? JsonArray)
+                        ?.mapNotNull { it as? JsonArray }
+                        .orEmpty()
+                    CatalogShow(
+                        id = item["id"].intOrNullSafe() ?: return@mapNotNull null,
+                        title = item["title"].strOrNull() ?: return@mapNotNull null,
+                        year = item["year"].intOrNullSafe(),
+                        network = item["network"].strOrNull(),
+                        contentRating = item["content_rating"].strOrNull(),
+                        rating = item["rating"].doubleOrNullSafe(),
+                        genres = parseGenreIds(item["genres"] ?: item["genre_ids"], genreMap),
+                        addedAt = item["added_at"].strOrNull(),
+                        hasPoster = item["has_poster"].boolOrNull() ?: true,
+                        hasBackdrop = item["has_backdrop"].boolOrNull() ?: false,
+                        episodeCount = item["episode_count"].intOrNullSafe() ?: rawEps.size,
+                        tmdbId = item["tmdb_id"].intOrNullSafe(),
+                        episodes = rawEps,
+                    )
+                }
                 else -> null
             }
         }
