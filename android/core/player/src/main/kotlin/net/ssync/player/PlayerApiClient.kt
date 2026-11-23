@@ -638,6 +638,91 @@ class PlayerApiClient(
         }
     }
 
+    // ── Offline Downloads Tracking & Admin User Management ───────────────────
+
+    suspend fun fetchMyDownloads(includeRemoved: Boolean = false): MusicApiResult<MyDownloadsResponse> {
+        val url = if (includeRemoved) "$base/api/player/downloads?include_removed=1" else "$base/api/player/downloads"
+        return getJson(url) { body ->
+            json.decodeFromString<MyDownloadsResponse>(body)
+        }
+    }
+
+    suspend fun logOfflineDownload(
+        itemType: String,
+        itemId: String,
+        title: String,
+        subtitle: String? = null,
+        artwork: String? = null,
+        deviceId: String = "android",
+        deviceName: String = android.os.Build.MODEL ?: "Android",
+        quality: String = "original",
+        sizeBytes: Long = 0L,
+    ): MusicApiResult<Unit> = withContext(Dispatchers.IO) {
+        val payload = kotlinx.serialization.json.buildJsonObject {
+            put("item_type", kotlinx.serialization.json.JsonPrimitive(itemType))
+            put("item_id", kotlinx.serialization.json.JsonPrimitive(itemId))
+            put("title", kotlinx.serialization.json.JsonPrimitive(title))
+            if (subtitle != null) put("subtitle", kotlinx.serialization.json.JsonPrimitive(subtitle))
+            if (artwork != null) put("artwork", kotlinx.serialization.json.JsonPrimitive(artwork))
+            put("device_id", kotlinx.serialization.json.JsonPrimitive(deviceId))
+            put("device_name", kotlinx.serialization.json.JsonPrimitive(deviceName))
+            put("quality", kotlinx.serialization.json.JsonPrimitive(quality))
+            put("size_bytes", kotlinx.serialization.json.JsonPrimitive(sizeBytes))
+        }
+        val req = Request.Builder()
+            .url("$base/api/player/downloads")
+            .post(payload.toString().toRequestBody(JSON_MEDIA_TYPE))
+            .build()
+        execute(req) { Unit }
+    }
+
+    suspend fun markOfflineDownloadRemoved(
+        itemType: String,
+        itemId: String,
+        deviceId: String = "android",
+    ): MusicApiResult<Unit> = withContext(Dispatchers.IO) {
+        val payload = kotlinx.serialization.json.buildJsonObject {
+            put("item_type", kotlinx.serialization.json.JsonPrimitive(itemType))
+            put("item_id", kotlinx.serialization.json.JsonPrimitive(itemId))
+            put("device_id", kotlinx.serialization.json.JsonPrimitive(deviceId))
+        }
+        val req = Request.Builder()
+            .url("$base/api/player/downloads/removed")
+            .post(payload.toString().toRequestBody(JSON_MEDIA_TYPE))
+            .build()
+        execute(req) { Unit }
+    }
+
+    suspend fun fetchAdminUsers(
+        profileId: Int? = null,
+        itemType: String? = null,
+        status: String? = null,
+    ): MusicApiResult<AdminUsersOverview> {
+        val b = "$base/api/player/admin/users".toHttpUrl().newBuilder()
+        if (profileId != null) b.addQueryParameter("profile_id", profileId.toString())
+        if (!itemType.isNullOrBlank()) b.addQueryParameter("item_type", itemType)
+        if (!status.isNullOrBlank()) b.addQueryParameter("status", status)
+        return getJson(b.build().toString()) { body ->
+            json.decodeFromString<AdminUsersOverview>(body)
+        }
+    }
+
+    suspend fun setAdminUserDownloadPerm(
+        targetProfileId: Int,
+        allowDownloads: Boolean,
+        maxItems: Int = 0,
+    ): MusicApiResult<Unit> = withContext(Dispatchers.IO) {
+        val payload = kotlinx.serialization.json.buildJsonObject {
+            put("allow_downloads", kotlinx.serialization.json.JsonPrimitive(allowDownloads))
+            put("max_items", kotlinx.serialization.json.JsonPrimitive(maxItems))
+        }
+        val req = Request.Builder()
+            .url("$base/api/player/admin/users/$targetProfileId/downloads")
+            .put(payload.toString().toRequestBody(JSON_MEDIA_TYPE))
+            .build()
+        execute(req) { Unit }
+    }
+
     suspend fun submitVideoIssue(
         entityType: String,
         entityId: Int,

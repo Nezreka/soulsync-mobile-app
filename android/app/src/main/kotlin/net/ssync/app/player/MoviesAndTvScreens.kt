@@ -200,6 +200,16 @@ fun MovieDetailScreen(
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
+                OfflineDownloadButton(
+                    api = api,
+                    itemType = "movie",
+                    itemId = movie.id.toString(),
+                    title = movie.title,
+                    subtitle = movie.year?.toString() ?: "",
+                    artworkUrl = api.artwork.moviePoster(movie.id),
+                    streamUrl = api.streamUrl("movie", movie.id.toString()),
+                    isVideo = true,
+                )
                 ReportIssuePillButton(
                     onClick = {
                         issueTarget = ReportIssueTarget(
@@ -2052,6 +2062,18 @@ private fun ShowEpisodeCard(
                         ) {
                             Text("🍿 Party", color = SoulSyncColors.AccentLight, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                         }
+                        OfflineDownloadButton(
+                            api = api,
+                            itemType = "episode",
+                            itemId = episode.id.toString(),
+                            title = "$showTitle · S${seasonNumber}E${episode.episodeNumber}",
+                            subtitle = episode.title ?: "",
+                            artworkUrl = api.artwork.episodeStill(episode.id),
+                            streamUrl = api.streamUrl("episode", episode.id.toString()),
+                            isVideo = true,
+                            parentId = showTmdbId?.toString(),
+                            compact = true,
+                        )
                     } else if (canRequest) {
                         Button(
                             onClick = { triggerEpisodeRequest() },

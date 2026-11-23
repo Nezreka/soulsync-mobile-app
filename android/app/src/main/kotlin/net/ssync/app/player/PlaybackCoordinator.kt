@@ -54,10 +54,17 @@ class PlaybackCoordinator(
     var lyricsText by mutableStateOf<String?>(null)
         private set
 
+    private fun resolveOffline(item: ActivePlayable): ActivePlayable {
+        val local = OfflineDownloadManager.localUriIfDownloaded(item.itemType, item.itemId)
+        return if (local != null) item.copy(streamUrl = local) else item
+    }
+
     fun playAudio(item: ActivePlayable, upcoming: List<ActivePlayable> = emptyList()) {
+        val resolvedItem = resolveOffline(item)
+        val resolvedUpcoming = upcoming.map { resolveOffline(it) }
         showVideoOverlay = false
-        activeItem = item
-        queue = listOf(item) + upcoming
+        activeItem = resolvedItem
+        queue = listOf(resolvedItem) + resolvedUpcoming
         lyricsText = null
 
         val caster = castHandler
@@ -113,7 +120,7 @@ class PlaybackCoordinator(
         // Pause background audio when starting video
         controllerProvider()?.pause()
         showAudioSheet = false
-        val videoItem = item.copy(isVideo = true)
+        val videoItem = resolveOffline(item).copy(isVideo = true)
         activeItem = videoItem
         val caster = castHandler
         if (caster != null) {
@@ -276,15 +283,22 @@ class PlaybackCoordinator(
         }
     }
 
-    private fun toMediaItem(item: ActivePlayable): MediaItem =
-        MediaItem.Builder()
+    private fun toMediaItem(item: ActivePlayable): MediaItem {
+        val extras = android.os.Bundle().apply {
+            putString("itemType", item.itemType)
+            if (!item.parentId.isNullOrBlank()) putString("parentId", item.parentId)
+        }
+        return MediaItem.Builder()
             .setMediaId(item.itemId)
             .setUri(item.streamUrl)
+            .setCustomCacheKey("${item.itemType}:${item.itemId}")
             .setMediaMetadata(
                 MediaMetadata.Builder()
                     .setTitle(item.title)
                     .setArtist(item.subtitle)
+                    .setExtras(extras)
                     .build(),
             )
             .build()
+    }
 }

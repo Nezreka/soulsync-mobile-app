@@ -514,8 +514,130 @@ fun SettingsScreen(
                 icon = Icons.Default.MusicNote,
                 title = "Music & home",
                 scopeBadge = "THIS SCREEN",
-                subtitle = "Visual ambiance and your home dashboard.",
+                subtitle = "Crossfade, lookahead pre-caching, visuals, and your home dashboard.",
             ) {
+                Column(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(
+                            text = "Crossfade",
+                            color = Color.White,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Text(
+                            text = "Equal-power blend between songs on playlists, shuffles, and Artist Mixes.",
+                            color = SoulSyncColors.TextSecondary,
+                            fontSize = 12.sp,
+                        )
+                    }
+                    androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(PlayerDevicePrefs.CROSSFADE_OPTIONS.size) { idx ->
+                            val sec = PlayerDevicePrefs.CROSSFADE_OPTIONS[idx]
+                            val selected = devicePrefs.crossfadeSeconds == sec
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(999.dp))
+                                    .background(if (selected) SoulSyncColors.Accent.copy(alpha = 0.28f) else Color.White.copy(alpha = 0.04f))
+                                    .border(
+                                        1.dp,
+                                        if (selected) SoulSyncColors.Accent.copy(alpha = 0.6f) else SoulSyncColors.Line,
+                                        RoundedCornerShape(999.dp),
+                                    )
+                                    .dpadFocusable(RoundedCornerShape(999.dp))
+                                    .clickable { updateDevice { it.copy(crossfadeSeconds = sec) } }
+                                    .padding(horizontal = 14.dp, vertical = 8.dp),
+                            ) {
+                                Text(
+                                    text = if (sec == 0) "Off" else "${sec}s",
+                                    color = if (selected) Color.White else SoulSyncColors.TextSoft,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                            }
+                        }
+                    }
+                }
+
+                SettingsDivider()
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Column(modifier = Modifier.weight(1f).padding(end = 12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(
+                            text = "Smart album gapless",
+                            color = Color.White,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Text(
+                            text = "Automatically disable crossfade when consecutive tracks come from the same album.",
+                            color = SoulSyncColors.TextSecondary,
+                            fontSize = 12.sp,
+                        )
+                    }
+                    androidx.compose.material3.Switch(
+                        checked = devicePrefs.smartAlbumGapless,
+                        onCheckedChange = { on -> updateDevice { it.copy(smartAlbumGapless = on) } },
+                    )
+                }
+
+                SettingsDivider()
+
+                Column(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(
+                            text = "Pre-cache upcoming songs",
+                            color = Color.White,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Text(
+                            text = "Caches up to the next 10 queued songs on disk for instant skips and seamless crossfades.",
+                            color = SoulSyncColors.TextSecondary,
+                            fontSize = 12.sp,
+                        )
+                    }
+                    androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(PlayerDevicePrefs.PREFETCH_OPTIONS.size) { idx ->
+                            val cnt = PlayerDevicePrefs.PREFETCH_OPTIONS[idx]
+                            val selected = devicePrefs.prefetchCount == cnt
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(999.dp))
+                                    .background(if (selected) SoulSyncColors.Accent.copy(alpha = 0.28f) else Color.White.copy(alpha = 0.04f))
+                                    .border(
+                                        1.dp,
+                                        if (selected) SoulSyncColors.Accent.copy(alpha = 0.6f) else SoulSyncColors.Line,
+                                        RoundedCornerShape(999.dp),
+                                    )
+                                    .dpadFocusable(RoundedCornerShape(999.dp))
+                                    .clickable { updateDevice { it.copy(prefetchCount = cnt) } }
+                                    .padding(horizontal = 14.dp, vertical = 8.dp),
+                            ) {
+                                Text(
+                                    text = if (cnt == 0) "Off" else "Next $cnt",
+                                    color = if (selected) Color.White else SoulSyncColors.TextSoft,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                            }
+                        }
+                    }
+                }
+
+                SettingsDivider()
+
                 Column(
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),

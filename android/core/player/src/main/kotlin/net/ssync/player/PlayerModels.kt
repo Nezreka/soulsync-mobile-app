@@ -511,8 +511,90 @@ data class VideoCalendarResponse(
 )
 
 @Serializable
-internal data class VideoCalendarFollowedEnvelope(
+data class VideoCalendarFollowedEnvelope(
     val episodes: List<CalendarEpisode> = emptyList(),
+)
+
+@Serializable
+data class PlayerDownloadRow(
+    val id: Int = 0,
+    @SerialName("profile_id")
+    val profileId: Int = 0,
+    @SerialName("profile_name")
+    val profileName: String? = null,
+    @SerialName("device_id")
+    val deviceId: String = "",
+    @SerialName("device_name")
+    val deviceName: String = "",
+    @SerialName("item_type")
+    val itemType: String = "",
+    @SerialName("item_id")
+    val itemId: String = "",
+    val title: String = "",
+    val subtitle: String? = null,
+    val artwork: String? = null,
+    val quality: String = "original",
+    @SerialName("size_bytes")
+    val sizeBytes: Long = 0L,
+    val status: String = "downloaded",
+    @SerialName("downloaded_at")
+    val downloadedAt: String = "",
+    @SerialName("removed_at")
+    val removedAt: String? = null,
+)
+
+@Serializable
+data class MyDownloadsResponse(
+    val success: Boolean = false,
+    @SerialName("allow_downloads")
+    val allowDownloads: Boolean = true,
+    @SerialName("max_items")
+    val maxItems: Int = 0,
+    @SerialName("is_admin")
+    val isAdmin: Boolean = false,
+    val downloads: List<PlayerDownloadRow> = emptyList(),
+)
+
+@Serializable
+data class AdminUserSummary(
+    val id: Int = 0,
+    val name: String = "",
+    @SerialName("is_admin")
+    val isAdmin: Boolean = false,
+    @SerialName("avatar_color")
+    val avatarColor: String? = null,
+    @SerialName("allow_downloads")
+    val allowDownloads: Boolean = true,
+    @SerialName("max_items")
+    val maxItems: Int = 0,
+    @SerialName("active_downloads")
+    val activeDownloads: Int = 0,
+    @SerialName("removed_downloads")
+    val removedDownloads: Int = 0,
+    @SerialName("active_bytes")
+    val activeBytes: Long = 0L,
+    @SerialName("active_devices")
+    val activeDevices: Int = 0,
+    @SerialName("last_download_at")
+    val lastDownloadAt: String? = null,
+)
+
+@Serializable
+data class AdminDownloadTotals(
+    @SerialName("active_downloads")
+    val activeDownloads: Int = 0,
+    @SerialName("removed_downloads")
+    val removedDownloads: Int = 0,
+    @SerialName("active_bytes")
+    val activeBytes: Long = 0L,
+)
+
+@Serializable
+data class AdminUsersOverview(
+    val success: Boolean = false,
+    val users: List<AdminUserSummary> = emptyList(),
+    val downloads: List<PlayerDownloadRow> = emptyList(),
+    val totals: AdminDownloadTotals = AdminDownloadTotals(),
 )
 
 @Serializable

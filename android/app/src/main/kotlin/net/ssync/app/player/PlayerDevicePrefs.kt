@@ -19,6 +19,9 @@ data class DeviceDisplayPrefs(
     val subtitleSize: String = "medium",
     val subtitleBox: Boolean = true,
     val musicVisual: String = "aurora",
+    val crossfadeSeconds: Int = 4,
+    val smartAlbumGapless: Boolean = true,
+    val prefetchCount: Int = 10,
 )
 
 object PlayerDevicePrefs {
@@ -30,6 +33,12 @@ object PlayerDevicePrefs {
     private const val KEY_SUB_SIZE = "subtitle_size"
     private const val KEY_SUB_BOX = "subtitle_box"
     private const val KEY_VISUAL = "music_visual"
+    private const val KEY_CROSSFADE = "crossfade_seconds"
+    private const val KEY_SMART_GAPLESS = "smart_album_gapless"
+    private const val KEY_PREFETCH = "prefetch_count"
+
+    val CROSSFADE_OPTIONS: List<Int> = listOf(0, 2, 4, 6, 8, 10, 12)
+    val PREFETCH_OPTIONS: List<Int> = listOf(0, 3, 5, 10)
 
     val QUALITIES: List<Pair<String, Pair<String, String>>> = listOf(
         "auto" to ("Auto" to "Adapts to your connection"),
@@ -78,6 +87,9 @@ object PlayerDevicePrefs {
             subtitleSize = sp.getString(KEY_SUB_SIZE, "medium") ?: "medium",
             subtitleBox = sp.getBoolean(KEY_SUB_BOX, true),
             musicVisual = sp.getString(KEY_VISUAL, "aurora") ?: "aurora",
+            crossfadeSeconds = sp.getInt(KEY_CROSSFADE, 4).coerceIn(0, 12),
+            smartAlbumGapless = sp.getBoolean(KEY_SMART_GAPLESS, true),
+            prefetchCount = sp.getInt(KEY_PREFETCH, 10).coerceIn(0, 10),
         )
     }
 
@@ -92,6 +104,9 @@ object PlayerDevicePrefs {
             putString(KEY_SUB_SIZE, next.subtitleSize)
             putBoolean(KEY_SUB_BOX, next.subtitleBox)
             putString(KEY_VISUAL, next.musicVisual)
+            putInt(KEY_CROSSFADE, next.crossfadeSeconds)
+            putBoolean(KEY_SMART_GAPLESS, next.smartAlbumGapless)
+            putInt(KEY_PREFETCH, next.prefetchCount)
             apply()
         }
     }

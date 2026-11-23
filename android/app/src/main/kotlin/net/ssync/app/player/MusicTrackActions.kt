@@ -55,7 +55,7 @@ import net.ssync.player.PlayerApiClient
 import net.ssync.player.SongRefPayload
 
 internal class LikedTracksState(
-    private val api: PlayerApiClient,
+    internal val api: PlayerApiClient,
 ) {
     val likedIds = mutableStateMapOf<Int, Boolean>()
     val likedKeys = mutableStateMapOf<String, Boolean>()
@@ -159,6 +159,20 @@ internal fun TrackRowActionIcons(
                 contentDescription = "Add to playlist",
                 tint = SoulSyncColors.TextSecondary,
                 modifier = Modifier.size(19.dp),
+            )
+        }
+        if (playable != null) {
+            OfflineDownloadButton(
+                api = likedState.api,
+                itemType = playable.itemType,
+                itemId = playable.itemId,
+                title = playable.title,
+                subtitle = playable.subtitle,
+                artworkUrl = playable.artworkUrl,
+                streamUrl = playable.streamUrl,
+                isVideo = false,
+                parentId = playable.parentId,
+                compact = true,
             )
         }
     }

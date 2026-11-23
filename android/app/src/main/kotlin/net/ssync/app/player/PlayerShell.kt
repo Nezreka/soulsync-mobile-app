@@ -30,8 +30,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.CalendarMonth
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Cast
 import androidx.compose.material.icons.filled.CastConnected
 import androidx.compose.material.icons.filled.Check
@@ -166,6 +168,15 @@ fun PlayerShell(
         onDispose {
             runCatching { cm?.unregisterNetworkCallback(callback) }
         }
+    }
+
+    // Initialize Offline Downloads manager, sync any offline deletions, and check admin role
+    var isAdminUser by remember { mutableStateOf(false) }
+    LaunchedEffect(api, context) {
+        OfflineDownloadManager.init(context)
+        OfflineDownloadManager.syncPendingRemovals(api)
+        val dlMeta = (api.fetchMyDownloads(includeRemoved = false) as? MusicApiResult.Success)?.data
+        if (dlMeta != null) isAdminUser = dlMeta.isAdmin
     }
 
     // Refresh live LAN + WAN candidate addresses from /api/devices/me (picks up UPnP port changes without re-pairing)
@@ -319,6 +330,7 @@ fun PlayerShell(
                                 current = current,
                                 collapsed = sidebarCollapsed,
                                 watchingCount = watchingOthersCount,
+                                isAdmin = isAdminUser,
                                 showCollapseToggle = true,
                                 onNavigate = { navigateTo(it, clearToRoot = true) },
                                 onToggleCollapse = { sidebarCollapsed = !sidebarCollapsed },
@@ -411,6 +423,7 @@ fun PlayerShell(
                                 current = current,
                                 collapsed = false,
                                 watchingCount = watchingOthersCount,
+                                isAdmin = isAdminUser,
                                 showCollapseToggle = false,
                                 onNavigate = { dest ->
                                     scope.launch { drawerState.close() }
@@ -930,6 +943,7 @@ private fun PlayerSidebar(
     current: PlayerDestination,
     collapsed: Boolean,
     watchingCount: Int,
+    isAdmin: Boolean,
     showCollapseToggle: Boolean,
     onNavigate: (PlayerDestination) -> Unit,
     onToggleCollapse: () -> Unit,
@@ -973,6 +987,10 @@ private fun PlayerSidebar(
         SidebarItem(Icons.Default.Home, "Home", current is PlayerDestination.Home, collapsed) { onNavigate(PlayerDestination.Home) }
         SidebarItem(Icons.Default.LiveTv, "Live Guide", current is PlayerDestination.Guide, collapsed) { onNavigate(PlayerDestination.Guide) }
         SidebarItem(Icons.Default.CalendarMonth, "Calendar", current is PlayerDestination.Calendar, collapsed) { onNavigate(PlayerDestination.Calendar) }
+        SidebarItem(Icons.Default.Download, "Downloads", current is PlayerDestination.Downloads, collapsed) { onNavigate(PlayerDestination.Downloads) }
+        if (isAdmin) {
+            SidebarItem(Icons.Default.AdminPanelSettings, "Users & DL", current is PlayerDestination.AdminUsers, collapsed) { onNavigate(PlayerDestination.AdminUsers) }
+        }
         SidebarItem(Icons.Default.Bookmark, "Watchlist", current is PlayerDestination.Watchlist, collapsed) { onNavigate(PlayerDestination.Watchlist) }
         SidebarItem(
             icon = Icons.Default.Group,
@@ -1083,6 +1101,8 @@ private fun PlayerContent(
         )
         PlayerDestination.Guide -> GuideScreen(api, coordinator, onDeviceRevoked, onNavigate)
         PlayerDestination.Calendar -> CalendarScreen(api, onNavigate, onDeviceRevoked)
+        PlayerDestination.Downloads -> DownloadsScreen(api, coordinator)
+        PlayerDestination.AdminUsers -> AdminUsersScreen(api, onDeviceRevoked)
         PlayerDestination.Movies -> MoviesScreen(api, { onNavigate(PlayerDestination.MovieDetail(it)) }, onDeviceRevoked)
         is PlayerDestination.MovieDetail -> MovieDetailScreen(current.movieId, api, coordinator, onNavigate, onDeviceRevoked)
         PlayerDestination.Tv -> TvScreen(api, { onNavigate(PlayerDestination.ShowDetail(it)) }, onDeviceRevoked)

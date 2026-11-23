@@ -7,6 +7,8 @@ sealed interface PlayerDestination {
     data object Home : PlayerDestination
     data object Guide : PlayerDestination
     data object Calendar : PlayerDestination
+    data object Downloads : PlayerDestination
+    data object AdminUsers : PlayerDestination
     data object Movies : PlayerDestination
     data class MovieDetail(val movieId: Int) : PlayerDestination
     data object Tv : PlayerDestination
