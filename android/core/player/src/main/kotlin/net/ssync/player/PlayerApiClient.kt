@@ -722,6 +722,8 @@ class PlayerApiClient(
                 artworkBaseUrl = (root["artwork_base_url"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.takeIf { it.isNotBlank() && it != "null" },
                 contentType = (root["content_type"] as? kotlinx.serialization.json.JsonPrimitive)?.content
                     ?: "video/mp4",
+                durationMs = (root["duration_ms"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toLongOrNull() ?: 0L,
+                transcoded = (root["transcoded"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toBooleanStrictOrNull() ?: false,
                 expiresIn = (root["expires_in"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toIntOrNull()
                     ?: 21600,
             )

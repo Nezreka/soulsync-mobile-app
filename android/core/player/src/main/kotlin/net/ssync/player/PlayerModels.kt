@@ -807,6 +807,8 @@ data class CastTokenResponse(
     val streamUrl: String? = null,
     val artworkBaseUrl: String? = null,
     val contentType: String,
+    val durationMs: Long = 0L,
+    val transcoded: Boolean = false,
     val expiresIn: Int = 21600,
 )
 

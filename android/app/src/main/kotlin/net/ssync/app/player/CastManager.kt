@@ -150,6 +150,11 @@ class SoulSyncCastController(private val appContext: Context) {
     private var mediaRouter: MediaRouter? = null
     private var selector: MediaRouteSelector? = null
     private var activeSession: CastSession? = null
+    private var isTranscodedCast: Boolean = false
+    private var castStartOffsetMs: Long = 0L
+    private var lastCastBaseStreamUrl: String? = null
+    private var lastCastContentType: String = "video/mp4"
+    private var lastCastMetadata: MediaMetadata? = null
 
     private val routeCallback = object : MediaRouter.Callback() {
         override fun onRouteAdded(router: MediaRouter, route: MediaRouter.RouteInfo) = refreshRoutes()
@@ -320,15 +325,31 @@ class SoulSyncCastController(private val appContext: Context) {
                 addImage(WebImage(Uri.parse(art)))
             }
         }
-        val mediaInfo = MediaInfo.Builder(fullUrl)
+        val initialStartMs = positionMs.coerceAtLeast(0L)
+        isTranscodedCast = castInfo.transcoded
+        castStartOffsetMs = if (castInfo.transcoded) initialStartMs else 0L
+        lastCastBaseStreamUrl = fullUrl
+        lastCastContentType = castInfo.contentType
+        lastCastMetadata = meta
+
+        val loadUrl = if (castInfo.transcoded && initialStartMs > 0L) {
+            val sep = if (fullUrl.contains('?')) '&' else '?'
+            "$fullUrl${sep}t=${initialStartMs / 1000L}"
+        } else {
+            fullUrl
+        }
+        val mediaInfoBuilder = MediaInfo.Builder(loadUrl)
             .setStreamType(MediaInfo.STREAM_TYPE_BUFFERED)
             .setContentType(castInfo.contentType)
             .setMetadata(meta)
-            .build()
+        if (castInfo.durationMs > 0L) {
+            mediaInfoBuilder.setStreamDuration(castInfo.durationMs)
+        }
+        val mediaInfo = mediaInfoBuilder.build()
         val loadReq = MediaLoadRequestData.Builder()
             .setMediaInfo(mediaInfo)
             .setAutoplay(true)
-            .setCurrentTime(positionMs.coerceAtLeast(0L))
+            .setCurrentTime(if (castInfo.transcoded) 0L else initialStartMs)
             .build()
         remote.load(loadReq)
         isCastingMedia = true
@@ -336,7 +357,8 @@ class SoulSyncCastController(private val appContext: Context) {
         castingTitle = item.title
         castingSubtitle = item.subtitle.takeIf { it.isNotBlank() }
         castingArtworkUrl = item.artworkUrl
-        remotePositionMs = positionMs.coerceAtLeast(0L)
+        remotePositionMs = initialStartMs
+        remoteDurationMs = castInfo.durationMs
         statusMessage = "Casting \"${item.title}\" to ${connectedDeviceName ?: "TV"}"
         return true
     }
@@ -352,17 +374,45 @@ class SoulSyncCastController(private val appContext: Context) {
         if (hasMedia) {
             isCastingMedia = true
             remoteIsPlaying = remote.isPlaying
-            remotePositionMs = remote.approximateStreamPosition.coerceAtLeast(0L)
-            val dur = remote.streamDuration
-            if (dur > 0L) remoteDurationMs = dur
+            val streamPos = remote.approximateStreamPosition.coerceAtLeast(0L)
+            val combined = castStartOffsetMs + streamPos
+            remotePositionMs = if (remoteDurationMs > 0L) combined.coerceAtMost(remoteDurationMs) else combined
+            // For transcoded fragmented MP4, Chromecast only reports its rolling buffer length
+            // (~3s ahead of current pos). Keep the real ffprobe duration from cast-token!
+            if (!isTranscodedCast || remoteDurationMs <= 0L) {
+                val dur = remote.streamDuration
+                if (dur > 0L) remoteDurationMs = dur
+            }
         }
     }
 
     fun seekTo(positionMs: Long) {
         val remote = activeSession?.remoteMediaClient ?: return
-        val clamped = positionMs.coerceAtLeast(0L)
-        remote.seek(MediaSeekOptions.Builder().setPosition(clamped).build())
-        remotePositionMs = clamped
+        val clamped = positionMs.coerceAtLeast(0L).let {
+            if (remoteDurationMs > 0L) it.coerceAtMost(remoteDurationMs) else it
+        }
+        if (isTranscodedCast) {
+            val base = lastCastBaseStreamUrl ?: return
+            val sep = if (base.contains('?')) '&' else '?'
+            val seekUrl = "$base${sep}t=${clamped / 1000L}"
+            val builder = MediaInfo.Builder(seekUrl)
+                .setStreamType(MediaInfo.STREAM_TYPE_BUFFERED)
+                .setContentType(lastCastContentType)
+            lastCastMetadata?.let { builder.setMetadata(it) }
+            if (remoteDurationMs > 0L) builder.setStreamDuration(remoteDurationMs)
+            castStartOffsetMs = clamped
+            remotePositionMs = clamped
+            remote.load(
+                MediaLoadRequestData.Builder()
+                    .setMediaInfo(builder.build())
+                    .setAutoplay(true)
+                    .setCurrentTime(0L)
+                    .build(),
+            )
+        } else {
+            remote.seek(MediaSeekOptions.Builder().setPosition(clamped).build())
+            remotePositionMs = clamped
+        }
     }
 
     fun skipBy(deltaMs: Long) {
