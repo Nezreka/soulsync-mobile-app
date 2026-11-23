@@ -176,12 +176,17 @@ fun VideoPlayerOverlay(
     var speedIndex by remember { mutableStateOf(1) }
     var showTracksSheet by remember { mutableStateOf(false) }
     var playbackError by remember { mutableStateOf<String?>(null) }
+    var hasRenderedFirstFrame by remember(item.streamUrl) { mutableStateOf(false) }
 
     val canTranscode = item.itemType == "movie" || item.itemType == "episode" || item.itemType == "youtube"
 
     fun effectivePositionMs(): Long {
         val raw = exoPlayer.currentPosition.coerceAtLeast(0L)
-        return if (usingTranscode) transcodeOffsetMs + raw else raw
+        return when {
+            usingTranscode -> transcodeOffsetMs + raw
+            raw == 0L && item.resumePositionMs > 0L && !hasRenderedFirstFrame -> item.resumePositionMs
+            else -> raw
+        }
     }
 
     fun effectiveDurationMs(): Long {
@@ -248,8 +253,6 @@ fun VideoPlayerOverlay(
             exoPlayer.seekTo(clamped)
         }
     }
-
-    var hasRenderedFirstFrame by remember(item.streamUrl) { mutableStateOf(false) }
 
     DisposableEffect(exoPlayer) {
         val listener = object : Player.Listener {

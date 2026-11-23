@@ -328,7 +328,14 @@ fun WatchingNowScreen(
                     },
                     onDetails = {
                         val idInt = s.itemId.toIntOrNull()
-                        if (s.itemType == "movie" && idInt != null) onNavigate(PlayerDestination.MovieDetail(idInt))
+                        val parentInt = s.meta?.parentId?.toIntOrNull()
+                        when (s.itemType) {
+                            "movie" -> if (idInt != null) onNavigate(PlayerDestination.MovieDetail(idInt))
+                            "show" -> if (idInt != null) onNavigate(PlayerDestination.ShowDetail(idInt))
+                            "episode" -> if (parentInt != null) onNavigate(PlayerDestination.ShowDetail(parentInt))
+                            "youtube" -> onNavigate(PlayerDestination.YouTube)
+                            "track" -> if (parentInt != null) onNavigate(PlayerDestination.AlbumDetail(parentInt))
+                        }
                     },
                 )
             }
@@ -606,26 +613,17 @@ private fun CinemaWatchingCard(
                         )
                     }
                 }
-                if (canParty) {
-                    OutlinedButton(
-                        onClick = onWatchTogether,
-                        shape = CircleShape,
-                        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.28f)),
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 5.dp),
-                        modifier = Modifier.height(34.dp),
-                    ) {
-                        Text("🍿 Watch Together", color = Color.White, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
-                    }
-                }
-                if (session.itemType == "movie") {
+                val canOpenDetails = session.itemType in setOf("movie", "show", "youtube") ||
+                    (session.itemType in setOf("episode", "track") && !session.meta?.parentId.isNullOrBlank())
+                if (canOpenDetails) {
                     OutlinedButton(
                         onClick = onDetails,
                         shape = CircleShape,
-                        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.22f)),
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 5.dp),
+                        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.25f)),
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 5.dp),
                         modifier = Modifier.height(34.dp),
                     ) {
-                        Text("Details", color = Color.White, fontSize = 11.5.sp)
+                        Text("Details", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                     }
                 }
             }
@@ -815,8 +813,8 @@ private fun CreateWatchPartyDialog(
                 itemId = m.id.toString(),
                 title = m.title,
                 subtitle = m.year?.toString(),
-                artwork = if (m.hasPoster) "/api/video/artwork/movie/${m.id}/poster" else null,
-                backdrop = if (m.hasBackdrop) "/api/video/artwork/movie/${m.id}/backdrop" else null,
+                artwork = if (m.hasPoster) "/api/video/poster/movie/${m.id}?w=342" else null,
+                backdrop = if (m.hasBackdrop) "/api/video/backdrop/movie/${m.id}?w=1280" else null,
             )
             if (out.size >= 18) break
         }
@@ -832,8 +830,8 @@ private fun CreateWatchPartyDialog(
                 itemId = epId.toString(),
                 title = "${sh.title} · S$season E$epNum",
                 subtitle = "S$season E$epNum" + (epTitle?.let { " · $it" } ?: ""),
-                artwork = if (sh.hasPoster) "/api/video/artwork/show/${sh.id}/poster" else null,
-                backdrop = if (sh.hasBackdrop) "/api/video/artwork/show/${sh.id}/backdrop" else null,
+                artwork = if (sh.hasPoster) "/api/video/poster/show/${sh.id}?w=342" else null,
+                backdrop = if (sh.hasBackdrop) "/api/video/backdrop/show/${sh.id}?w=1280" else null,
                 showId = sh.id,
             )
             if (out.size >= 34) break

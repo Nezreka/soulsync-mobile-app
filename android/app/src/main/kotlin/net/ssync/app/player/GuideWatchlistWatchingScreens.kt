@@ -319,6 +319,98 @@ fun SearchScreen(
         if (bookHits.isNotEmpty()) add("audiobooks" to "Audiobooks ${bookHits.size}")
     }
 
+    val topResult = remember(q, movieHits, showHits, artists, albums, songs, ytHits, podcastHits, bookHits) {
+        if (q.isEmpty()) return@remember null
+        // Pick the single strongest match across all categories (exact or prefix match first)
+        data class TopCandidate(
+            val kindLabel: String,
+            val title: String,
+            val subtitle: String,
+            val artworkUrl: String?,
+            val isPoster: Boolean,
+            val score: Int,
+            val onActivate: () -> Unit,
+        )
+        fun scoreOf(t: String): Int {
+            val low = t.lowercase()
+            return when {
+                low == q -> 100
+                low.startsWith(q) -> 85
+                low.split(" ").any { it.startsWith(q) } -> 70
+                low.contains(q) -> 50
+                else -> 0
+            }
+        }
+        val candidates = mutableListOf<TopCandidate>()
+        movieHits.firstOrNull()?.let { m ->
+            candidates += TopCandidate(
+                kindLabel = "MOVIE",
+                title = m.title,
+                subtitle = listOfNotNull(m.year?.toString(), m.contentRating, m.rating?.let { "★ %.1f".format(it) }).joinToString(" · "),
+                artworkUrl = api.artwork.moviePoster(m.id),
+                isPoster = true,
+                score = scoreOf(m.title),
+                onActivate = { onNavigate(PlayerDestination.MovieDetail(m.id)) },
+            )
+        }
+        showHits.firstOrNull()?.let { s ->
+            candidates += TopCandidate(
+                kindLabel = "TV SHOW",
+                title = s.title,
+                subtitle = listOfNotNull(s.year?.toString(), "${s.episodeCount} episodes", s.network).joinToString(" · "),
+                artworkUrl = api.artwork.showPoster(s.id),
+                isPoster = true,
+                score = scoreOf(s.title),
+                onActivate = { onNavigate(PlayerDestination.ShowDetail(s.id)) },
+            )
+        }
+        artists.firstOrNull()?.let { ar ->
+            candidates += TopCandidate(
+                kindLabel = "ARTIST",
+                title = ar.name,
+                subtitle = "${ar.albumCount} albums",
+                artworkUrl = api.artwork.resolve(ar.imageUrl ?: ar.remoteImageUrl),
+                isPoster = false,
+                score = scoreOf(ar.name),
+                onActivate = { onNavigate(PlayerDestination.ArtistDetail(ar.id)) },
+            )
+        }
+        albums.firstOrNull()?.let { al ->
+            candidates += TopCandidate(
+                kindLabel = "ALBUM",
+                title = al.title,
+                subtitle = listOfNotNull(al.artistName, al.year?.toString()).joinToString(" · "),
+                artworkUrl = api.artwork.resolve(al.imageUrl) ?: api.artwork.albumArtwork(al.id),
+                isPoster = false,
+                score = scoreOf(al.title),
+                onActivate = { onNavigate(PlayerDestination.AlbumDetail(al.id)) },
+            )
+        }
+        songs.firstOrNull()?.let { song ->
+            candidates += TopCandidate(
+                kindLabel = "SONG",
+                title = song.title,
+                subtitle = listOfNotNull(song.artistName, song.albumTitle).joinToString(" · "),
+                artworkUrl = api.artwork.albumArtwork(song.albumId),
+                isPoster = false,
+                score = scoreOf(song.title),
+                onActivate = {
+                    coordinator.playAudio(
+                        ActivePlayable(
+                            itemType = "track",
+                            itemId = song.id.toString(),
+                            title = song.title,
+                            subtitle = song.artistName ?: "Unknown Artist",
+                            artworkUrl = api.artwork.albumArtwork(song.albumId),
+                            streamUrl = api.streamUrl("track", song.id.toString()),
+                        ),
+                    )
+                },
+            )
+        }
+        candidates.maxByOrNull { it.score }?.takeIf { it.score >= 50 }
+    }
+
     Column(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 10.dp)) {
         OutlinedTextField(
             value = query,
@@ -328,7 +420,7 @@ fun SearchScreen(
             },
             placeholder = { Text("Search movies, shows, artists, albums, songs, podcasts…") },
             singleLine = true,
-            shape = RoundedCornerShape(14.dp),
+            shape = RoundedCornerShape(999.dp),
             modifier = Modifier.fillMaxWidth().dpadFocusable(),
         )
 
@@ -340,12 +432,17 @@ fun SearchScreen(
                     Box(
                         modifier = Modifier
                             .clip(CircleShape)
-                            .background(if (on) SoulSyncColors.Accent.copy(alpha = 0.2f) else Color.White.copy(alpha = 0.05f))
-                            .border(1.dp, if (on) SoulSyncColors.Accent.copy(alpha = 0.6f) else SoulSyncColors.Line, CircleShape)
+                            .background(if (on) Color.White else Color.White.copy(alpha = 0.06f))
+                            .border(1.dp, if (on) Color.White else SoulSyncColors.Line, CircleShape)
                             .clickable { filter = key }
-                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                            .padding(horizontal = 13.dp, vertical = 6.dp),
                     ) {
-                        Text(label, color = if (on) Color.White else SoulSyncColors.TextSoft, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            label,
+                            color = if (on) Color.Black else SoulSyncColors.TextSoft,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                        )
                     }
                 }
             }
@@ -363,6 +460,69 @@ fun SearchScreen(
                 contentPadding = PaddingValues(bottom = 28.dp),
                 modifier = Modifier.fillMaxSize(),
             ) {
+                if (filter == "all" && topResult != null) {
+                    item(key = "top-result") {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            SectionHeader("Top Result")
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .dpadFocusable(RoundedCornerShape(16.dp))
+                                    .clickable { topResult.onActivate() },
+                                shape = RoundedCornerShape(16.dp),
+                                colors = CardDefaults.cardColors(containerColor = SoulSyncColors.Accent.copy(alpha = 0.14f)),
+                                border = BorderStroke(1.dp, SoulSyncColors.Accent.copy(alpha = 0.45f)),
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                                ) {
+                                    SoulSyncArtwork(
+                                        url = topResult.artworkUrl,
+                                        contentDescription = topResult.title,
+                                        modifier = Modifier
+                                            .width(if (topResult.isPoster) 58.dp else 64.dp)
+                                            .height(if (topResult.isPoster) 86.dp else 64.dp)
+                                            .clip(RoundedCornerShape(10.dp)),
+                                    )
+                                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(CircleShape)
+                                                .background(SoulSyncColors.Accent.copy(alpha = 0.25f))
+                                                .padding(horizontal = 8.dp, vertical = 2.dp),
+                                        ) {
+                                            Text(
+                                                text = topResult.kindLabel,
+                                                color = SoulSyncColors.AccentLight,
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.ExtraBold,
+                                            )
+                                        }
+                                        Text(
+                                            text = topResult.title,
+                                            color = Color.White,
+                                            fontSize = 18.sp,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                        if (topResult.subtitle.isNotBlank()) {
+                                            Text(
+                                                text = topResult.subtitle,
+                                                color = SoulSyncColors.TextSoft,
+                                                fontSize = 12.5.sp,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 if ((filter == "all" || filter == "movies") && movieHits.isNotEmpty()) {
                     item { SectionHeader("Movies") }
                     items(movieHits, key = { "m-${it.id}" }) { m ->
