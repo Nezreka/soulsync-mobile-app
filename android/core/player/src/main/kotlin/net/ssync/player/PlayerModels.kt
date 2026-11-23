@@ -756,7 +756,7 @@ data class WatchlistItem(
     val itemId: String,
     val meta: ProgressMeta? = null,
     @SerialName("added_at")
-    val addedAt: String? = null,
+    val addedAt: Double? = null,
 )
 
 @Serializable

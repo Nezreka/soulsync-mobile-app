@@ -26,6 +26,7 @@ class PlayerApiClient(
         ignoreUnknownKeys = true
         encodeDefaults = true
         coerceInputValues = true
+        isLenient = true
     },
 ) {
     private val base = baseUrl.trimEnd('/')
