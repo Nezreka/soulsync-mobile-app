@@ -245,6 +245,7 @@ fun SettingsScreen(
             var savingComm by remember { mutableStateOf(false) }
             var warmingComm by remember { mutableStateOf(false) }
             var clearingComm by remember { mutableStateOf(false) }
+            var commNote by remember { mutableStateOf<String?>(null) }
             var isAdminUser by remember { mutableStateOf(false) }
             LaunchedEffect(api) {
                 (api.fetchCommercialsConfig() as? MusicApiResult.Success)?.let {
@@ -297,7 +298,7 @@ fun SettingsScreen(
                 subtitle = "Shared broadcast commercial breaks built directly into the Live Guide clock so every viewer stays 100% in sync.",
             ) {
                 val adminSuffix = if (isAdminUser) "" else " Managed by server admin."
-                val statusHint = when {
+                val statusHint = commNote ?: when {
                     commStatus?.warming == true || warmingComm -> {
                         val got = commStatus?.totalCount ?: 0
                         if (got > 0) "Fetching retro spots from Archive.org… $got ready so far."
@@ -398,9 +399,16 @@ fun SettingsScreen(
                                     onClick = {
                                         if (warmingComm) return@OutlinedButton
                                         warmingComm = true
+                                        commNote = null
                                         scope.launch {
-                                            (api.warmCommercials(commConfig?.era ?: "mix") as? MusicApiResult.Success)?.let {
-                                                commStatus = it.data
+                                            when (val res = api.warmCommercials(commConfig?.era ?: "mix")) {
+                                                is MusicApiResult.Success -> {
+                                                    commStatus = res.data
+                                                    if (res.data.started == false && !res.data.warming) {
+                                                        commNote = "Your commercial space is full: ${res.data.totalCount} spots. Clear it to fetch a fresh set."
+                                                    }
+                                                }
+                                                else -> commNote = "Couldn't reach the server. Try again in a moment."
                                             }
                                             warmingComm = false
                                         }

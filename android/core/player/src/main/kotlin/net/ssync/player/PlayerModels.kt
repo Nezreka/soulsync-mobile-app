@@ -1205,6 +1205,8 @@ data class CommercialsStatus(
     val maxCacheMb: Int = 500,
     val warming: Boolean = false,
     val error: String? = null,
+    // the fetch button's answer: false = nothing to fetch, the cache is full
+    val started: Boolean? = null,
 )
 
 @Serializable
