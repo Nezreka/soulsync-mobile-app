@@ -19,10 +19,10 @@ class PlayerArtwork(baseUrl: String) {
     fun episodeStill(id: Int, width: Int = 500): String =
         "$base/api/video/poster/episode/$id?w=$width"
 
-    fun movieBackdrop(id: Int, width: Int = 1280): String =
+    fun movieBackdrop(id: Int, width: Int = 780): String =
         "$base/api/video/backdrop/movie/$id?w=$width"
 
-    fun showBackdrop(id: Int, width: Int = 1280): String =
+    fun showBackdrop(id: Int, width: Int = 780): String =
         "$base/api/video/backdrop/show/$id?w=$width"
 
     fun albumArtwork(albumId: Int?): String? =

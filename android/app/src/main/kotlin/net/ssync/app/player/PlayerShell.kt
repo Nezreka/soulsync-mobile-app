@@ -507,6 +507,7 @@ fun PlayerShell(
                     activeItem = coordinator.activeItem,
                     currentPositionMs = coordinator.positionMs,
                     upcoming = coordinator.videoQueue.drop(1),
+                    onPlayNext = { coordinator.playNextVideo() },
                     onCastStarted = {
                         if (coordinator.showVideoOverlay || coordinator.isVideoMinimized) {
                             coordinator.hideLocalVideoForCast()

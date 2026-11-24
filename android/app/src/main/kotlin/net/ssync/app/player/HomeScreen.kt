@@ -48,6 +48,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -404,7 +405,11 @@ fun HomeScreen(
     }
 
     val listState = rememberLazyListState()
-    val scrolled = listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 24
+    val scrolled by remember {
+        derivedStateOf {
+            listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 24
+        }
+    }
     LaunchedEffect(scrolled) {
         onScrolledChanged(scrolled)
     }
@@ -503,7 +508,9 @@ fun HomeScreen(
                 val hero = billboardSlides[billboardIndex % billboardSlides.size]
                 val saved = watchlist.any { it.itemType == hero.kind && it.itemId == hero.id.toString() }
                 val logoKey = hero.tmdbId?.let { "${hero.kind}:$it" }
-                val allowHeroVideo = coordinator.activeItem == null && !scrolled && hero.previewStreamUrl != null
+                // Use hardware-cached backdrop artwork on mobile Home instead of spinning up an
+                // ExoPlayer TextureView decoding full-bitrate movie files inside the LazyColumn.
+                val allowHeroVideo = false
                 Box {
                     HeroSpotlight(
                         title = hero.title,

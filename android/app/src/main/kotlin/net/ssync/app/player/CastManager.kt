@@ -714,6 +714,7 @@ fun CastDeviceSheet(
     activeItem: ActivePlayable?,
     currentPositionMs: Long,
     upcoming: List<ActivePlayable> = emptyList(),
+    onPlayNext: (() -> Unit)? = null,
     onCastStarted: () -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -970,6 +971,68 @@ fun CastDeviceSheet(
                             fontWeight = FontWeight.SemiBold,
                             modifier = Modifier.width(34.dp),
                         )
+                    }
+
+                    // Truthful "Up Next" card with live countdown in the final 20 seconds (zero receiver loop bug!)
+                    val nextUp = upcoming.firstOrNull()
+                    if (nextUp != null) {
+                        val remSec = if (castController.remoteDurationMs > 0L) {
+                            ((castController.remoteDurationMs - castController.remotePositionMs) / 1000L).coerceAtLeast(0L)
+                        } else -1L
+                        val inFinalCountdown = remSec in 1L..20L
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(
+                                    if (inFinalCountdown) SoulSyncColors.Accent.copy(alpha = 0.16f)
+                                    else Color.White.copy(alpha = 0.05f),
+                                )
+                                .border(
+                                    1.dp,
+                                    if (inFinalCountdown) SoulSyncColors.Accent else SoulSyncColors.Line,
+                                    RoundedCornerShape(14.dp),
+                                )
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = if (inFinalCountdown) "UP NEXT IN ${remSec}s" else "UP NEXT",
+                                    color = if (inFinalCountdown) SoulSyncColors.AccentLight else SoulSyncColors.TextSecondary,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    letterSpacing = 0.7.sp,
+                                )
+                                Text(
+                                    text = nextUp.title,
+                                    color = Color.White,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                            if (onPlayNext != null) {
+                                Button(
+                                    onClick = onPlayNext,
+                                    shape = CircleShape,
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = if (inFinalCountdown) SoulSyncColors.Accent else Color.White.copy(alpha = 0.14f),
+                                        contentColor = if (inFinalCountdown) SoulSyncColors.OnAccent else Color.White,
+                                    ),
+                                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                                    modifier = Modifier.height(32.dp),
+                                ) {
+                                    Text(
+                                        text = if (inFinalCountdown) "Play Now" else "Skip",
+                                        fontSize = 11.5.sp,
+                                        fontWeight = FontWeight.Bold,
+                                    )
+                                }
+                            }
+                        }
                     }
 
                     OutlinedButton(

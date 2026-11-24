@@ -69,6 +69,7 @@ fun createPinnedImageLoader(
                 .build()
         }
         .respectCacheHeaders(false)
+        .allowRgb565(true)
         .crossfade(120)
         .build()
 }

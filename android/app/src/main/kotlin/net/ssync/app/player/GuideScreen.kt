@@ -47,6 +47,8 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -1267,6 +1269,7 @@ private object GuideWarmCache {
     var studioCollections: List<StudioCollection> = emptyList()
     var favoritesList: List<String> = emptyList()
     var allChannels: List<EpgChannel> = emptyList()
+    var windowStartSec: Long = 0L
     var builtAtSec: Long = 0L
     var hasLoadedOnce: Boolean = false
 }
@@ -1281,7 +1284,24 @@ fun GuideScreen(
     onNavigate: (PlayerDestination) -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
-    val warmHit = GuideWarmCache.hasLoadedOnce && GuideWarmCache.baseUrl == api.baseUrl && GuideWarmCache.allChannels.isNotEmpty()
+    var nowSec by remember { mutableLongStateOf(System.currentTimeMillis() / 1000L) }
+    var offsetHours by remember { mutableIntStateOf(0) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(10_000L)
+            nowSec = System.currentTimeMillis() / 1000L
+        }
+    }
+    val windowMinutes = 240
+    val windowStartSec = ((nowSec - 1800L) / 1800L) * 1800L + offsetHours * 3600L
+    val windowEndSec = windowStartSec + windowMinutes * 60L
+    val nowVisible = nowSec in windowStartSec until windowEndSec
+    val nowOffsetMin = ((nowSec - windowStartSec).coerceAtLeast(0L) / 60f)
+
+    val warmHit = GuideWarmCache.hasLoadedOnce &&
+        GuideWarmCache.baseUrl == api.baseUrl &&
+        GuideWarmCache.allChannels.isNotEmpty() &&
+        GuideWarmCache.windowStartSec == windowStartSec
     val homeSeedHit = !warmHit && HomeWarmCache.hasLoadedOnce && HomeWarmCache.baseUrl == api.baseUrl &&
         (HomeWarmCache.catalog.movies.isNotEmpty() || HomeWarmCache.catalog.shows.isNotEmpty())
 
@@ -1333,12 +1353,6 @@ fun GuideScreen(
         }
     }
 
-    val nowSec = remember { System.currentTimeMillis() / 1000L }
-    val windowStartSec = remember(nowSec) { ((nowSec - 1800L) / 1800L) * 1800L }
-    val windowMinutes = 240
-    val windowEndSec = windowStartSec + windowMinutes * 60L
-    val nowOffsetMin = ((nowSec - windowStartSec).coerceAtLeast(0L) / 60f)
-
     fun saveGuideWarmCache(channels: List<EpgChannel>) {
         GuideWarmCache.baseUrl = api.baseUrl
         GuideWarmCache.catalog = catalog
@@ -1350,8 +1364,34 @@ fun GuideScreen(
         GuideWarmCache.studioCollections = studioCollections
         GuideWarmCache.favoritesList = favoritesList
         GuideWarmCache.allChannels = channels
+        GuideWarmCache.windowStartSec = windowStartSec
         GuideWarmCache.builtAtSec = nowSec
         GuideWarmCache.hasLoadedOnce = channels.isNotEmpty()
+    }
+
+    // Rebuild channel program slices whenever the user browses Earlier/Later or a new 30-min boundary ticks
+    LaunchedEffect(windowStartSec) {
+        if (catalog.movies.isNotEmpty() || catalog.shows.isNotEmpty()) {
+            val rebuilt = withContext(Dispatchers.Default) {
+                buildDesktopParityChannels(
+                    catalog = catalog,
+                    musicPoolSongs = musicPoolSongs,
+                    playlists = playlistDetails,
+                    musicChannels = musicChannels,
+                    savedChannels = savedChannels,
+                    lineup = lineup,
+                    studioCollections = studioCollections,
+                    api = api,
+                    windowStartSec = windowStartSec,
+                    windowEndSec = windowEndSec,
+                )
+            }
+            if (rebuilt.isNotEmpty()) {
+                allChannels = rebuilt
+                saveGuideWarmCache(rebuilt)
+                isLoading = false
+            }
+        }
     }
 
     LaunchedEffect(api) {
@@ -1851,7 +1891,54 @@ fun GuideScreen(
             val totalGridWidth = PX_PER_MIN * windowMinutes
             val nowNeedleX = PX_PER_MIN * nowOffsetMin
 
-            // Time Ruler Header Row
+            // Time-Browse Bar (‹ Earlier · Now · Later ›) matching Desktop Guide 1:1
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .background(Color.White.copy(alpha = 0.06f))
+                        .border(1.dp, SoulSyncColors.Line, CircleShape)
+                        .clickable(enabled = offsetHours > -24) { offsetHours = (offsetHours - 2).coerceAtLeast(-24) }
+                        .padding(horizontal = 10.dp, vertical = 4.dp),
+                ) {
+                    Text("‹ Earlier", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                }
+                Box(
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .background(if (offsetHours == 0) SoulSyncColors.Accent.copy(alpha = 0.24f) else Color.White.copy(alpha = 0.06f))
+                        .border(1.dp, if (offsetHours == 0) SoulSyncColors.Accent else SoulSyncColors.Line, CircleShape)
+                        .clickable { offsetHours = 0 }
+                        .padding(horizontal = 11.dp, vertical = 4.dp),
+                ) {
+                    Text("Now", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
+                Box(
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .background(Color.White.copy(alpha = 0.06f))
+                        .border(1.dp, SoulSyncColors.Line, CircleShape)
+                        .clickable(enabled = offsetHours < 24) { offsetHours = (offsetHours + 2).coerceAtMost(24) }
+                        .padding(horizontal = 10.dp, vertical = 4.dp),
+                ) {
+                    Text("Later ›", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                }
+                Spacer(modifier = Modifier.weight(1f))
+                Text(
+                    text = timeFmt.format(Date(nowSec * 1000L)),
+                    color = SoulSyncColors.AccentLight,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+
+            // Time Ruler Header Row with live NOW clock pill
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1868,29 +1955,49 @@ fun GuideScreen(
                 ) {
                     Text("CHANNELS", color = SoulSyncColors.TextSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.8.sp)
                 }
-                Row(
+                Box(
                     modifier = Modifier
                         .weight(1f)
                         .horizontalScroll(hScroll)
                         .height(32.dp),
-                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    val slots = windowMinutes / 30
-                    for (i in 0 until slots) {
-                        val slotTime = windowStartSec + i * 1800L
-                        Box(
-                            modifier = Modifier
-                                .width(PX_PER_MIN * 30)
-                                .fillMaxHeight()
-                                .padding(start = 6.dp),
-                            contentAlignment = Alignment.CenterStart,
-                        ) {
-                            Text(
-                                text = timeFmt.format(Date(slotTime * 1000L)),
-                                color = if (i == 1) SoulSyncColors.AccentLight else SoulSyncColors.TextSecondary,
-                                fontSize = 11.sp,
-                                fontWeight = if (i == 1) FontWeight.Bold else FontWeight.Medium,
-                            )
+                    Box(modifier = Modifier.width(totalGridWidth).fillMaxHeight()) {
+                        val slots = windowMinutes / 30
+                        for (i in 0 until slots) {
+                            val slotTime = windowStartSec + i * 1800L
+                            val slotX = PX_PER_MIN * (i * 30f)
+                            Box(
+                                modifier = Modifier
+                                    .offset(x = slotX)
+                                    .width(PX_PER_MIN * 30)
+                                    .fillMaxHeight()
+                                    .padding(start = 6.dp),
+                                contentAlignment = Alignment.CenterStart,
+                            ) {
+                                Text(
+                                    text = timeFmt.format(Date(slotTime * 1000L)),
+                                    color = SoulSyncColors.TextSecondary,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Medium,
+                                )
+                            }
+                        }
+                        if (nowVisible) {
+                            Box(
+                                modifier = Modifier
+                                    .offset(x = (nowNeedleX - 28.dp).coerceAtLeast(0.dp))
+                                    .align(Alignment.CenterStart)
+                                    .clip(CircleShape)
+                                    .background(SoulSyncColors.Accent)
+                                    .padding(horizontal = 7.dp, vertical = 2.dp),
+                            ) {
+                                Text(
+                                    text = timeFmt.format(Date(nowSec * 1000L)),
+                                    color = SoulSyncColors.OnAccent,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                )
+                            }
                         }
                     }
                 }
@@ -1981,20 +2088,38 @@ fun GuideScreen(
                                     .horizontalScroll(hScroll),
                             ) {
                                 Box(modifier = Modifier.width(totalGridWidth).fillMaxHeight()) {
+                                    // Subtle 30-minute vertical gridlines aligned with the time ruler
+                                    val slotCount = windowMinutes / 30
+                                    for (i in 1 until slotCount) {
+                                        Box(
+                                            modifier = Modifier
+                                                .offset(x = PX_PER_MIN * (i * 30f))
+                                                .width(1.dp)
+                                                .fillMaxHeight()
+                                                .background(Color.White.copy(alpha = 0.05f)),
+                                        )
+                                    }
+
                                     ch.programs.forEach { prog ->
                                         val visStart = prog.startEpochSec.coerceAtLeast(windowStartSec)
                                         val visEnd = prog.endEpochSec.coerceAtMost(windowEndSec)
                                         if (visEnd > visStart) {
                                             val startX = PX_PER_MIN * ((visStart - windowStartSec) / 60f)
-                                            val blockW = (PX_PER_MIN * ((visEnd - visStart) / 60f)).coerceAtLeast(48.dp)
+                                            // Exact truthful block width (never inflated to overlap the next program!)
+                                            val blockW = (PX_PER_MIN * ((visEnd - visStart) / 60f)).coerceAtLeast(4.dp)
+                                            val clippedLeft = prog.startEpochSec < windowStartSec
                                             val isNow = nowSec in prog.startEpochSec until prog.endEpochSec
+                                            val visibleSpan = (visEnd - visStart).coerceAtLeast(1L).toFloat()
+                                            val liveFrac = if (isNow) {
+                                                ((nowSec - visStart).toFloat() / visibleSpan).coerceIn(0f, 1f)
+                                            } else 0f
                                             val isPicked = picked?.second == prog && picked?.first?.id == ch.id
                                             Box(
                                                 modifier = Modifier
                                                     .offset(x = startX)
                                                     .width(blockW)
                                                     .fillMaxHeight()
-                                                    .padding(horizontal = 2.dp, vertical = 4.dp)
+                                                    .padding(horizontal = 1.5.dp, vertical = 4.dp)
                                                     .clip(RoundedCornerShape(8.dp))
                                                     .background(
                                                         when {
@@ -2012,24 +2137,33 @@ fun GuideScreen(
                                                         },
                                                         RoundedCornerShape(8.dp),
                                                     )
-                                                    .clickable { picked = ch to prog }
-                                                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                                                    .clickable { picked = ch to prog },
                                             ) {
-                                                Column(
-                                                    modifier = Modifier.fillMaxSize(),
-                                                    verticalArrangement = Arrangement.Center,
-                                                ) {
-                                                    Text(
-                                                        text = prog.title,
-                                                        color = if (isNow || isPicked) Color.White else SoulSyncColors.TextSoft,
-                                                        fontSize = 12.sp,
-                                                        fontWeight = if (isNow || isPicked) FontWeight.Bold else FontWeight.Medium,
-                                                        maxLines = 1,
-                                                        overflow = TextOverflow.Ellipsis,
-                                                    )
-                                                    if (prog.subtitle.isNotBlank()) {
+                                                if (blockW >= 26.dp) {
+                                                    Column(
+                                                        modifier = Modifier
+                                                            .fillMaxSize()
+                                                            .padding(horizontal = 7.dp, vertical = 6.dp),
+                                                        verticalArrangement = Arrangement.Center,
+                                                    ) {
                                                         Text(
-                                                            text = prog.subtitle,
+                                                            text = if (clippedLeft) "◀ ${prog.title}" else prog.title,
+                                                            color = if (isNow || isPicked) Color.White else SoulSyncColors.TextSoft,
+                                                            fontSize = 12.sp,
+                                                            fontWeight = if (isNow || isPicked) FontWeight.Bold else FontWeight.Medium,
+                                                            maxLines = 1,
+                                                            overflow = TextOverflow.Ellipsis,
+                                                        )
+                                                        val subLine = buildString {
+                                                            if (prog.subtitle.isNotBlank()) {
+                                                                append(prog.subtitle)
+                                                                append(" · ")
+                                                            }
+                                                            if (clippedLeft) append("Started ")
+                                                            append(timeFmt.format(Date(prog.startEpochSec * 1000L)))
+                                                        }
+                                                        Text(
+                                                            text = subLine,
                                                             color = SoulSyncColors.TextSecondary,
                                                             fontSize = 10.sp,
                                                             maxLines = 1,
@@ -2037,17 +2171,28 @@ fun GuideScreen(
                                                         )
                                                     }
                                                 }
+                                                if (isNow && liveFrac > 0f) {
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .align(Alignment.BottomStart)
+                                                            .fillMaxWidth(liveFrac)
+                                                            .height(2.5.dp)
+                                                            .background(SoulSyncColors.Accent),
+                                                    )
+                                                }
                                             }
                                         }
                                     }
 
-                                    Box(
-                                        modifier = Modifier
-                                            .offset(x = nowNeedleX)
-                                            .width(2.dp)
-                                            .fillMaxHeight()
-                                            .background(SoulSyncColors.AccentLight),
-                                    )
+                                    if (nowVisible) {
+                                        Box(
+                                            modifier = Modifier
+                                                .offset(x = nowNeedleX)
+                                                .width(2.dp)
+                                                .fillMaxHeight()
+                                                .background(SoulSyncColors.AccentLight),
+                                        )
+                                    }
 
                                     if (!ch.isMusic && chViewers.isNotEmpty()) {
                                         chViewers.forEach { sess ->
