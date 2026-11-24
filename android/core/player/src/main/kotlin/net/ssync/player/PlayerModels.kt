@@ -1190,6 +1190,34 @@ internal data class PlayerIssueEnvelope(
     val issue: PlayerIssue? = null,
 )
 
+/**
+ * Something new and when it airs on the guide (GET /api/player/guide/premieres).
+ * The server gives the slot, the item and the channels it could air on, best
+ * first, so every device airs it in the same place.
+ */
+@Serializable
+data class GuidePremiere(
+    val key: String = "",
+    val kind: String = "episode",
+    val id: Int = 0,
+    @SerialName("show_id")
+    val showId: Int? = null,
+    val title: String = "",
+    val subtitle: String? = null,
+    val seconds: Int = 0,
+    /** when it airs, epoch milliseconds */
+    val at: Long = 0L,
+    val homes: List<String> = emptyList(),
+    @SerialName("has_poster")
+    val hasPoster: Boolean = false,
+)
+
+@Serializable
+internal data class GuidePremieresEnvelope(
+    val success: Boolean = false,
+    val premieres: List<GuidePremiere> = emptyList(),
+)
+
 @Serializable
 data class CommercialsStatus(
     val ready: Boolean = false,
@@ -1370,6 +1398,7 @@ data class HomeLayout(
             LayoutRow("continue", "wide", true),
             LayoutRow("new-episodes", "wide", true),
             LayoutRow("live-guide", "wide", true),
+            LayoutRow("premieres", "wide", true),
             LayoutRow("seasonal", "standard", true),
             LayoutRow("collections", "standard", true),
             LayoutRow("top-rated", "ranked", true),

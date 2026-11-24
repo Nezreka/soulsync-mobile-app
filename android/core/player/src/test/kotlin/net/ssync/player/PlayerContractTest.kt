@@ -87,6 +87,22 @@ class PlayerContractTest {
     }
 
     @Test
+    fun premieresAreReadAsTheServerSendsThem() = runTest {
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"success":true,"now":1,"premieres":[{"key":"episode:7","kind":"episode","id":7,"show_id":3,"title":"Silo","subtitle":"S2 E1","seconds":2700,"at":1795500000000,"homes":["network-apple-tv","type-tv"],"has_poster":true},{"key":"movie:9","kind":"movie","id":9,"show_id":null,"title":"Heat","subtitle":null,"seconds":10200,"at":1795503600000,"homes":["type-movies"],"has_poster":false}]}""",
+            ),
+        )
+        val res = client.fetchGuidePremieres() as MusicApiResult.Success
+        assertEquals(listOf("episode:7", "movie:9"), res.data.map { it.key })
+        assertEquals(3, res.data[0].showId)
+        assertEquals(1795500000000L, res.data[0].at)
+        assertEquals(listOf("network-apple-tv", "type-tv"), res.data[0].homes)
+        assertNull(res.data[1].subtitle)
+        assertEquals("/api/player/guide/premieres", server.takeRequest().path)
+    }
+
+    @Test
     fun scannerWrittenNumbersDoNotFailTheList() {
         // sqlite keeps what a scanner wrote: a float in an INTEGER column, a
         // bitrate as "320kbps". one such row failed the whole album

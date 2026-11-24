@@ -79,6 +79,7 @@ import net.ssync.player.CatalogShow
 import net.ssync.player.CatalogShowEpisode
 import net.ssync.player.CatalogYoutube
 import net.ssync.player.CommercialClip
+import net.ssync.player.GuidePremiere
 import net.ssync.player.CommercialsConfig
 import net.ssync.player.GuideChannelSpec
 import net.ssync.player.GuideLineupEntry
@@ -137,7 +138,55 @@ private data class EpgProgram(
     val artworkUrl: String?,
     val startEpochSec: Long,
     val endEpochSec: Long,
+    /** something new, airing in the slot the server gave it */
+    val premiere: Boolean = false,
 )
+
+/** a premiere on one channel: the item and when it airs (epoch ms) */
+private data class PremiereSlot(val item: PoolItem, val atMs: Long)
+
+/**
+ * each channel's premieres, by channel id, the web guide's premieresFor: the
+ * server gives the slot, the item and the channels it could air on, best
+ * first, and this puts each on the first of those the guide has. the home is
+ * picked among every video channel, hidden ones too, so a profile that hid a
+ * channel doesn't move its premiere onto one everyone else also watches.
+ */
+private fun premieresByChannel(
+    premieres: List<GuidePremiere>,
+    channels: List<RawChannel>,
+    api: PlayerApiClient,
+): Map<String, List<PremiereSlot>> {
+    if (premieres.isEmpty()) return emptyMap()
+    val hosts = channels.filter { !it.isMusic && !it.ordered }.map { it.id }.toSet()
+    val out = LinkedHashMap<String, MutableList<PremiereSlot>>()
+    for (p in premieres) {
+        val home = p.homes.firstOrNull { it in hosts } ?: continue
+        if (p.seconds <= 0) continue
+        val show = p.kind == "episode"
+        val owner = if (show) (p.showId ?: p.id) else p.id
+        val poster = when {
+            !p.hasPoster -> null
+            show -> api.artwork.showPoster(owner)
+            else -> api.artwork.moviePoster(owner)
+        }
+        out.getOrPut(home) { mutableListOf() } += PremiereSlot(
+            item = PoolItem(
+                key = p.key,
+                itemType = if (show) "episode" else "movie",
+                itemId = p.id.toString(),
+                detailId = owner,
+                title = p.title,
+                subtitle = p.subtitle.orEmpty(),
+                seconds = p.seconds,
+                posterUrl = poster,
+                backdropUrl = poster,
+            ),
+            atMs = p.at,
+        )
+    }
+    return out
+}
 
 private data class EpgChannel(
     val id: String,
@@ -399,6 +448,7 @@ private fun scheduleVideoPrograms(
     windowStartSec: Long,
     windowEndSec: Long,
     commercialsConfig: CommercialsConfig? = null,
+    premieres: List<PremiereSlot> = emptyList(),
 ): List<EpgProgram> {
     val items = pool
         .filter { it.seconds >= GUIDE_MIN_SECONDS }
@@ -445,6 +495,30 @@ private fun scheduleVideoPrograms(
         var cursor = dayStartMs
         var contentSinceBreakSec = 0
         var lastBreakIds = emptySet<String>()
+        // premieres hold their slot: what's on before one is cut at it, and two
+        // at the same time air back to back (schedule.ts, the same lines)
+        val dayPremieres = premieres
+            .filter { it.atMs >= dayStartMs && it.atMs < dayEndMs && it.item.seconds >= GUIDE_MIN_SECONDS }
+            .sortedBy { it.atMs }
+        var nextPremiere = 0
+        fun premiereNow() {
+            while (nextPremiere < dayPremieres.size && dayPremieres[nextPremiere].atMs <= cursor) {
+                val p = dayPremieres[nextPremiere++]
+                val seconds = minOf(p.item.seconds, GUIDE_MAX_SECONDS)
+                out += EpgProgram(
+                    itemType = p.item.itemType,
+                    itemId = p.item.itemId,
+                    detailId = p.item.detailId,
+                    title = p.item.title,
+                    subtitle = p.item.subtitle,
+                    artworkUrl = p.item.backdropUrl ?: p.item.posterUrl,
+                    startEpochSec = cursor / 1000L,
+                    endEpochSec = (cursor + seconds.toLong() * 1000L) / 1000L,
+                    premiere = true,
+                )
+                cursor += seconds.toLong() * 1000L
+            }
+        }
 
         fun placeCommercialBreak(afterItem: PoolItem) {
             val comm = commercialsConfig ?: return
@@ -507,8 +581,11 @@ private fun scheduleVideoPrograms(
         }
 
         fun place(item: PoolItem) {
+            premiereNow()
             if (cursor >= dayEndMs) return
-            val end = cursor + item.seconds.toLong() * 1000L
+            var end = cursor + item.seconds.toLong() * 1000L
+            val due = dayPremieres.getOrNull(nextPremiere)
+            if (due != null && due.atMs < end) end = due.atMs // cut at the premiere
             if (end - cursor >= GUIDE_MIN_SECONDS * 1000L) {
                 out += EpgProgram(
                     itemType = item.itemType,
@@ -530,6 +607,7 @@ private fun scheduleVideoPrograms(
                     contentSinceBreakSec = 0
                 }
             }
+            premiereNow()
         }
 
         if (ordered) {
@@ -721,6 +799,8 @@ private fun buildDesktopParityChannels(
     windowStartSec: Long,
     windowEndSec: Long,
     commercialsConfig: CommercialsConfig? = null,
+    // what's new and when it airs, from the server: the same on every device
+    premieres: List<GuidePremiere> = if (GuideWarmCache.baseUrl == api.baseUrl) GuideWarmCache.premieres else emptyList(),
 ): List<EpgChannel> {
     val raw = mutableListOf<RawChannel>()
     val nowMs = System.currentTimeMillis()
@@ -1114,6 +1194,8 @@ private fun buildDesktopParityChannels(
             c.copy(name = entry?.name?.takeIf { it.isNotBlank() } ?: c.name)
         }
 
+    val premiereSlots = premieresByChannel(premieres, raw.distinctBy { it.id }, api)
+
     val numbered = lined.withIndex()
         .sortedWith(compareBy<IndexedValue<RawChannel>> { it.value.kind.ordinal }.thenBy { it.index })
         .mapIndexed { idx, (_, c) ->
@@ -1122,7 +1204,10 @@ private fun buildDesktopParityChannels(
             val progs = if (c.isMusic) {
                 scheduleMusicBlocks(c.id, c.name, c.blurb, c.pool, windowStartSec, windowEndSec)
             } else {
-                scheduleVideoPrograms(c.id, c.pool, c.ordered, windowStartSec, windowEndSec, commercialsConfig)
+                scheduleVideoPrograms(
+                    c.id, c.pool, c.ordered, windowStartSec, windowEndSec, commercialsConfig,
+                    premieres = if (c.ordered) emptyList() else premiereSlots[c.id].orEmpty(),
+                )
             }
             EpgChannel(
                 id = c.id,
@@ -1214,6 +1299,79 @@ private fun buildSpecBlurb(spec: GuideChannelSpec, showTitle: String?): String {
 }
 
 // ── Home Live TV Snapshot Helper (exact same deterministic schedule as Guide) ──
+
+/** a premiere still to come (or on now), for Home's "Premieres tonight" row */
+internal data class HomePremiere(
+    val key: String,
+    val title: String,
+    val subtitle: String,
+    val artworkUrl: String?,
+)
+
+/** "Tonight 8:00 PM", "On now", "Tomorrow 9:00 PM" (the web player's premiereWhen) */
+internal fun premiereWhen(atMs: Long, nowMs: Long): String {
+    if (atMs <= nowMs) return "On now"
+    val at = java.util.Calendar.getInstance().apply { timeInMillis = atMs }
+    val now = java.util.Calendar.getInstance().apply { timeInMillis = nowMs }
+    val time = java.text.SimpleDateFormat("h:mm a", Locale.getDefault()).format(java.util.Date(atMs))
+    val sameDay = at.get(java.util.Calendar.YEAR) == now.get(java.util.Calendar.YEAR) &&
+        at.get(java.util.Calendar.DAY_OF_YEAR) == now.get(java.util.Calendar.DAY_OF_YEAR)
+    return when {
+        sameDay && at.get(java.util.Calendar.HOUR_OF_DAY) >= 17 -> "Tonight $time"
+        sameDay -> "Today $time"
+        else -> "Tomorrow $time"
+    }
+}
+
+/**
+ * Asks the server what's new and when it airs, keeps it for every channel
+ * build (GuideWarmCache), and returns the ones on now or airing in the next
+ * day with the channel each airs on. Call before building Home's live row so
+ * that row airs them too.
+ */
+internal suspend fun loadHomePremieres(
+    catalog: VideoCatalog,
+    studioCollections: List<StudioCollection>,
+    api: PlayerApiClient,
+    nowMs: Long = System.currentTimeMillis(),
+): List<HomePremiere> {
+    val list = (api.fetchGuidePremieres() as? MusicApiResult.Success)?.data ?: return emptyList()
+    GuideWarmCache.baseUrl = api.baseUrl
+    GuideWarmCache.premieres = list
+    if (list.isEmpty() || (catalog.movies.isEmpty() && catalog.shows.isEmpty())) return emptyList()
+    val nowSec = nowMs / 1000L
+    val channels = buildDesktopParityChannels(
+        catalog = catalog,
+        musicPoolSongs = emptyList(),
+        playlists = emptyList(),
+        musicChannels = emptyList(),
+        savedChannels = emptyList(),
+        lineup = emptyList(),
+        studioCollections = studioCollections,
+        api = api,
+        windowStartSec = nowSec,
+        windowEndSec = nowSec + 60L,
+        premieres = emptyList(),
+    ).filter { !it.isMusic }.associateBy { it.id }
+    return list
+        .filter { it.seconds > 0 && it.at + it.seconds * 1000L > nowMs && it.at <= nowMs + 24L * 3600_000L }
+        .sortedBy { it.at }
+        .mapNotNull { p ->
+            val ch = p.homes.firstNotNullOfOrNull { channels[it] } ?: return@mapNotNull null
+            val show = p.kind == "episode"
+            val owner = if (show) (p.showId ?: p.id) else p.id
+            HomePremiere(
+                key = p.key,
+                title = if (show && !p.subtitle.isNullOrBlank()) "${p.title} · ${p.subtitle}" else p.title,
+                subtitle = "${premiereWhen(p.at, nowMs)} · CH ${ch.number} ${ch.name}",
+                artworkUrl = when {
+                    !p.hasPoster -> null
+                    show -> api.artwork.showPoster(owner)
+                    else -> api.artwork.moviePoster(owner)
+                },
+            )
+        }
+}
 
 internal data class HomeLiveHighlight(
     val channelId: String,
@@ -1377,6 +1535,7 @@ private object GuideWarmCache {
     var studioCollections: List<StudioCollection> = emptyList()
     var favoritesList: List<String> = emptyList()
     var commercialsConfig: CommercialsConfig? = null
+    var premieres: List<GuidePremiere> = emptyList()
     var allChannels: List<EpgChannel> = emptyList()
     var windowStartSec: Long = 0L
     var builtAtSec: Long = 0L
@@ -1497,6 +1656,12 @@ fun GuideScreen(
     // Rebuild channel program slices whenever the user browses Earlier/Later or a new 30-min boundary ticks
     LaunchedEffect(windowStartSec) {
         if (catalog.movies.isNotEmpty() || catalog.shows.isNotEmpty()) {
+            // each half hour: what landed since airs tonight. the server gives a
+            // premiere its slot at least half an hour ahead, so this is in time
+            (api.fetchGuidePremieres() as? MusicApiResult.Success)?.let {
+                GuideWarmCache.baseUrl = api.baseUrl
+                GuideWarmCache.premieres = it.data
+            }
             val rebuilt = withContext(Dispatchers.Default) {
                 buildDesktopParityChannels(
                     catalog = catalog,
@@ -1557,6 +1722,7 @@ fun GuideScreen(
             val fDef = async { api.fetchGuideFavoritesList() }
             val cDef = async { api.fetchCollections() }
             val commDef = async { api.fetchCommercialsConfig(forGuide = true) }
+            val premDef = async { api.fetchGuidePremieres() }
 
             val v = vDef.await()
             val s = sDef.await()
@@ -1574,6 +1740,11 @@ fun GuideScreen(
             (f as? MusicApiResult.Success)?.let { favoritesList = it.data }
             (c as? MusicApiResult.Success)?.let { studioCollections = it.data }
             (comm as? MusicApiResult.Success)?.let { commercialsConfig = it.data }
+            // read by every channel build from here on (buildDesktopParityChannels)
+            (premDef.await() as? MusicApiResult.Success)?.let {
+                GuideWarmCache.baseUrl = api.baseUrl
+                GuideWarmCache.premieres = it.data
+            }
             false
         }
         if (revoked) {
@@ -2292,7 +2463,8 @@ fun GuideScreen(
                                                         verticalArrangement = Arrangement.Center,
                                                     ) {
                                                         Text(
-                                                            text = if (clippedLeft) "◀ ${prog.title}" else prog.title,
+                                                            text = (if (prog.premiere) "NEW · " else "") +
+                                                                (if (clippedLeft) "◀ ${prog.title}" else prog.title),
                                                             color = if (isNow || isPicked) Color.White else SoulSyncColors.TextSoft,
                                                             fontSize = 12.sp,
                                                             fontWeight = if (isNow || isPicked) FontWeight.Bold else FontWeight.Medium,

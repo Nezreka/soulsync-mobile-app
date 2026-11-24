@@ -113,6 +113,12 @@ class PlayerApiClient(
             VideoCatalogDecoder.decode(json.parseToJsonElement(body).jsonObject)
         }
 
+    /** what's new and when it airs: the same slots and channels on every device */
+    suspend fun fetchGuidePremieres(): MusicApiResult<List<GuidePremiere>> =
+        getJson("$base/api/player/guide/premieres") { body ->
+            json.decodeFromString<GuidePremieresEnvelope>(body).premieres
+        }
+
     // ── Movies & TV Detail ───────────────────────────────────────────────────
 
     suspend fun fetchMovieDetail(movieId: Int): MusicApiResult<MovieDetail> =

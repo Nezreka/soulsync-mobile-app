@@ -433,8 +433,13 @@ fun HomeScreen(
     var liveGuideHighlights by remember(api.baseUrl) {
         mutableStateOf(if (warmHit) HomeWarmCache.liveGuideHighlights else emptyList())
     }
+    var homePremieres by remember(api.baseUrl) { mutableStateOf<List<HomePremiere>>(emptyList()) }
     LaunchedEffect(catalog, studioCollections, api) {
         if (catalog.movies.isNotEmpty() || catalog.shows.isNotEmpty()) {
+            // what's new and when it airs, first: the live row below airs premieres too
+            homePremieres = withContext(Dispatchers.Default) {
+                runCatching { loadHomePremieres(catalog, studioCollections, api) }.getOrDefault(emptyList())
+            }
             val built = withContext(Dispatchers.Default) {
                 buildHomeLiveGuideHighlights(
                     catalog = catalog,
@@ -774,6 +779,24 @@ fun HomeScreen(
                                     artworkUrl = ch.artworkUrl,
                                     progress = ch.progressFraction,
                                     onClick = { ch.tune(coordinator) },
+                                )
+                            }
+                        }
+                    }
+                }
+                row.id == "premieres" && homePremieres.isNotEmpty() -> {
+                    item(key = "row-premieres") {
+                        MediaRail(
+                            title = "Premieres Tonight",
+                            actionLabel = "Guide",
+                            onAction = { onNavigate(PlayerDestination.Guide) },
+                        ) {
+                            items(homePremieres, key = { "premiere-${it.key}" }) { p ->
+                                WideMediaCard(
+                                    title = p.title,
+                                    subtitle = "NEW · ${p.subtitle}",
+                                    artworkUrl = p.artworkUrl,
+                                    onClick = { onNavigate(PlayerDestination.Guide) },
                                 )
                             }
                         }
