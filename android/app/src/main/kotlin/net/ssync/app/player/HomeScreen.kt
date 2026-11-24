@@ -247,6 +247,14 @@ fun HomeScreen(
                     HomeWarmCache.books = it.data
                 }
             }
+            // Silently warm Guide favorites & custom channels in background so Favorites appear on frame 1
+            launch {
+                val favs = (api.fetchGuideFavoritesList() as? MusicApiResult.Success)?.data
+                val saved = (api.fetchSavedGuideChannels() as? MusicApiResult.Success)?.data
+                if (favs != null || saved != null) {
+                    seedGuideWarmMeta(api.baseUrl, favorites = favs, saved = saved)
+                }
+            }
         }
     }
 

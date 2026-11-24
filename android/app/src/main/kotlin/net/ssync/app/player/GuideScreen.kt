@@ -1274,6 +1274,18 @@ private object GuideWarmCache {
     var hasLoadedOnce: Boolean = false
 }
 
+internal fun seedGuideWarmMeta(
+    baseUrl: String,
+    favorites: List<String>? = null,
+    saved: List<SavedGuideChannel>? = null,
+) {
+    if (GuideWarmCache.baseUrl != baseUrl) {
+        GuideWarmCache.baseUrl = baseUrl
+    }
+    if (favorites != null) GuideWarmCache.favoritesList = favorites
+    if (saved != null) GuideWarmCache.savedChannels = saved
+}
+
 // ── Guide Screen Composable ──────────────────────────────────────────────────
 
 @Composable
@@ -1317,8 +1329,9 @@ fun GuideScreen(
     var musicPoolSongs by remember(api.baseUrl) { mutableStateOf(if (warmHit) GuideWarmCache.musicPoolSongs else emptyList()) }
     var playlistDetails by remember(api.baseUrl) { mutableStateOf(if (warmHit) GuideWarmCache.playlistDetails else emptyList()) }
     var musicChannels by remember(api.baseUrl) { mutableStateOf(if (warmHit) GuideWarmCache.musicChannels else emptyList()) }
-    var savedChannels by remember(api.baseUrl) { mutableStateOf(if (warmHit) GuideWarmCache.savedChannels else emptyList()) }
-    var lineup by remember(api.baseUrl) { mutableStateOf(if (warmHit) GuideWarmCache.lineup else emptyList()) }
+    val cacheSameHost = GuideWarmCache.baseUrl == api.baseUrl
+    var savedChannels by remember(api.baseUrl) { mutableStateOf(if (cacheSameHost) GuideWarmCache.savedChannels else emptyList()) }
+    var lineup by remember(api.baseUrl) { mutableStateOf(if (cacheSameHost) GuideWarmCache.lineup else emptyList()) }
     var studioCollections by remember(api.baseUrl) {
         mutableStateOf(
             when {
@@ -1328,7 +1341,7 @@ fun GuideScreen(
             },
         )
     }
-    var favoritesList by remember(api.baseUrl) { mutableStateOf(if (warmHit) GuideWarmCache.favoritesList else emptyList()) }
+    var favoritesList by remember(api.baseUrl) { mutableStateOf(if (cacheSameHost) GuideWarmCache.favoritesList else emptyList()) }
     val favorites = remember(favoritesList) { favoritesList.toSet() }
     var viewMode by remember { mutableStateOf(GuideViewMode.GRID) }
     var filter by remember { mutableStateOf(GuideFilter.ALL) }
@@ -2003,7 +2016,19 @@ fun GuideScreen(
                 }
             }
 
+            val gridListState = androidx.compose.foundation.lazy.rememberLazyListState()
+            val favSectionCount = groupedSections.firstOrNull()?.takeIf { it.key == "favorites" }?.channels?.size ?: 0
+            // When Favorites hydrate asynchronously and prepend above the first visible section,
+            // LazyColumn anchors to the old first item and pushes Favorites off-screen above index 0.
+            // Keep Favorites visible at the top whenever the user is still near the top of the grid!
+            LaunchedEffect(favSectionCount, filter) {
+                if (favSectionCount > 0 && gridListState.firstVisibleItemIndex <= favSectionCount + 2) {
+                    gridListState.scrollToItem(0)
+                }
+            }
+
             LazyColumn(
+                state = gridListState,
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(bottom = 28.dp),
             ) {
