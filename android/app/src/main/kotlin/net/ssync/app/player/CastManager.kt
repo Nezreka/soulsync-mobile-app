@@ -156,7 +156,7 @@ class SoulSyncCastController(private val appContext: Context) {
     var onMediaFinished: (() -> Unit)? = null
 
     /** Invoked when Chromecast natively advances to the next queued item on the TV. */
-    var onQueueItemChanged: ((title: String?) -> Unit)? = null
+    var onQueueItemChanged: ((title: String?, key: String?) -> Unit)? = null
 
     private var castContext: CastContext? = null
     private var mediaRouter: MediaRouter? = null
@@ -216,7 +216,8 @@ class SoulSyncCastController(private val appContext: Context) {
                 }
                 val nextDur = status.mediaInfo?.streamDuration ?: 0L
                 if (nextDur > 0L) remoteDurationMs = nextDur
-                onQueueItemChanged?.invoke(nextTitle)
+                val nextKey = runCatching { status.mediaInfo?.customData?.optString("key") }.getOrNull()
+                onQueueItemChanged?.invoke(nextTitle, nextKey?.takeIf { it.isNotBlank() })
             }
         }
 
@@ -425,6 +426,9 @@ class SoulSyncCastController(private val appContext: Context) {
             .setStreamType(MediaInfo.STREAM_TYPE_BUFFERED)
             .setContentType(castInfo.contentType)
             .setMetadata(meta)
+            // which item this is, so a queue advance on the tv maps back to it
+            // exactly (titles repeat: commercials, same-named episodes)
+            .setCustomData(org.json.JSONObject().put("key", "${item.itemType}:${item.itemId}"))
         if (castInfo.hls) {
             mediaInfoBuilder.setHlsSegmentFormat(HlsSegmentFormat.TS)
             mediaInfoBuilder.setHlsVideoSegmentFormat(HlsVideoSegmentFormat.MPEG2_TS)

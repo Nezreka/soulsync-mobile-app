@@ -24,6 +24,8 @@ import okhttp3.RequestBody.Companion.toRequestBody
 /** the home layout id for this app on a phone (8-64 of [A-Za-z0-9_-], core/player/home_layout.py) */
 const val PHONE_LAYOUT_DEVICE = "android-phone"
 
+private val APP_PRESENCE_SESSION: String = "android-" + java.util.UUID.randomUUID().toString().take(12)
+
 class PlayerApiClient(
     val baseUrl: String,
     val pinnedAuthenticatedClient: OkHttpClient,
@@ -556,7 +558,9 @@ class PlayerApiClient(
         execute(req) { }
     }
 
-    private val presenceSessionId: String = "android-" + java.util.UUID.randomUUID().toString().take(12)
+    // one id for the app's run, not per client: a new client (a wi-fi/mobile
+    // switch, a profile change) left the old id's "watching" entry behind
+    private val presenceSessionId: String get() = APP_PRESENCE_SESSION
 
     suspend fun sendPresence(
         itemType: String,

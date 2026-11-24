@@ -243,7 +243,7 @@ fun PlayerShell(
     // Keep Chromecast Live Guide & queued playback advancing continuously even when the Cast sheet is closed
     LaunchedEffect(castController, coordinator) {
         castController.onMediaFinished = { coordinator.playNextVideo() }
-        castController.onQueueItemChanged = { title -> coordinator.syncCastAdvancedTo(title) }
+        castController.onQueueItemChanged = { title, key -> coordinator.syncCastAdvancedTo(title, key) }
     }
     LaunchedEffect(castController.isConnected) {
         while (castController.isConnected) {

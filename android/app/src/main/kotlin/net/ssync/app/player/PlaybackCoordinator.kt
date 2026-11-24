@@ -185,7 +185,7 @@ class PlaybackCoordinator(
      * queued item on the TV. Keeps activeItem, videoQueue, and Live Presence in sync
      * without interrupting Chromecast playback.
      */
-    fun syncCastAdvancedTo(title: String?) {
+    fun syncCastAdvancedTo(title: String?, key: String? = null) {
         if (videoQueue.size <= 1) return
         val finished = activeItem
         if (finished != null && finished.isLiveGuide && finished.itemType == "movie") {
@@ -193,7 +193,9 @@ class PlaybackCoordinator(
                 api.markWatched(itemType = "movie", itemId = finished.itemId)
             }
         }
-        val idx = if (!title.isNullOrBlank()) {
+        // the item's own key first; a title only for media cast before keys
+        val byKey = key?.let { k -> videoQueue.indexOfFirst { "${it.itemType}:${it.itemId}" == k }.takeIf { it > 0 } }
+        val idx = byKey ?: if (!title.isNullOrBlank()) {
             videoQueue.indexOfFirst { it.title.equals(title, ignoreCase = true) }.takeIf { it > 0 } ?: 1
         } else {
             1
