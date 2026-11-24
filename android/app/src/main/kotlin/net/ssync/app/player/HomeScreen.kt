@@ -10,6 +10,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -100,6 +101,21 @@ private data class BillboardSlide(
     val previewStreamUrl: String? = null,
 )
 
+private object HomeWarmCache {
+    var baseUrl: String? = null
+    var continueItems: List<ProgressRow> = emptyList()
+    var catalog: VideoCatalog = VideoCatalog()
+    var watchlist: List<WatchlistItem> = emptyList()
+    var studioCollections: List<net.ssync.player.StudioCollection> = emptyList()
+    var discoverPlaylists: List<net.ssync.player.DiscoverPlaylistSummary> = emptyList()
+    var albums: List<LibAlbum> = emptyList()
+    var podcasts: List<PodcastSub> = emptyList()
+    var books: List<OwnedBook> = emptyList()
+    var homeLayout: HomeLayout = HomeLayout()
+    var layoutShared: Boolean = true
+    var hasLoadedOnce: Boolean = false
+}
+
 @kotlin.OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
@@ -114,19 +130,20 @@ fun HomeScreen(
     onEditorConsumed: () -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
-    var isLoading by remember { mutableStateOf(true) }
+    val warmHit = HomeWarmCache.hasLoadedOnce && HomeWarmCache.baseUrl == api.baseUrl
+    var isLoading by remember(api.baseUrl) { mutableStateOf(!warmHit) }
     var isRefreshing by remember { mutableStateOf(false) }
-    var continueItems by remember { mutableStateOf<List<ProgressRow>>(emptyList()) }
-    var catalog by remember { mutableStateOf(VideoCatalog()) }
-    var watchlist by remember { mutableStateOf<List<WatchlistItem>>(emptyList()) }
-    var studioCollections by remember { mutableStateOf<List<net.ssync.player.StudioCollection>>(emptyList()) }
-    var discoverPlaylists by remember { mutableStateOf<List<net.ssync.player.DiscoverPlaylistSummary>>(emptyList()) }
-    var albums by remember { mutableStateOf<List<LibAlbum>>(emptyList()) }
-    var podcasts by remember { mutableStateOf<List<PodcastSub>>(emptyList()) }
-    var books by remember { mutableStateOf<List<OwnedBook>>(emptyList()) }
+    var continueItems by remember(api.baseUrl) { mutableStateOf(if (warmHit) HomeWarmCache.continueItems else emptyList()) }
+    var catalog by remember(api.baseUrl) { mutableStateOf(if (warmHit) HomeWarmCache.catalog else VideoCatalog()) }
+    var watchlist by remember(api.baseUrl) { mutableStateOf(if (warmHit) HomeWarmCache.watchlist else emptyList()) }
+    var studioCollections by remember(api.baseUrl) { mutableStateOf(if (warmHit) HomeWarmCache.studioCollections else emptyList()) }
+    var discoverPlaylists by remember(api.baseUrl) { mutableStateOf(if (warmHit) HomeWarmCache.discoverPlaylists else emptyList()) }
+    var albums by remember(api.baseUrl) { mutableStateOf(if (warmHit) HomeWarmCache.albums else emptyList()) }
+    var podcasts by remember(api.baseUrl) { mutableStateOf(if (warmHit) HomeWarmCache.podcasts else emptyList()) }
+    var books by remember(api.baseUrl) { mutableStateOf(if (warmHit) HomeWarmCache.books else emptyList()) }
     var logos by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
-    var homeLayout by remember { mutableStateOf(HomeLayout()) }
-    var layoutShared by remember { mutableStateOf(true) }
+    var homeLayout by remember(api.baseUrl) { mutableStateOf(if (warmHit) HomeWarmCache.homeLayout else HomeLayout()) }
+    var layoutShared by remember(api.baseUrl) { mutableStateOf(if (warmHit) HomeWarmCache.layoutShared else true) }
     var showEditor by remember { mutableStateOf(openEditorInitially) }
 
     LaunchedEffect(openEditorInitially) {
@@ -139,56 +156,85 @@ fun HomeScreen(
     var billboardIndex by remember { mutableIntStateOf(0) }
 
     suspend fun loadHomeData(forceRefresh: Boolean) {
+        HomeWarmCache.baseUrl = api.baseUrl
         coroutineScope {
-            val cDef = async { api.fetchContinue() }
-            val vDef = async { api.fetchVideoCatalog(forceRefresh = forceRefresh) }
-            val wDef = async { api.fetchWatchlist() }
-            val aDef = async { api.fetchAlbums(limit = 20) }
-            val pDef = async { api.fetchPodcastSubs() }
-            val bDef = async { api.fetchAudiobooks() }
-            val colDef = async { api.fetchCollections() }
-            val discDef = async { api.fetchDiscoverPlaylists() }
-            val lDef = async { api.fetchHomeLayout(device = "phone") }
+            // Progressive per-section hydration: paint Billboard + top rows the instant
+            // video-catalog / continue arrive instead of blocking on all 9 endpoints!
+            val primaryJob = launch {
+                val cDef = async { api.fetchContinue() }
+                val vDef = async { api.fetchVideoCatalog(forceRefresh = forceRefresh) }
+                val lDef = async { api.fetchHomeLayout(device = "android-phone") }
 
-            val results = listOf(cDef.await(), vDef.await(), wDef.await(), aDef.await(), pDef.await(), bDef.await())
-            if (results.any { it is MusicApiResult.DeviceRevoked }) {
-                onDeviceRevoked()
-                return@coroutineScope
+                when (val v = vDef.await()) {
+                    is MusicApiResult.Success -> {
+                        catalog = v.data
+                        HomeWarmCache.catalog = v.data
+                    }
+                    MusicApiResult.DeviceRevoked -> {
+                        onDeviceRevoked()
+                        return@launch
+                    }
+                    is MusicApiResult.Error -> Unit
+                }
+                (cDef.await() as? MusicApiResult.Success)?.let {
+                    continueItems = it.data
+                    HomeWarmCache.continueItems = it.data
+                }
+                (lDef.await() as? MusicApiResult.Success)?.let { resp ->
+                    if (resp.data.layout.rows.isNotEmpty()) {
+                        homeLayout = resp.data.layout
+                        layoutShared = resp.data.shared
+                        HomeWarmCache.homeLayout = resp.data.layout
+                        HomeWarmCache.layoutShared = resp.data.shared
+                    }
+                }
+                HomeWarmCache.hasLoadedOnce = true
+                isLoading = false
             }
-            (results[0] as? MusicApiResult.Success<*>)?.let {
-                @Suppress("UNCHECKED_CAST")
-                continueItems = it.data as List<ProgressRow>
-            }
-            (results[1] as? MusicApiResult.Success<*>)?.let { catalog = it.data as VideoCatalog }
-            (results[2] as? MusicApiResult.Success<*>)?.let {
-                @Suppress("UNCHECKED_CAST")
-                watchlist = it.data as List<WatchlistItem>
-            }
-            (results[3] as? MusicApiResult.Success<*>)?.let {
-                @Suppress("UNCHECKED_CAST")
-                albums = it.data as List<LibAlbum>
-            }
-            (results[4] as? MusicApiResult.Success<*>)?.let {
-                @Suppress("UNCHECKED_CAST")
-                podcasts = it.data as List<PodcastSub>
-            }
-            (results[5] as? MusicApiResult.Success<*>)?.let {
-                @Suppress("UNCHECKED_CAST")
-                books = it.data as List<OwnedBook>
-            }
-            (colDef.await() as? MusicApiResult.Success)?.let { studioCollections = it.data }
-            (discDef.await() as? MusicApiResult.Success)?.let { discoverPlaylists = it.data }
-            (lDef.await() as? MusicApiResult.Success)?.let { resp ->
-                if (resp.data.layout.rows.isNotEmpty()) {
-                    homeLayout = resp.data.layout
-                    layoutShared = resp.data.shared
+
+            // Secondary below-the-fold sections hydrate independently without blocking first paint
+            launch {
+                (api.fetchWatchlist() as? MusicApiResult.Success)?.let {
+                    watchlist = it.data
+                    HomeWarmCache.watchlist = it.data
                 }
             }
+            launch {
+                (api.fetchAlbums(limit = 20) as? MusicApiResult.Success)?.let {
+                    albums = it.data
+                    HomeWarmCache.albums = it.data
+                }
+            }
+            launch {
+                (api.fetchCollections() as? MusicApiResult.Success)?.let {
+                    studioCollections = it.data
+                    HomeWarmCache.studioCollections = it.data
+                }
+            }
+            launch {
+                (api.fetchDiscoverPlaylists() as? MusicApiResult.Success)?.let {
+                    discoverPlaylists = it.data
+                    HomeWarmCache.discoverPlaylists = it.data
+                }
+            }
+            launch {
+                (api.fetchPodcastSubs() as? MusicApiResult.Success)?.let {
+                    podcasts = it.data
+                    HomeWarmCache.podcasts = it.data
+                }
+            }
+            launch {
+                (api.fetchAudiobooks() as? MusicApiResult.Success)?.let {
+                    books = it.data
+                    HomeWarmCache.books = it.data
+                }
+            }
+            primaryJob.join()
         }
     }
 
     LaunchedEffect(api) {
-        isLoading = true
+        if (!warmHit) isLoading = true
         loadHomeData(forceRefresh = false)
         isLoading = false
         // Auto-refresh silently every 60s so newly added episodes & movies land ASAP
@@ -278,7 +324,42 @@ fun HomeScreen(
     }
 
     if (isLoading) {
-        LoadingBox()
+        // Sleek cinema skeleton placeholder on cold start (0ms warm cache on subsequent visits!)
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(SoulSyncColors.BgPrimary)
+                .padding(horizontal = 16.dp, vertical = 20.dp),
+            verticalArrangement = Arrangement.spacedBy(18.dp),
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(260.dp)
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(SoulSyncColors.Card),
+            )
+            repeat(2) {
+                Box(
+                    modifier = Modifier
+                        .width(140.dp)
+                        .height(16.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(SoulSyncColors.Card),
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    repeat(3) {
+                        Box(
+                            modifier = Modifier
+                                .width(116.dp)
+                                .height(172.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(SoulSyncColors.Card),
+                        )
+                    }
+                }
+            }
+        }
         return
     }
 
@@ -995,13 +1076,13 @@ fun HomeScreen(
                 layoutShared = shared
                 showEditor = false
                 scope.launch {
-                    api.saveHomeLayout(layout = updated, device = if (shared) "*" else "phone")
+                    api.saveHomeLayout(layout = updated, device = if (shared) "*" else "android-phone")
                 }
             },
             onReset = {
                 homeLayout = HomeLayout()
                 showEditor = false
-                scope.launch { api.resetHomeLayout(device = "phone") }
+                scope.launch { api.resetHomeLayout(device = "android-phone") }
             },
             onDismiss = { showEditor = false },
         )
