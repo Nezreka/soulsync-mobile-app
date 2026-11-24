@@ -166,6 +166,7 @@ class SoulSyncCastController(private val appContext: Context) {
     private var lastCastContentType: String = "video/mp4"
     private var lastCastMetadata: MediaMetadata? = null
     private var lastQueueItemId: Int = MediaQueueItem.INVALID_ITEM_ID
+    private var sawActivePlaybackForItem: Boolean = false
     private var finishedFiredForSession: Boolean = false
 
     private val remoteCallback = object : RemoteMediaClient.Callback() {
@@ -214,20 +215,23 @@ class SoulSyncCastController(private val appContext: Context) {
             }
         }
 
-        // Detect end of media/queue so Live Guide channels continuously advance & refill
+        // Track that playback actually started for the current item before accepting IDLE_REASON_FINISHED
         if (
+            status.playerState == MediaStatus.PLAYER_STATE_PLAYING ||
+            status.playerState == MediaStatus.PLAYER_STATE_BUFFERING
+        ) {
+            sawActivePlaybackForItem = true
+            finishedFiredForSession = false
+        } else if (
+            sawActivePlaybackForItem &&
             status.playerState == MediaStatus.PLAYER_STATE_IDLE &&
             status.idleReason == MediaStatus.IDLE_REASON_FINISHED &&
             !finishedFiredForSession
         ) {
             finishedFiredForSession = true
+            sawActivePlaybackForItem = false
             remoteIsPlaying = false
             onMediaFinished?.invoke()
-        } else if (
-            status.playerState == MediaStatus.PLAYER_STATE_PLAYING ||
-            status.playerState == MediaStatus.PLAYER_STATE_BUFFERING
-        ) {
-            finishedFiredForSession = false
         }
     }
 
@@ -451,42 +455,21 @@ class SoulSyncCastController(private val appContext: Context) {
         lastCastContentType = primary.contentType
         lastCastMetadata = primary.metadata
         lastQueueItemId = MediaQueueItem.INVALID_ITEM_ID
+        sawActivePlaybackForItem = false
         finishedFiredForSession = false
 
-        // When casting a Live Guide channel or queued video list, preload the next 3
-        // scheduled items directly into Chromecast's native queue so the TV plays
-        // continuously even if the phone screen sleeps!
-        val queuedExtras = if (upcoming.isNotEmpty()) {
-            upcoming.take(3).mapNotNull { next ->
-                prepareCastMedia(api, baseUrl, next, 0L)?.mediaInfo
-            }
-        } else {
-            emptyList()
-        }
-
-        if (queuedExtras.isNotEmpty()) {
-            val queueItems = (listOf(primary.mediaInfo) + queuedExtras).map { info ->
-                MediaQueueItem.Builder(info)
-                    .setAutoplay(true)
-                    .setPreloadTime(15.0)
-                    .build()
-            }.toTypedArray()
-            val startPos = if (primary.transcoded) 0L else initialStartMs
-            remote.queueLoad(
-                queueItems,
-                0,
-                MediaStatus.REPEAT_MODE_REPEAT_OFF,
-                startPos,
-                null,
-            )
-        } else {
-            val loadReq = MediaLoadRequestData.Builder()
-                .setMediaInfo(primary.mediaInfo)
-                .setAutoplay(true)
-                .setCurrentTime(if (primary.transcoded) 0L else initialStartMs)
-                .build()
-            remote.load(loadReq)
-        }
+        // Always load one item at a time on Google's Styled Media Receiver rather than
+        // queueLoad(preloadTime): transcoded fragmented MP4 streams have a rolling ~5s
+        // media buffer ahead of the playhead, which causes the receiver's native queue
+        // UI to show a looping "Your video will play in 5..4..3..5 seconds" banner for
+        // the entire show. Instead, RemoteMediaClient.Callback detects IDLE_REASON_FINISHED
+        // the exact moment the show finishes and seamlessly casts the next Live Guide item!
+        val loadReq = MediaLoadRequestData.Builder()
+            .setMediaInfo(primary.mediaInfo)
+            .setAutoplay(true)
+            .setCurrentTime(if (primary.transcoded) 0L else initialStartMs)
+            .build()
+        remote.load(loadReq)
 
         isCastingMedia = true
         remoteIsPlaying = true
