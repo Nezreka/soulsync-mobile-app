@@ -1692,11 +1692,17 @@ fun GuideScreen(
             scope.launch {
                 val prefs = (api.fetchSettings() as? MusicApiResult.Success)?.data
                 val finalUpcoming = if (prefs?.commercialsEnabled == true && baseUpcoming.isNotEmpty()) {
+                    val activeYear = when (active.itemType) {
+                        "movie" -> catalog.movies.firstOrNull { it.id == active.detailId }?.year
+                        "episode" -> catalog.shows.firstOrNull { it.id == active.detailId }?.year
+                        else -> null
+                    } ?: Regex("\\b(19[5-9]\\d|20[0-2]\\d)\\b").find("${active.subtitle} ${active.title}")?.groupValues?.get(1)?.toIntOrNull()
                     val clips = (api.fetchCommercialBreak(
                         era = prefs.commercialsEra,
                         mode = prefs.commercialsMode,
                         channelId = ch.id,
                         channelName = ch.name,
+                        year = activeYear,
                     ) as? MusicApiResult.Success)?.data.orEmpty()
                     if (clips.isNotEmpty()) {
                         val commItems = clips.map { clip ->

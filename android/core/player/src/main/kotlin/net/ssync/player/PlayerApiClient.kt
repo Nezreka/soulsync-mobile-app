@@ -658,6 +658,7 @@ class PlayerApiClient(
         mode: String? = null,
         channelId: String? = null,
         channelName: String? = null,
+        year: Int? = null,
     ): MusicApiResult<List<CommercialClip>> {
         val url = "$base/api/player/commercials/break".toHttpUrl().newBuilder()
             .apply {
@@ -665,6 +666,7 @@ class PlayerApiClient(
                 if (!mode.isNullOrBlank()) addQueryParameter("mode", mode)
                 if (!channelId.isNullOrBlank()) addQueryParameter("channel_id", channelId)
                 if (!channelName.isNullOrBlank()) addQueryParameter("channel_name", channelName)
+                if (year != null && year in 1950..2029) addQueryParameter("year", year.toString())
             }
             .build()
         return getJson(url.toString()) { body ->
