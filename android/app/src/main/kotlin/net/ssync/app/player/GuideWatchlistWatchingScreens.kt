@@ -39,7 +39,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -249,6 +249,13 @@ fun SearchScreen(
     var albums by remember { mutableStateOf<List<net.ssync.player.LibAlbum>>(emptyList()) }
     var songs by remember { mutableStateOf<List<net.ssync.player.LibSong>>(emptyList()) }
     var searchingMusic by remember { mutableStateOf(false) }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var recent by remember { mutableStateOf(SearchHistory.read(context)) }
+    // a search that got somewhere is kept for next time, like the web player's
+    val latestQuery = androidx.compose.runtime.rememberUpdatedState(query)
+    androidx.compose.runtime.DisposableEffect(Unit) {
+        onDispose { SearchHistory.remember(context, latestQuery.value) }
+    }
 
     LaunchedEffect(api) {
         coroutineScope {
@@ -418,16 +425,14 @@ fun SearchScreen(
     }
 
     Column(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 10.dp)) {
-        OutlinedTextField(
+        SearchField(
             value = query,
             onValueChange = {
                 query = it
                 filter = "all"
             },
-            placeholder = { Text("Search movies, shows, artists, albums, songs, podcasts…") },
-            singleLine = true,
-            shape = RoundedCornerShape(999.dp),
-            modifier = Modifier.fillMaxWidth().dpadFocusable(),
+            onSubmit = { recent = SearchHistory.remember(context, query) },
+            modifier = Modifier.fillMaxWidth(),
         )
 
         if (q.isNotEmpty() && tabs.size > 1) {
@@ -457,7 +462,25 @@ fun SearchScreen(
         Spacer(modifier = Modifier.height(12.dp))
 
         if (q.isEmpty()) {
-            EmptyBox("Search across your entire SoulSync library — movies, TV shows, music, YouTube, podcasts, and audiobooks.")
+            androidx.compose.foundation.layout.Column(
+                modifier = Modifier.fillMaxSize().verticalScroll(androidx.compose.foundation.rememberScrollState()),
+            ) {
+                SearchStart(
+                    recent = recent,
+                    onPickRecent = { query = it },
+                    onClearRecent = {
+                        SearchHistory.clear(context)
+                        recent = emptyList()
+                    },
+                    browse = browseTargets(
+                        hasVideo = catalog.movies.isNotEmpty() || catalog.shows.isNotEmpty() || catalog.youtube.isNotEmpty(),
+                        hasMusic = true,
+                        hasPodcasts = podcasts.isNotEmpty(),
+                        hasBooks = books.isNotEmpty(),
+                    ),
+                    onBrowse = onNavigate,
+                )
+            }
         } else if (totalCount == 0 && !searchingMusic) {
             EmptyBox("No matches for \"$query\".")
         } else {
@@ -534,7 +557,7 @@ fun SearchScreen(
                     items(movieHits, key = { "m-${it.id}" }) { m ->
                         CompactMediaListRow(
                             title = m.title,
-                            subtitle = listOfNotNull("Movie", m.year?.toString(), m.rating?.let { "★ %.1f".format(it) }).joinToString(" · "),
+                            subtitle = listOfNotNull(m.year?.toString(), m.rating?.let { "★ %.1f".format(it) }).joinToString(" · "),
                             artworkUrl = api.artwork.moviePoster(m.id),
                             onClick = { onNavigate(PlayerDestination.MovieDetail(m.id)) },
                         )
@@ -545,7 +568,7 @@ fun SearchScreen(
                     items(showHits, key = { "s-${it.id}" }) { s ->
                         CompactMediaListRow(
                             title = s.title,
-                            subtitle = listOfNotNull("TV Show", "${s.episodeCount} episodes", s.network).joinToString(" · "),
+                            subtitle = listOfNotNull("${s.episodeCount} episodes", s.network).joinToString(" · "),
                             artworkUrl = api.artwork.showPoster(s.id),
                             onClick = { onNavigate(PlayerDestination.ShowDetail(s.id)) },
                         )
@@ -556,7 +579,7 @@ fun SearchScreen(
                     items(artists, key = { "ar-${it.id}" }) { ar ->
                         SimpleTrackRow(
                             title = ar.name,
-                            subtitle = "Artist · ${ar.albumCount} albums",
+                            subtitle = "${ar.albumCount} albums",
                             artworkUrl = api.artwork.resolve(ar.imageUrl ?: ar.remoteImageUrl),
                             onClick = { onNavigate(PlayerDestination.ArtistDetail(ar.id)) },
                         )
@@ -567,7 +590,7 @@ fun SearchScreen(
                     items(albums, key = { "al-${it.id}" }) { al ->
                         SimpleTrackRow(
                             title = al.title,
-                            subtitle = listOfNotNull("Album", al.artistName, al.year?.toString()).joinToString(" · "),
+                            subtitle = listOfNotNull(al.artistName, al.year?.toString()).joinToString(" · "),
                             artworkUrl = api.artwork.resolve(al.imageUrl) ?: api.artwork.albumArtwork(al.id),
                             onClick = { onNavigate(PlayerDestination.AlbumDetail(al.id)) },
                         )
@@ -578,7 +601,7 @@ fun SearchScreen(
                     items(songs, key = { "so-${it.id}" }) { song ->
                         SimpleTrackRow(
                             title = song.title,
-                            subtitle = listOfNotNull("Song", song.artistName, song.albumTitle).joinToString(" · "),
+                            subtitle = listOfNotNull(song.artistName, song.albumTitle).joinToString(" · "),
                             artworkUrl = api.artwork.albumArtwork(song.albumId),
                             onClick = {
                                 coordinator.playAudio(
@@ -600,7 +623,7 @@ fun SearchScreen(
                     items(ytHits, key = { "y-${it.id}" }) { y ->
                         SimpleTrackRow(
                             title = y.title,
-                            subtitle = "YouTube · ${y.channelTitle ?: ""}".trimEnd(' ', '·'),
+                            subtitle = y.channelTitle.orEmpty(),
                             artworkUrl = api.artwork.resolve(y.thumbnailUrl),
                             onClick = {
                                 coordinator.playVideo(
@@ -623,7 +646,7 @@ fun SearchScreen(
                     items(podcastHits, key = { "p-${it.id}" }) { p ->
                         SimpleTrackRow(
                             title = p.title,
-                            subtitle = listOfNotNull("Podcast", p.author).joinToString(" · "),
+                            subtitle = p.author.orEmpty(),
                             artworkUrl = api.artwork.resolve(p.artworkUrl),
                             onClick = { onNavigate(PlayerDestination.PodcastDetail(p)) },
                         )
@@ -634,7 +657,7 @@ fun SearchScreen(
                     items(bookHits, key = { "b-${it.asin}" }) { b ->
                         SimpleTrackRow(
                             title = b.title,
-                            subtitle = listOfNotNull("Audiobook", b.author).joinToString(" · "),
+                            subtitle = b.author.orEmpty(),
                             artworkUrl = api.artwork.resolve(b.coverUrl) ?: api.artwork.audiobookCover(b.asin),
                             onClick = { onNavigate(PlayerDestination.AudiobookDetail(b)) },
                         )

@@ -1289,7 +1289,7 @@ fun HomeScreen(
                 layoutShared = shared
                 showEditor = false
                 scope.launch {
-                    api.saveHomeLayout(layout = updated, device = if (shared) "*" else "android-phone")
+                    api.saveHomeLayout(layout = updated, shared = shared)
                 }
             },
             onReset = {

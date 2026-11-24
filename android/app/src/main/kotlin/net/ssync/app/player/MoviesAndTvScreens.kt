@@ -1595,8 +1595,8 @@ fun ShowDetailScreen(
                                 meta = net.ssync.player.ProgressMeta(
                                     title = show.title,
                                     subtitle = "S${activeSeason.seasonNumber} E${ep.episodeNumber}" + (ep.title?.let { " · $it" } ?: ""),
-                                    artwork = if (show.hasPoster) "/api/video/artwork/show/${show.id}/poster" else null,
-                                    backdrop = if (show.hasBackdrop) "/api/video/artwork/show/${show.id}/backdrop" else null,
+                                    artwork = if (show.hasPoster) "/api/video/poster/show/${show.id}" else null,
+                                    backdrop = if (show.hasBackdrop) "/api/video/backdrop/show/${show.id}" else null,
                                 ),
                                 showId = show.id,
                             )

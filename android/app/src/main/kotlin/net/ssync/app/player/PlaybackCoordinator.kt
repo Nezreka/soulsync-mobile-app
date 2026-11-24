@@ -271,7 +271,7 @@ class PlaybackCoordinator(
             "episode" -> item.parentId?.let { "/player/tv/$it" } ?: "/player/tv"
             "youtube" -> "/player/youtube"
             "audiobook" -> "/player/audiobooks/${item.itemId}"
-            "podcast" -> "/player/podcasts"
+            "podcast", "podcast_episode" -> "/player/podcasts"
             else -> "/player/music"
         }
         val relArt = toRelativeArtwork(item.artworkUrl)
@@ -418,7 +418,7 @@ class PlaybackCoordinator(
             reportPresence(item, paused = !isPlaying, overridePositionMs = positionMs, overrideDurationMs = durationMs)
         }
 
-        if (!item.isLiveGuide && positionMs > 0 && item.itemType in setOf("podcast", "audiobook")) {
+        if (!item.isLiveGuide && positionMs > 0 && item.itemType in setOf("podcast_episode", "audiobook")) {
             scope.launch {
                 api.saveProgress(
                     itemType = item.itemType,

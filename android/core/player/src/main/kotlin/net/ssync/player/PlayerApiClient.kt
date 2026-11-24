@@ -7,6 +7,7 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
@@ -19,6 +20,10 @@ import okhttp3.RequestBody.Companion.toRequestBody
  * Podcasts, Audiobooks, Guide, Watchlist, Presence (Who's Watching), Progress,
  * and Player Settings over the cert-pinned, Bearer-authenticated OkHttpClient.
  */
+
+/** the home layout id for this app on a phone (8-64 of [A-Za-z0-9_-], core/player/home_layout.py) */
+const val PHONE_LAYOUT_DEVICE = "android-phone"
+
 class PlayerApiClient(
     val baseUrl: String,
     val pinnedAuthenticatedClient: OkHttpClient,
@@ -235,7 +240,8 @@ class PlayerApiClient(
             .addQueryParameter("url", feedUrl)
             .build()
         return getJson(url.toString()) { body ->
-            json.decodeFromString<PodcastShow>(body)
+            val env = json.decodeFromString<PodcastShowEnvelope>(body)
+            env.show ?: throw IllegalStateException(env.error ?: "That podcast couldn't be loaded")
         }
     }
 
@@ -252,18 +258,18 @@ class PlayerApiClient(
             val arr = (root["channels"] as? JsonArray) ?: JsonArray(emptyList())
             arr.mapNotNull { el ->
                 val obj = el as? JsonObject ?: return@mapNotNull null
-                val id = obj["id"]?.jsonPrimitive?.content ?: return@mapNotNull null
-                val name = obj["name"]?.jsonPrimitive?.content ?: id
+                val id = obj["id"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
+                val name = obj["name"]?.jsonPrimitive?.contentOrNull ?: id
                 GuideChannel(
                     id = id,
                     name = name,
                     number = obj["number"]?.jsonPrimitive?.intOrNull,
-                    kind = obj["kind"]?.jsonPrimitive?.content ?: "video",
-                    description = obj["description"]?.jsonPrimitive?.content,
-                    currentTitle = obj["current_title"]?.jsonPrimitive?.content,
-                    currentItemType = obj["current_item_type"]?.jsonPrimitive?.content,
-                    currentItemId = obj["current_item_id"]?.jsonPrimitive?.content,
-                    nextTitle = obj["next_title"]?.jsonPrimitive?.content,
+                    kind = obj["kind"]?.jsonPrimitive?.contentOrNull ?: "video",
+                    description = obj["description"]?.jsonPrimitive?.contentOrNull,
+                    currentTitle = obj["current_title"]?.jsonPrimitive?.contentOrNull,
+                    currentItemType = obj["current_item_type"]?.jsonPrimitive?.contentOrNull,
+                    currentItemId = obj["current_item_id"]?.jsonPrimitive?.contentOrNull,
+                    nextTitle = obj["next_title"]?.jsonPrimitive?.contentOrNull,
                 )
             }
         }
@@ -276,8 +282,8 @@ class PlayerApiClient(
                 val arr = root[arrKey] as? JsonArray ?: return
                 for (el in arr) {
                     val obj = el as? JsonObject ?: continue
-                    val id = obj["id"]?.jsonPrimitive?.content ?: continue
-                    val scope = obj["scope"]?.jsonPrimitive?.content ?: defaultScope
+                    val id = obj["id"]?.jsonPrimitive?.contentOrNull ?: continue
+                    val scope = obj["scope"]?.jsonPrimitive?.contentOrNull ?: defaultScope
                     val specEl = obj["spec"] as? JsonObject ?: continue
                     val spec = runCatching {
                         json.decodeFromJsonElement(GuideChannelSpec.serializer(), specEl)
@@ -306,8 +312,8 @@ class PlayerApiClient(
             val root = json.parseToJsonElement(body).jsonObject
             val chObj = root["channel"] as? JsonObject
                 ?: throw IllegalStateException("Invalid channel response")
-            val id = chObj["id"]?.jsonPrimitive?.content ?: ""
-            val sc = chObj["scope"]?.jsonPrimitive?.content ?: scope
+            val id = chObj["id"]?.jsonPrimitive?.contentOrNull ?: ""
+            val sc = chObj["scope"]?.jsonPrimitive?.contentOrNull ?: scope
             val sp = chObj["spec"]?.let { json.decodeFromJsonElement(GuideChannelSpec.serializer(), it) } ?: spec
             SavedGuideChannel(id = id, scope = sc, spec = sp)
         }
@@ -341,9 +347,9 @@ class PlayerApiClient(
             val arr = root["channels"] as? JsonArray ?: return@getJson emptyList()
             arr.mapNotNull { el ->
                 val obj = el as? JsonObject ?: return@mapNotNull null
-                val id = obj["id"]?.jsonPrimitive?.content ?: return@mapNotNull null
-                val name = obj["name"]?.jsonPrimitive?.content ?: id
-                val kind = obj["kind"]?.jsonPrimitive?.content ?: "genre"
+                val id = obj["id"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
+                val name = obj["name"]?.jsonPrimitive?.contentOrNull ?: id
+                val kind = obj["kind"]?.jsonPrimitive?.contentOrNull ?: "genre"
                 val count = obj["count"]?.jsonPrimitive?.intOrNull
                     ?: obj["track_count"]?.jsonPrimitive?.intOrNull
                     ?: 0
@@ -354,8 +360,8 @@ class PlayerApiClient(
                     when (t) {
                         is JsonArray -> {
                             val tid = t.getOrNull(0)?.jsonPrimitive?.intOrNull ?: continue
-                            val title = t.getOrNull(1)?.jsonPrimitive?.content ?: "Track"
-                            val artist = t.getOrNull(2)?.jsonPrimitive?.content ?: ""
+                            val title = t.getOrNull(1)?.jsonPrimitive?.contentOrNull ?: "Track"
+                            val artist = t.getOrNull(2)?.jsonPrimitive?.contentOrNull ?: ""
                             val secs = t.getOrNull(3)?.jsonPrimitive?.intOrNull ?: 210
                             val albumId = t.getOrNull(4)?.jsonPrimitive?.intOrNull
                             parsedIds += tid
@@ -371,7 +377,7 @@ class PlayerApiClient(
                     name = name,
                     kind = kind,
                     count = if (count > 0) count else parsedIds.size,
-                    description = obj["description"]?.jsonPrimitive?.content,
+                    description = obj["description"]?.jsonPrimitive?.contentOrNull,
                     trackCount = if (count > 0) count else parsedIds.size,
                     tracks = parsedIds,
                     trackItems = parsedItems,
@@ -783,28 +789,36 @@ class PlayerApiClient(
 
     // ── Home Layout (Shared / Per-Device Customizable Dashboard) ─────────────
 
-    suspend fun fetchHomeLayout(device: String = "android-phone"): MusicApiResult<HomeLayoutResponse> =
+    suspend fun fetchHomeLayout(device: String = PHONE_LAYOUT_DEVICE): MusicApiResult<HomeLayoutResponse> =
         getJson("$base/api/player/home-layout?device=$device") { body ->
             json.decodeFromString<HomeLayoutResponse>(body)
         }
 
+    /**
+     * save Home's rows: [shared] for every screen of this profile (and this
+     * screen's own rows go), else for this screen only ([device])
+     */
     suspend fun saveHomeLayout(
         layout: HomeLayout,
-        device: String = "android-phone",
+        device: String = PHONE_LAYOUT_DEVICE,
         shared: Boolean = true,
     ): MusicApiResult<HomeLayoutResponse> = withContext(Dispatchers.IO) {
-        val payload = HomeLayoutPutRequest(layout = layout, device = if (shared) null else device, shared = shared)
+        val payload = if (shared) {
+            HomeLayoutPutRequest(layout = layout, device = "*", fromDevice = device)
+        } else {
+            HomeLayoutPutRequest(layout = layout, device = device)
+        }
         val req = Request.Builder()
             .url("$base/api/player/home-layout")
             .put(json.encodeToString(HomeLayoutPutRequest.serializer(), payload).toRequestBody(JSON_MEDIA_TYPE))
             .build()
         execute(req) { body ->
             runCatching { json.decodeFromString<HomeLayoutResponse>(body) }
-                .getOrDefault(HomeLayoutResponse(layout = layout, shared = shared))
+                .getOrDefault(HomeLayoutResponse(layout = layout, scope = if (shared) "all" else "device"))
         }
     }
 
-    suspend fun resetHomeLayout(device: String = "phone"): MusicApiResult<Unit> =
+    suspend fun resetHomeLayout(device: String = PHONE_LAYOUT_DEVICE): MusicApiResult<Unit> =
         withContext(Dispatchers.IO) {
             val req = Request.Builder().url("$base/api/player/home-layout?device=$device").delete().build()
             execute(req) { }
@@ -1006,14 +1020,14 @@ class PlayerApiClient(
             val root = json.parseToJsonElement(body).jsonObject
             val out = mutableListOf<DiscoverPlaylistSummary>()
             fun parseItem(obj: JsonObject, secLabel: String = ""): DiscoverPlaylistSummary? {
-                val key = obj["key"]?.jsonPrimitive?.content ?: return null
-                val title = obj["name"]?.jsonPrimitive?.content
-                    ?: obj["title"]?.jsonPrimitive?.content
+                val key = obj["key"]?.jsonPrimitive?.contentOrNull ?: return null
+                val title = obj["name"]?.jsonPrimitive?.contentOrNull
+                    ?: obj["title"]?.jsonPrimitive?.contentOrNull
                     ?: return null
-                val subtitle = obj["blurb"]?.jsonPrimitive?.content
-                    ?: obj["subtitle"]?.jsonPrimitive?.content
+                val subtitle = obj["blurb"]?.jsonPrimitive?.contentOrNull
+                    ?: obj["subtitle"]?.jsonPrimitive?.contentOrNull
                 val trackCount = obj["track_count"]?.jsonPrimitive?.intOrNull ?: 0
-                val coverUrl = obj["cover_url"]?.jsonPrimitive?.content
+                val coverUrl = obj["cover_url"]?.jsonPrimitive?.contentOrNull
                 val tiles = (obj["cover_tiles"] as? JsonArray)
                     ?.mapNotNull { it.jsonPrimitive.content.takeIf { s -> s.isNotBlank() && s != "null" } }
                     .orEmpty()
@@ -1031,7 +1045,7 @@ class PlayerApiClient(
             if (sections != null) {
                 for (sec in sections) {
                     val secObj = sec as? JsonObject ?: continue
-                    val secLabel = secObj["label"]?.jsonPrimitive?.content.orEmpty()
+                    val secLabel = secObj["label"]?.jsonPrimitive?.contentOrNull.orEmpty()
                     val pls = secObj["playlists"] as? JsonArray ?: continue
                     for (p in pls) {
                         (p as? JsonObject)?.let { parseItem(it, secLabel) }?.let { out += it }

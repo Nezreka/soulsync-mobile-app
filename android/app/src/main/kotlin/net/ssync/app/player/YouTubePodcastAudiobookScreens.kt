@@ -493,7 +493,10 @@ fun PodcastDetailScreen(
             Spacer(modifier = Modifier.height(10.dp))
         }
         items(episodes) { ep ->
-            val stream = ep.enclosureUrl ?: api.streamUrl("podcast", ep.guid ?: ep.title)
+            // the episode's own audio: the server has no podcast stream to fall back on
+            val stream = ep.enclosureUrl
+            // the web player's key for an episode, so a resume carries between them
+            val episodeKey = (ep.guid ?: ep.enclosureUrl ?: ep.title).take(200)
             var showEpReport by remember(ep.guid ?: ep.title) { mutableStateOf(false) }
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -505,10 +508,11 @@ fun PodcastDetailScreen(
                         subtitle = listOfNotNull(ep.pubDate, ep.durationSeconds?.let { "${it / 60}m" }).joinToString(" • "),
                         artworkUrl = api.artwork.resolve(ep.artworkUrl ?: sub.artworkUrl),
                         onClick = {
+                            if (stream == null) return@SimpleTrackRow
                             coordinator.playAudio(
                                 ActivePlayable(
-                                    itemType = "podcast",
-                                    itemId = ep.guid ?: ep.title,
+                                    itemType = "podcast_episode",
+                                    itemId = episodeKey,
                                     title = ep.title,
                                     subtitle = sub.title,
                                     artworkUrl = api.artwork.resolve(ep.artworkUrl ?: sub.artworkUrl),
@@ -529,8 +533,8 @@ fun PodcastDetailScreen(
             if (showEpReport) {
                 ReportIssueDialog(
                     api = api,
-                    itemType = "podcast",
-                    itemId = ep.guid ?: ep.title,
+                    itemType = "podcast_episode",
+                    itemId = episodeKey,
                     title = ep.title,
                     subtitle = sub.title,
                     onDismiss = { showEpReport = false },

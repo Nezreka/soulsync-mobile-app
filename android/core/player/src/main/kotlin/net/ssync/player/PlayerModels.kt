@@ -240,6 +240,7 @@ data class MovieDetail(
     val rating: Double? = null,
     val genres: List<String> = emptyList(),
     @SerialName("runtime_minutes")
+    @Serializable(with = LenientIntSerializer::class)
     val runtimeMinutes: Int? = null,
     @SerialName("has_poster")
     val hasPoster: Boolean = false,
@@ -261,6 +262,7 @@ data class DetailEpisode(
     @SerialName("air_date")
     val airDate: String? = null,
     @SerialName("runtime_minutes")
+    @Serializable(with = LenientIntSerializer::class)
     val runtimeMinutes: Int? = null,
     @SerialName("has_still")
     val hasStill: Boolean = false,
@@ -369,6 +371,7 @@ data class LibArtistDetail(
 @Serializable
 data class LibTrackFile(
     val format: String? = null,
+    @Serializable(with = LenientIntSerializer::class)
     val bitrate: Int? = null,
     @SerialName("quality_tier")
     val qualityTier: String? = null,
@@ -382,6 +385,7 @@ data class LibTrack(
     val trackNumber: Int? = null,
     @SerialName("disc_number")
     val discNumber: Int? = null,
+    @Serializable(with = LenientLongSerializer::class)
     val duration: Long? = null,
     val explicit: Boolean = false,
     @SerialName("is_missing")
@@ -431,6 +435,7 @@ data class LibSong(
     val albumTitle: String? = null,
     @SerialName("album_id")
     val albumId: Int? = null,
+    @Serializable(with = LenientLongSerializer::class)
     val duration: Long? = null,
 )
 
@@ -522,6 +527,7 @@ data class CalendarEpisode(
     val showHasBackdrop: kotlinx.serialization.json.JsonPrimitive? = null,
     val overview: String? = null,
     @SerialName("runtime_minutes")
+    @Serializable(with = LenientIntSerializer::class)
     val runtimeMinutes: Int? = null,
     val rating: Double? = null,
     @SerialName("show_year")
@@ -775,6 +781,7 @@ data class OwnedBook(
     @SerialName("series_title")
     val seriesTitle: String? = null,
     @SerialName("runtime_minutes")
+    @Serializable(with = LenientIntSerializer::class)
     val runtimeMinutes: Int? = null,
     @SerialName("cover_url")
     val coverUrl: String? = null,
@@ -1399,8 +1406,12 @@ data class LayoutCatalog(
 data class HomeLayoutResponse(
     val layout: HomeLayout = HomeLayout(),
     val catalog: LayoutCatalog = LayoutCatalog(),
-    val shared: Boolean = true,
-)
+    /** "device" (this screen's own), "all" (every screen's), or null (the default) */
+    val scope: String? = null,
+) {
+    /** this screen follows the profile's shared rows, not its own */
+    val shared: Boolean get() = scope != "device"
+}
 
 // ── Extras, Person, Notes & Discover Playlists ───────────────────────────────
 
@@ -1471,6 +1482,7 @@ data class EpisodeExtra(
     val rating: Double? = null,
     val overview: String? = null,
     @SerialName("runtime_minutes")
+    @Serializable(with = LenientIntSerializer::class)
     val runtimeMinutes: Int? = null,
     @SerialName("air_date")
     val airDate: String? = null,
@@ -1525,8 +1537,9 @@ data class PersonDetail(
 data class PlayerNote(
     val id: Int,
     val body: String,
+    /** epoch seconds (the server stores a REAL) */
     @SerialName("created_at")
-    val createdAt: String? = null,
+    val createdAt: Double? = null,
 )
 
 @Serializable
@@ -1555,8 +1568,11 @@ internal data class GuideFavoritesPutRequest(val channels: List<String>)
 @Serializable
 internal data class HomeLayoutPutRequest(
     val layout: HomeLayout,
-    val device: String? = null,
-    val shared: Boolean = true,
+    /** this screen's id, or "*" for every screen of the profile */
+    val device: String,
+    /** saving for every screen drops this screen's own layout */
+    @SerialName("from_device")
+    val fromDevice: String? = null,
 )
 
 @Serializable
@@ -1589,6 +1605,10 @@ internal data class PodcastsWatchlistEnvelope(val podcasts: List<PodcastSub> = e
 
 @Serializable
 internal data class AudiobooksLibraryEnvelope(val books: List<OwnedBook> = emptyList())
+
+/** /api/podcasts/show answers {success, show}: the show is inside it */
+@Serializable
+internal data class PodcastShowEnvelope(val show: PodcastShow? = null, val error: String? = null)
 
 @Serializable
 internal data class WatchlistEnvelope(val items: List<WatchlistItem> = emptyList())
