@@ -76,6 +76,8 @@ import androidx.mediarouter.media.MediaRouteSelector
 import androidx.mediarouter.media.MediaRouter
 import coil.compose.AsyncImage
 import com.google.android.gms.cast.CastMediaControlIntent
+import com.google.android.gms.cast.HlsSegmentFormat
+import com.google.android.gms.cast.HlsVideoSegmentFormat
 import com.google.android.gms.cast.MediaInfo
 import com.google.android.gms.cast.MediaLoadRequestData
 import com.google.android.gms.cast.MediaQueueItem
@@ -418,6 +420,10 @@ class SoulSyncCastController(private val appContext: Context) {
             .setStreamType(MediaInfo.STREAM_TYPE_BUFFERED)
             .setContentType(castInfo.contentType)
             .setMetadata(meta)
+        if (castInfo.hls) {
+            mediaInfoBuilder.setHlsSegmentFormat(HlsSegmentFormat.TS)
+            mediaInfoBuilder.setHlsVideoSegmentFormat(HlsVideoSegmentFormat.MPEG2_TS)
+        }
         if (castInfo.durationMs > 0L) {
             mediaInfoBuilder.setStreamDuration(castInfo.durationMs)
         }
@@ -466,19 +472,18 @@ class SoulSyncCastController(private val appContext: Context) {
         sawActivePlaybackForItem = false
         finishedFiredForSession = false
 
-        // When using Direct Play OR VOD HLS (exact duration known by Chromecast), load a full
-        // multi-item queue onto the TV so:
-        //  1) TV shows its native "Up Next in 10s" card ONLY in the final 10 seconds (zero loop!),
-        //  2) Playback advances autonomously through up to 8 shows even when the phone screen is OFF!
+        // When using Direct Play OR VOD HLS (exact duration known by Chromecast), load primary +
+        // 1 immediate next item right away (fast start!) and append the remaining 6 items in the
+        // background so TV shows "Up Next in 10s" ONLY in the final 10s and plays with phone OFF!
         if (upcoming.isNotEmpty() && !needsServerSeek) {
             val queueItems = mutableListOf<MediaQueueItem>()
             queueItems += MediaQueueItem.Builder(primary.mediaInfo)
                 .setAutoplay(true)
                 .setPreloadTime(10.0)
                 .build()
-            for (next in upcoming.take(7)) {
-                val prep = prepareCastMedia(api, baseUrl, next, 0L) ?: continue
-                queueItems += MediaQueueItem.Builder(prep.mediaInfo)
+            val firstNext = prepareCastMedia(api, baseUrl, upcoming.first(), 0L)
+            if (firstNext != null) {
+                queueItems += MediaQueueItem.Builder(firstNext.mediaInfo)
                     .setAutoplay(true)
                     .setPreloadTime(10.0)
                     .build()
@@ -498,6 +503,22 @@ class SoulSyncCastController(private val appContext: Context) {
                     .setCurrentTime(initialStartMs)
                     .build()
                 remote.load(loadReq)
+            }
+            // Append remaining upcoming shows asynchronously after TV playback has already started
+            val rest = upcoming.drop(1).take(6)
+            if (rest.isNotEmpty()) {
+                kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                    for (next in rest) {
+                        val prep = runCatching { prepareCastMedia(api, baseUrl, next, 0L) }.getOrNull() ?: continue
+                        val qItem = MediaQueueItem.Builder(prep.mediaInfo)
+                            .setAutoplay(true)
+                            .setPreloadTime(10.0)
+                            .build()
+                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                            runCatching { remote.queueAppendItem(qItem, null) }
+                        }
+                    }
+                }
             }
         } else {
             val loadReq = MediaLoadRequestData.Builder()
