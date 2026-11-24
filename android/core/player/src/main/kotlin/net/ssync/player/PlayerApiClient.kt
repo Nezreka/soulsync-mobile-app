@@ -635,6 +635,43 @@ class PlayerApiClient(
             }
         }
 
+    // ── Retro Commercial Breaks ──────────────────────────────────────────────
+
+    suspend fun fetchCommercialsStatus(): MusicApiResult<CommercialsStatus> =
+        getJson("$base/api/player/commercials/status") { body ->
+            json.decodeFromString<CommercialsStatus>(body)
+        }
+
+    suspend fun warmCommercials(era: String = "mix"): MusicApiResult<CommercialsStatus> =
+        withContext(Dispatchers.IO) {
+            val req = Request.Builder()
+                .url("$base/api/player/commercials/warm")
+                .post("""{"era":"$era"}""".toRequestBody(JSON_MEDIA_TYPE))
+                .build()
+            execute(req) { body ->
+                json.decodeFromString<CommercialsStatus>(body)
+            }
+        }
+
+    suspend fun fetchCommercialBreak(
+        era: String? = null,
+        mode: String? = null,
+        channelId: String? = null,
+        channelName: String? = null,
+    ): MusicApiResult<List<CommercialClip>> {
+        val url = "$base/api/player/commercials/break".toHttpUrl().newBuilder()
+            .apply {
+                if (!era.isNullOrBlank()) addQueryParameter("era", era)
+                if (!mode.isNullOrBlank()) addQueryParameter("mode", mode)
+                if (!channelId.isNullOrBlank()) addQueryParameter("channel_id", channelId)
+                if (!channelName.isNullOrBlank()) addQueryParameter("channel_name", channelName)
+            }
+            .build()
+        return getJson(url.toString()) { body ->
+            json.decodeFromString<CommercialBreakEnvelope>(body).clips
+        }
+    }
+
     // ── Home Layout (Shared / Per-Device Customizable Dashboard) ─────────────
 
     suspend fun fetchHomeLayout(device: String = "android-phone"): MusicApiResult<HomeLayoutResponse> =
@@ -1077,6 +1114,7 @@ class PlayerApiClient(
                     ?: "video/mp4",
                 durationMs = (root["duration_ms"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toLongOrNull() ?: 0L,
                 transcoded = (root["transcoded"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toBooleanStrictOrNull() ?: false,
+                hls = (root["hls"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toBooleanStrictOrNull() ?: false,
                 expiresIn = (root["expires_in"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toIntOrNull()
                     ?: 21600,
             )

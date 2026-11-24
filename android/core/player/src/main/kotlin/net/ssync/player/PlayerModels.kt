@@ -1086,6 +1086,44 @@ data class PlayerSettings(
     val showYearOnCards: Boolean = true,
     @SerialName("accent_color")
     val accentColor: String = "emerald",
+    @SerialName("commercials_enabled")
+    val commercialsEnabled: Boolean = false,
+    @SerialName("commercials_era")
+    val commercialsEra: String = "auto",
+    @SerialName("commercials_mode")
+    val commercialsMode: String = "short",
+)
+
+@Serializable
+data class CommercialClip(
+    val id: String,
+    val title: String = "Retro Commercial",
+    val era: String = "mix",
+    @SerialName("duration_seconds")
+    val durationSeconds: Int = 30,
+    val source: String = "archive",
+    @SerialName("stream_path")
+    val streamPath: String = "",
+)
+
+@Serializable
+data class CommercialsStatus(
+    val ready: Boolean = false,
+    @SerialName("total_count")
+    val totalCount: Int = 0,
+    @SerialName("cached_count")
+    val cachedCount: Int = 0,
+    @SerialName("local_count")
+    val localCount: Int = 0,
+    @SerialName("cache_mb")
+    val cacheMb: Double = 0.0,
+    val warming: Boolean = false,
+    val error: String? = null,
+)
+
+@Serializable
+internal data class CommercialBreakEnvelope(
+    val clips: List<CommercialClip> = emptyList(),
 )
 
 data class DeviceProfileInfo(
@@ -1106,6 +1144,7 @@ data class CastTokenResponse(
     val contentType: String,
     val durationMs: Long = 0L,
     val transcoded: Boolean = false,
+    val hls: Boolean = false,
     val expiresIn: Int = 21600,
 )
 

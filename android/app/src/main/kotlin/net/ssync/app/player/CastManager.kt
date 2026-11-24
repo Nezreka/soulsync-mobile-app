@@ -365,6 +365,7 @@ class SoulSyncCastController(private val appContext: Context) {
         val baseStreamUrl: String,
         val contentType: String,
         val transcoded: Boolean,
+        val hls: Boolean,
         val durationMs: Long,
         val startOffsetMs: Long,
     )
@@ -404,7 +405,10 @@ class SoulSyncCastController(private val appContext: Context) {
             }
         }
         val initialStartMs = positionMs.coerceAtLeast(0L)
-        val loadUrl = if (castInfo.transcoded && initialStartMs > 0L) {
+        // VOD HLS and direct-play MP4 both support native Cast seeking & exact duration;
+        // only piped fMP4 fallback (transcoded && !hls) needs ?t= server-side offset.
+        val needsServerSeek = castInfo.transcoded && !castInfo.hls
+        val loadUrl = if (needsServerSeek && initialStartMs > 0L) {
             val sep = if (fullUrl.contains('?')) '&' else '?'
             "$fullUrl${sep}t=${initialStartMs / 1000L}"
         } else {
@@ -423,8 +427,9 @@ class SoulSyncCastController(private val appContext: Context) {
             baseStreamUrl = fullUrl,
             contentType = castInfo.contentType,
             transcoded = castInfo.transcoded,
+            hls = castInfo.hls,
             durationMs = castInfo.durationMs,
-            startOffsetMs = if (castInfo.transcoded) initialStartMs else 0L,
+            startOffsetMs = if (needsServerSeek) initialStartMs else 0L,
         )
     }
 
@@ -451,7 +456,8 @@ class SoulSyncCastController(private val appContext: Context) {
         }
 
         val initialStartMs = positionMs.coerceAtLeast(0L)
-        isTranscodedCast = primary.transcoded
+        val needsServerSeek = primary.transcoded && !primary.hls
+        isTranscodedCast = needsServerSeek
         castStartOffsetMs = primary.startOffsetMs
         lastCastBaseStreamUrl = primary.baseStreamUrl
         lastCastContentType = primary.contentType
@@ -460,18 +466,47 @@ class SoulSyncCastController(private val appContext: Context) {
         sawActivePlaybackForItem = false
         finishedFiredForSession = false
 
-        // Always load one item at a time on Google's Styled Media Receiver rather than
-        // queueLoad(preloadTime): transcoded fragmented MP4 streams have a rolling ~5s
-        // media buffer ahead of the playhead, which causes the receiver's native queue
-        // UI to show a looping "Your video will play in 5..4..3..5 seconds" banner for
-        // the entire show. Instead, RemoteMediaClient.Callback detects IDLE_REASON_FINISHED
-        // the exact moment the show finishes and seamlessly casts the next Live Guide item!
-        val loadReq = MediaLoadRequestData.Builder()
-            .setMediaInfo(primary.mediaInfo)
-            .setAutoplay(true)
-            .setCurrentTime(if (primary.transcoded) 0L else initialStartMs)
-            .build()
-        remote.load(loadReq)
+        // When using Direct Play OR VOD HLS (exact duration known by Chromecast), load a full
+        // multi-item queue onto the TV so:
+        //  1) TV shows its native "Up Next in 10s" card ONLY in the final 10 seconds (zero loop!),
+        //  2) Playback advances autonomously through up to 8 shows even when the phone screen is OFF!
+        if (upcoming.isNotEmpty() && !needsServerSeek) {
+            val queueItems = mutableListOf<MediaQueueItem>()
+            queueItems += MediaQueueItem.Builder(primary.mediaInfo)
+                .setAutoplay(true)
+                .setPreloadTime(10.0)
+                .build()
+            for (next in upcoming.take(7)) {
+                val prep = prepareCastMedia(api, baseUrl, next, 0L) ?: continue
+                queueItems += MediaQueueItem.Builder(prep.mediaInfo)
+                    .setAutoplay(true)
+                    .setPreloadTime(10.0)
+                    .build()
+            }
+            if (queueItems.size > 1) {
+                remote.queueLoad(
+                    queueItems.toTypedArray(),
+                    0,
+                    MediaStatus.REPEAT_MODE_REPEAT_OFF,
+                    initialStartMs,
+                    null,
+                )
+            } else {
+                val loadReq = MediaLoadRequestData.Builder()
+                    .setMediaInfo(primary.mediaInfo)
+                    .setAutoplay(true)
+                    .setCurrentTime(initialStartMs)
+                    .build()
+                remote.load(loadReq)
+            }
+        } else {
+            val loadReq = MediaLoadRequestData.Builder()
+                .setMediaInfo(primary.mediaInfo)
+                .setAutoplay(true)
+                .setCurrentTime(if (needsServerSeek) 0L else initialStartMs)
+                .build()
+            remote.load(loadReq)
+        }
 
         isCastingMedia = true
         remoteIsPlaying = true

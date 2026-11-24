@@ -1652,7 +1652,7 @@ fun GuideScreen(
                 0L
             }
             val progDurMs = ((active.endEpochSec - active.startEpochSec).coerceAtLeast(0L)) * 1000L
-            val upcoming = ch.programs
+            val baseUpcoming = ch.programs
                 .filter { it.startEpochSec >= active.endEpochSec }
                 .take(12)
                 .map { p ->
@@ -1672,24 +1672,59 @@ fun GuideScreen(
                         channelNumber = ch.number,
                     )
                 }
-            coordinator.playVideo(
-                ActivePlayable(
-                    itemType = active.itemType,
-                    itemId = active.itemId,
-                    title = active.title,
-                    subtitle = "CH ${ch.number} · ${ch.name}",
-                    artworkUrl = active.artworkUrl,
-                    streamUrl = api.streamUrl(active.itemType, active.itemId),
-                    isVideo = true,
-                    resumePositionMs = offsetMs,
-                    durationMs = progDurMs,
-                    isLiveGuide = true,
-                    channelId = ch.id,
-                    channelName = ch.name,
-                    channelNumber = ch.number,
-                ),
-                upcoming = upcoming,
+            val primaryPlayable = ActivePlayable(
+                itemType = active.itemType,
+                itemId = active.itemId,
+                title = active.title,
+                subtitle = "CH ${ch.number} · ${ch.name}",
+                artworkUrl = active.artworkUrl,
+                streamUrl = api.streamUrl(active.itemType, active.itemId),
+                isVideo = true,
+                resumePositionMs = offsetMs,
+                durationMs = progDurMs,
+                isLiveGuide = true,
+                channelId = ch.id,
+                channelName = ch.name,
+                channelNumber = ch.number,
             )
+            // If Retro Commercial Breaks are enabled for this profile, splice 1-3 vintage spots
+            // between the current show and the next show (works locally AND on Chromecast queueLoad!)
+            scope.launch {
+                val prefs = (api.fetchSettings() as? MusicApiResult.Success)?.data
+                val finalUpcoming = if (prefs?.commercialsEnabled == true && baseUpcoming.isNotEmpty()) {
+                    val clips = (api.fetchCommercialBreak(
+                        era = prefs.commercialsEra,
+                        mode = prefs.commercialsMode,
+                        channelId = ch.id,
+                        channelName = ch.name,
+                    ) as? MusicApiResult.Success)?.data.orEmpty()
+                    if (clips.isNotEmpty()) {
+                        val commItems = clips.map { clip ->
+                            ActivePlayable(
+                                itemType = "commercial",
+                                itemId = clip.id,
+                                title = clip.title,
+                                subtitle = "Commercial Break · CH ${ch.number} ${ch.name}",
+                                artworkUrl = null,
+                                streamUrl = api.streamUrl("commercial", clip.id),
+                                isVideo = true,
+                                resumePositionMs = 0L,
+                                durationMs = clip.durationSeconds * 1000L,
+                                isLiveGuide = true,
+                                channelId = ch.id,
+                                channelName = ch.name,
+                                channelNumber = ch.number,
+                            )
+                        }
+                        commItems + baseUpcoming
+                    } else {
+                        baseUpcoming
+                    }
+                } else {
+                    baseUpcoming
+                }
+                coordinator.playVideo(primaryPlayable, upcoming = finalUpcoming)
+            }
         }
     }
 

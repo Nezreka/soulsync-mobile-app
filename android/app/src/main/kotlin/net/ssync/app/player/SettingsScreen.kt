@@ -7,6 +7,8 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -233,6 +235,141 @@ fun SettingsScreen(
                     enabled = loadedProfile,
                     onCheckedChange = { saveProfile(profileSettings.copy(showYearOnCards = it)) },
                 )
+            }
+        }
+
+        // 1c. Retro Commercial Breaks (Synced across all screens — 1:1 Desktop parity)
+        item {
+            var commStatus by remember { mutableStateOf<net.ssync.player.CommercialsStatus?>(null) }
+            var warmingComm by remember { mutableStateOf(false) }
+            LaunchedEffect(api, profileSettings.commercialsEnabled, profileSettings.commercialsEra) {
+                (api.fetchCommercialsStatus() as? MusicApiResult.Success)?.let { commStatus = it.data }
+            }
+            SettingsCard(
+                icon = Icons.Default.Tv,
+                title = "Retro commercial breaks",
+                scopeBadge = "ALL SCREENS",
+                subtitle = "Optional vintage TV spots from Archive.org (auto-cached in background, zero manual downloading) between Live Guide shows.",
+            ) {
+                val statusHint = when {
+                    commStatus?.warming == true || warmingComm -> "Fetching retro spots from Archive.org…"
+                    (commStatus?.totalCount ?: 0) > 0 ->
+                        "${commStatus!!.totalCount} retro spots ready (${commStatus!!.cacheMb} MB cached)."
+                    else -> "Off by default. Turn on to automatically cache vintage 15–60s spots."
+                }
+                SettingsToggleRow(
+                    label = "Play retro commercials between shows",
+                    help = statusHint,
+                    checked = profileSettings.commercialsEnabled,
+                    enabled = loadedProfile,
+                    onCheckedChange = { enabled ->
+                        saveProfile(profileSettings.copy(commercialsEnabled = enabled))
+                        if (enabled) {
+                            scope.launch {
+                                (api.fetchCommercialsStatus() as? MusicApiResult.Success)?.let { commStatus = it.data }
+                            }
+                        }
+                    },
+                )
+                if (profileSettings.commercialsEnabled) {
+                    SettingsDivider()
+                    Column(
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Text(
+                            text = "Commercial era",
+                            color = Color.White,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Row(
+                            modifier = Modifier.horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            listOf(
+                                "auto" to "Auto",
+                                "70s" to "70s",
+                                "80s" to "80s",
+                                "90s" to "90s",
+                                "2000s" to "2000s",
+                                "kids" to "Kids",
+                                "mix" to "Mix",
+                            ).forEach { (key, label) ->
+                                val active = profileSettings.commercialsEra == key
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(999.dp))
+                                        .background(if (active) SoulSyncColors.Accent else Color.White.copy(alpha = 0.08f))
+                                        .clickable(enabled = loadedProfile) {
+                                            saveProfile(profileSettings.copy(commercialsEra = key))
+                                        }
+                                        .padding(horizontal = 12.dp, vertical = 7.dp),
+                                ) {
+                                    Text(
+                                        text = label,
+                                        color = if (active) SoulSyncColors.OnAccent else Color.White,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                    )
+                                }
+                            }
+                        }
+
+                        Text(
+                            text = "Break style",
+                            color = Color.White,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            listOf(
+                                "short" to "Short (1–2 spots)",
+                                "cable" to "Classic cable",
+                            ).forEach { (key, label) ->
+                                val active = profileSettings.commercialsMode == key
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(999.dp))
+                                        .background(if (active) SoulSyncColors.Accent else Color.White.copy(alpha = 0.08f))
+                                        .clickable(enabled = loadedProfile) {
+                                            saveProfile(profileSettings.copy(commercialsMode = key))
+                                        }
+                                        .padding(horizontal = 12.dp, vertical = 7.dp),
+                                ) {
+                                    Text(
+                                        text = label,
+                                        color = if (active) SoulSyncColors.OnAccent else Color.White,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                    )
+                                }
+                            }
+                        }
+
+                        androidx.compose.material3.OutlinedButton(
+                            onClick = {
+                                if (warmingComm) return@OutlinedButton
+                                warmingComm = true
+                                scope.launch {
+                                    (api.warmCommercials(profileSettings.commercialsEra) as? MusicApiResult.Success)?.let {
+                                        commStatus = it.data
+                                    }
+                                    warmingComm = false
+                                }
+                            },
+                            shape = RoundedCornerShape(999.dp),
+                            border = BorderStroke(1.dp, SoulSyncColors.LineStrong),
+                        ) {
+                            Text(
+                                text = if (warmingComm || commStatus?.warming == true) "Fetching spots…" else "Fetch spots now",
+                                color = Color.White,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
+                    }
+                }
             }
         }
 
