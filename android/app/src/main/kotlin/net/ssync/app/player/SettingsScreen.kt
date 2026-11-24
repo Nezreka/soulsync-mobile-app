@@ -253,6 +253,17 @@ fun SettingsScreen(
                     isAdminUser = it.data.canEdit
                 }
             }
+            // the fetch runs on the server for a few minutes: follow it, so
+            // the hint counts up and stops saying "fetching" when it's done
+            LaunchedEffect(commStatus?.warming == true || warmingComm) {
+                while (commStatus?.warming == true || warmingComm) {
+                    delay(3000)
+                    (api.fetchCommercialsStatus() as? MusicApiResult.Success)?.let {
+                        commStatus = it.data
+                        if (!it.data.warming) warmingComm = false
+                    }
+                }
+            }
             fun updateServerComm(enabled: Boolean? = null, era: String? = null, mode: String? = null) {
                 if (!isAdminUser || savingComm) return
                 val before = commConfig
@@ -287,7 +298,11 @@ fun SettingsScreen(
             ) {
                 val adminSuffix = if (isAdminUser) "" else " Managed by server admin."
                 val statusHint = when {
-                    commStatus?.warming == true || warmingComm -> "Fetching retro spots from Archive.org…"
+                    commStatus?.warming == true || warmingComm -> {
+                        val got = commStatus?.totalCount ?: 0
+                        if (got > 0) "Fetching retro spots from Archive.org… $got ready so far."
+                        else "Fetching retro spots from Archive.org. This takes a few minutes."
+                    }
                     (commStatus?.totalCount ?: 0) > 0 ->
                         "${commStatus!!.totalCount} retro spots ready (${commStatus!!.cacheMb} / ${commStatus!!.maxCacheMb} MB cached).$adminSuffix"
                     else -> "Off by default. Auto-caches vintage 15–60s spots (max 500 MB).$adminSuffix"
