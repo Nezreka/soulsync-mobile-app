@@ -15,10 +15,13 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import coil.ImageLoader
 import coil.compose.SubcomposeAsyncImage
+import coil.disk.DiskCache
+import coil.memory.MemoryCache
 import net.ssync.pairing.theme.SoulSyncColors
 import okhttp3.Call
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
+import java.io.File
 import java.util.concurrent.TimeUnit
 
 val LocalSoulSyncImageLoader = staticCompositionLocalOf<ImageLoader> {
@@ -54,7 +57,19 @@ fun createPinnedImageLoader(
 
     return ImageLoader.Builder(context)
         .callFactory(routingFactory)
-        .crossfade(true)
+        .memoryCache {
+            MemoryCache.Builder(context)
+                .maxSizePercent(0.25)
+                .build()
+        }
+        .diskCache {
+            DiskCache.Builder()
+                .directory(File(context.cacheDir, "soulsync_img_cache"))
+                .maxSizeBytes(120L * 1024L * 1024L)
+                .build()
+        }
+        .respectCacheHeaders(false)
+        .crossfade(120)
         .build()
 }
 

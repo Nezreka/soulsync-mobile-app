@@ -187,13 +187,17 @@ private fun slug(text: String): String {
     return norm.replace(Regex("[^\\w]+"), "-").trim('-')
 }
 
+private val isoUtcFormat = object : ThreadLocal<SimpleDateFormat>() {
+    override fun initialValue(): SimpleDateFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US).apply {
+        timeZone = java.util.TimeZone.getTimeZone("UTC")
+    }
+}
+
 private fun parseIsoEpochMs(raw: String?): Long? {
     if (raw.isNullOrBlank()) return null
     val clean = raw.trim().replace(' ', 'T').substringBefore('.').removeSuffix("Z")
     return runCatching {
-        val fmt = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US)
-        fmt.timeZone = java.util.TimeZone.getTimeZone("UTC")
-        fmt.parse(clean)?.time
+        isoUtcFormat.get()?.parse(clean)?.time
     }.getOrNull()
 }
 
@@ -370,10 +374,8 @@ private fun dayKeyIso(dayStartMs: Long): String {
     return "%04d-%02d-%02d".format(Locale.US, y, m, d)
 }
 
-private fun isFilmHourEpochMs(epochMs: Long): Boolean {
-    val cal = java.util.Calendar.getInstance()
-    cal.timeInMillis = epochMs
-    val h = cal.get(java.util.Calendar.HOUR_OF_DAY)
+private fun isFilmHourFromDayStart(epochMs: Long, dayStartMs: Long): Boolean {
+    val h = (((epochMs - dayStartMs) / 3_600_000L).toInt() % 24 + 24) % 24
     return h >= 18 || h < 2
 }
 
@@ -503,7 +505,7 @@ private fun scheduleVideoPrograms(
             val drawFilm = makeSeededDrawer(films, seed, 1u)
             val drawShow = makeRotatedShowDrawer(shows, 2u)
             while (cursor < dayEndMs && guard < 400) {
-                val next = if (isFilmHourEpochMs(cursor)) drawFilm() else drawShow()
+                val next = if (isFilmHourFromDayStart(cursor, dayStartMs)) drawFilm() else drawShow()
                 if (next == null) break
                 place(next)
                 guard++
@@ -1252,6 +1254,23 @@ internal fun buildHomeLiveGuideHighlights(
     }
 }
 
+// ── Guide Warm Cache (0ms repeat opens + instant seeding from HomeWarmCache) ──
+
+private object GuideWarmCache {
+    var baseUrl: String? = null
+    var catalog: VideoCatalog = VideoCatalog()
+    var musicPoolSongs: List<LibSong> = emptyList()
+    var playlistDetails: List<PlaylistDetail> = emptyList()
+    var musicChannels: List<MusicChannel> = emptyList()
+    var savedChannels: List<SavedGuideChannel> = emptyList()
+    var lineup: List<GuideLineupEntry> = emptyList()
+    var studioCollections: List<StudioCollection> = emptyList()
+    var favoritesList: List<String> = emptyList()
+    var allChannels: List<EpgChannel> = emptyList()
+    var builtAtSec: Long = 0L
+    var hasLoadedOnce: Boolean = false
+}
+
 // ── Guide Screen Composable ──────────────────────────────────────────────────
 
 @Composable
@@ -1262,21 +1281,41 @@ fun GuideScreen(
     onNavigate: (PlayerDestination) -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
-    var catalog by remember { mutableStateOf(VideoCatalog()) }
-    var musicPoolSongs by remember { mutableStateOf<List<LibSong>>(emptyList()) }
-    var playlistDetails by remember { mutableStateOf<List<PlaylistDetail>>(emptyList()) }
-    var musicChannels by remember { mutableStateOf<List<MusicChannel>>(emptyList()) }
-    var savedChannels by remember { mutableStateOf<List<SavedGuideChannel>>(emptyList()) }
-    var lineup by remember { mutableStateOf<List<GuideLineupEntry>>(emptyList()) }
-    var studioCollections by remember { mutableStateOf<List<StudioCollection>>(emptyList()) }
-    var favoritesList by remember { mutableStateOf<List<String>>(emptyList()) }
+    val warmHit = GuideWarmCache.hasLoadedOnce && GuideWarmCache.baseUrl == api.baseUrl && GuideWarmCache.allChannels.isNotEmpty()
+    val homeSeedHit = !warmHit && HomeWarmCache.hasLoadedOnce && HomeWarmCache.baseUrl == api.baseUrl &&
+        (HomeWarmCache.catalog.movies.isNotEmpty() || HomeWarmCache.catalog.shows.isNotEmpty())
+
+    var catalog by remember(api.baseUrl) {
+        mutableStateOf(
+            when {
+                warmHit -> GuideWarmCache.catalog
+                homeSeedHit -> HomeWarmCache.catalog
+                else -> VideoCatalog()
+            },
+        )
+    }
+    var musicPoolSongs by remember(api.baseUrl) { mutableStateOf(if (warmHit) GuideWarmCache.musicPoolSongs else emptyList()) }
+    var playlistDetails by remember(api.baseUrl) { mutableStateOf(if (warmHit) GuideWarmCache.playlistDetails else emptyList()) }
+    var musicChannels by remember(api.baseUrl) { mutableStateOf(if (warmHit) GuideWarmCache.musicChannels else emptyList()) }
+    var savedChannels by remember(api.baseUrl) { mutableStateOf(if (warmHit) GuideWarmCache.savedChannels else emptyList()) }
+    var lineup by remember(api.baseUrl) { mutableStateOf(if (warmHit) GuideWarmCache.lineup else emptyList()) }
+    var studioCollections by remember(api.baseUrl) {
+        mutableStateOf(
+            when {
+                warmHit -> GuideWarmCache.studioCollections
+                homeSeedHit -> HomeWarmCache.studioCollections
+                else -> emptyList()
+            },
+        )
+    }
+    var favoritesList by remember(api.baseUrl) { mutableStateOf(if (warmHit) GuideWarmCache.favoritesList else emptyList()) }
     val favorites = remember(favoritesList) { favoritesList.toSet() }
     var viewMode by remember { mutableStateOf(GuideViewMode.GRID) }
     var filter by remember { mutableStateOf(GuideFilter.ALL) }
     var channelQuery by remember { mutableStateOf("") }
     var picked by remember { mutableStateOf<Pair<EpgChannel, EpgProgram>?>(null) }
-    var isLoading by remember { mutableStateOf(true) }
-    var allChannels by remember { mutableStateOf<List<EpgChannel>>(emptyList()) }
+    var isLoading by remember(api.baseUrl) { mutableStateOf(!warmHit) }
+    var allChannels by remember(api.baseUrl) { mutableStateOf(if (warmHit) GuideWarmCache.allChannels else emptyList()) }
     var liveSessions by remember { mutableStateOf<List<WatchingSession>>(emptyList()) }
     var showMakeChannelDialog by remember { mutableStateOf(false) }
     val viewersByChannel = remember(liveSessions) {
@@ -1300,11 +1339,49 @@ fun GuideScreen(
     val windowEndSec = windowStartSec + windowMinutes * 60L
     val nowOffsetMin = ((nowSec - windowStartSec).coerceAtLeast(0L) / 60f)
 
+    fun saveGuideWarmCache(channels: List<EpgChannel>) {
+        GuideWarmCache.baseUrl = api.baseUrl
+        GuideWarmCache.catalog = catalog
+        GuideWarmCache.musicPoolSongs = musicPoolSongs
+        GuideWarmCache.playlistDetails = playlistDetails
+        GuideWarmCache.musicChannels = musicChannels
+        GuideWarmCache.savedChannels = savedChannels
+        GuideWarmCache.lineup = lineup
+        GuideWarmCache.studioCollections = studioCollections
+        GuideWarmCache.favoritesList = favoritesList
+        GuideWarmCache.allChannels = channels
+        GuideWarmCache.builtAtSec = nowSec
+        GuideWarmCache.hasLoadedOnce = channels.isNotEmpty()
+    }
+
     LaunchedEffect(api) {
-        isLoading = true
-        // Phase 1 (fast): load video catalog (cached), saved channels, lineup, and favorites,
-        // and build the initial channel lineup BEFORE dismissing the loading state so the user
-        // never sees a "0 of 0 channels" flash.
+        // Instant paint (<15ms) when HomeWarmCache already has the catalog: build base channels
+        // immediately on Dispatchers.Default so the Guide opens with ZERO network wait!
+        if (!warmHit && homeSeedHit) {
+            val seedChannels = withContext(Dispatchers.Default) {
+                buildDesktopParityChannels(
+                    catalog = catalog,
+                    musicPoolSongs = musicPoolSongs,
+                    playlists = playlistDetails,
+                    musicChannels = musicChannels,
+                    savedChannels = savedChannels,
+                    lineup = lineup,
+                    studioCollections = studioCollections,
+                    api = api,
+                    windowStartSec = windowStartSec,
+                    windowEndSec = windowEndSec,
+                )
+            }
+            if (seedChannels.isNotEmpty()) {
+                allChannels = seedChannels
+                saveGuideWarmCache(seedChannels)
+                isLoading = false
+            }
+        } else if (!warmHit) {
+            isLoading = true
+        }
+
+        // Phase 1: fetch catalog (cached 5m in PlayerApiClient), saved channels, lineup, favorites, collections
         val revoked = coroutineScope {
             val vDef = async { api.fetchVideoCatalog() }
             val sDef = async { api.fetchSavedGuideChannels() }
@@ -1332,7 +1409,7 @@ fun GuideScreen(
             onDeviceRevoked()
             return@LaunchedEffect
         }
-        allChannels = withContext(Dispatchers.Default) {
+        val phase1Channels = withContext(Dispatchers.Default) {
             buildDesktopParityChannels(
                 catalog = catalog,
                 musicPoolSongs = musicPoolSongs,
@@ -1346,6 +1423,8 @@ fun GuideScreen(
                 windowEndSec = windowEndSec,
             )
         }
+        allChannels = phase1Channels
+        saveGuideWarmCache(phase1Channels)
         isLoading = false
 
         // Phase 2 (progressive, non-blocking): stream in music channels, songs & playlists
@@ -1376,7 +1455,7 @@ fun GuideScreen(
         phase2.first?.let { musicChannels = it }
         phase2.second?.let { musicPoolSongs = it }
         if (phase2.third.isNotEmpty()) playlistDetails = phase2.third
-        allChannels = withContext(Dispatchers.Default) {
+        val phase2Channels = withContext(Dispatchers.Default) {
             buildDesktopParityChannels(
                 catalog = catalog,
                 musicPoolSongs = musicPoolSongs,
@@ -1390,6 +1469,8 @@ fun GuideScreen(
                 windowEndSec = windowEndSec,
             )
         }
+        allChannels = phase2Channels
+        saveGuideWarmCache(phase2Channels)
     }
 
     if (isLoading) {

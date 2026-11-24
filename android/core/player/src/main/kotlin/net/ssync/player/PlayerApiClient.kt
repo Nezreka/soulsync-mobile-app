@@ -81,7 +81,7 @@ class PlayerApiClient(
     suspend fun fetchVideoCatalog(forceRefresh: Boolean = false): MusicApiResult<VideoCatalog> {
         val now = System.currentTimeMillis()
         val hit = cachedVideoCatalog
-        if (!forceRefresh && hit != null && now - hit.first < 30_000L) {
+        if (!forceRefresh && hit != null && now - hit.first < 5 * 60_000L) {
             return MusicApiResult.Success(hit.second)
         }
         val url = if (forceRefresh) "$base/api/player/video-catalog?refresh=1" else "$base/api/player/video-catalog"

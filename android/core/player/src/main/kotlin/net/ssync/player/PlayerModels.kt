@@ -174,6 +174,40 @@ data class VideoCatalog(
     val kinds: VideoCatalogKinds = VideoCatalogKinds(),
 )
 
+@Serializable
+data class HomeDiskSnapshot(
+    val baseUrl: String,
+    val continueItems: List<ProgressRow> = emptyList(),
+    val catalog: VideoCatalog = VideoCatalog(),
+    val studioCollections: List<StudioCollection> = emptyList(),
+    val homeLayout: HomeLayout = HomeLayout(),
+    val layoutShared: Boolean = true,
+) {
+    companion object {
+        private val codec = kotlinx.serialization.json.Json {
+            ignoreUnknownKeys = true
+            encodeDefaults = true
+            coerceInputValues = true
+        }
+
+        fun read(cacheDir: java.io.File, baseUrl: String): HomeDiskSnapshot? = runCatching {
+            val file = java.io.File(cacheDir, "home_snapshot_v1.json")
+            if (!file.exists()) return null
+            val snap = codec.decodeFromString(serializer(), file.readText())
+            if (snap.baseUrl == baseUrl && (snap.catalog.movies.isNotEmpty() || snap.catalog.shows.isNotEmpty())) snap else null
+        }.getOrNull()
+
+        fun write(cacheDir: java.io.File, snap: HomeDiskSnapshot) {
+            runCatching {
+                val tmp = java.io.File(cacheDir, "home_snapshot_v1.json.tmp")
+                val target = java.io.File(cacheDir, "home_snapshot_v1.json")
+                tmp.writeText(codec.encodeToString(serializer(), snap))
+                tmp.renameTo(target)
+            }
+        }
+    }
+}
+
 // ── Movie & TV Detail ────────────────────────────────────────────────────────
 
 @Serializable
@@ -277,7 +311,7 @@ data class ShowDetail(
 @Serializable
 data class LibArtist(
     val id: Int,
-    val name: String,
+    val name: String = "",
     @SerialName("image_url")
     val imageUrl: String? = null,
     @SerialName("remote_image_url")
@@ -292,7 +326,7 @@ data class LibArtist(
 @Serializable
 data class LibAlbum(
     val id: Int,
-    val title: String,
+    val title: String = "",
     @SerialName("album_type")
     val albumType: String? = null,
     val year: Int? = null,
@@ -319,7 +353,7 @@ data class LibArtistAbout(
 @Serializable
 data class LibArtistDetail(
     val id: Int,
-    val name: String,
+    val name: String = "",
     @SerialName("image_url")
     val imageUrl: String? = null,
     @SerialName("remote_image_url")
@@ -343,7 +377,7 @@ data class LibTrackFile(
 @Serializable
 data class LibTrack(
     val id: Int? = null,
-    val title: String,
+    val title: String = "",
     @SerialName("track_number")
     val trackNumber: Int? = null,
     @SerialName("disc_number")
@@ -377,7 +411,7 @@ data class LibArtistRef(
 @Serializable
 data class LibAlbumDetail(
     val id: Int,
-    val title: String,
+    val title: String = "",
     val year: Int? = null,
     @SerialName("image_url")
     val imageUrl: String? = null,
@@ -390,7 +424,7 @@ data class LibAlbumDetail(
 @Serializable
 data class LibSong(
     val id: Int,
-    val title: String,
+    val title: String = "",
     @SerialName("artist_name")
     val artistName: String? = null,
     @SerialName("album_title")

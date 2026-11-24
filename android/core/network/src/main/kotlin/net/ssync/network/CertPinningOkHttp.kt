@@ -1,6 +1,8 @@
 package net.ssync.network
 
 import net.ssync.connect.CryptoUtils
+import okhttp3.ConnectionPool
+import okhttp3.Dispatcher
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import okhttp3.Response
@@ -37,7 +39,14 @@ object CertPinningOkHttp {
             init(null, arrayOf(trustManager), SecureRandom())
         }
 
+        val dispatcher = Dispatcher().apply {
+            maxRequests = 64
+            maxRequestsPerHost = 24
+        }
+
         val builder = OkHttpClient.Builder()
+            .dispatcher(dispatcher)
+            .connectionPool(ConnectionPool(16, 5, TimeUnit.MINUTES))
             .sslSocketFactory(sslContext.socketFactory, trustManager)
             // Leaf cert fingerprint pin is the cryptographic server identity binding,
             // allowing direct IP/LAN fallback without weakening MITM protection.

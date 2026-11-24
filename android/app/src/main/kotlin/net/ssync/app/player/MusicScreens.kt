@@ -1853,15 +1853,18 @@ fun AlbumDetailScreen(
 ) {
     var album by remember { mutableStateOf<LibAlbumDetail?>(null) }
     var isLoading by remember { mutableStateOf(true) }
+    var loadError by remember { mutableStateOf<String?>(null) }
+    var reloadNonce by remember { mutableStateOf(0) }
     var playlistPickerSong by remember { mutableStateOf<SongRefPayload?>(null) }
     val likedState = rememberLikedTracksState(api)
 
-    LaunchedEffect(albumId, api) {
+    LaunchedEffect(albumId, api, reloadNonce) {
         isLoading = true
+        loadError = null
         when (val r = api.fetchAlbumDetail(albumId)) {
             is MusicApiResult.Success -> album = r.data
             MusicApiResult.DeviceRevoked -> onDeviceRevoked()
-            is MusicApiResult.Error -> Unit
+            is MusicApiResult.Error -> loadError = r.message
         }
         isLoading = false
     }
@@ -1872,7 +1875,22 @@ fun AlbumDetailScreen(
         return
     }
     if (al == null) {
-        EmptyBox("Album not found.")
+        Column(
+            modifier = Modifier.fillMaxSize().padding(24.dp),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            EmptyBox(loadError ?: "Album not found.")
+            if (loadError != null) {
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedButton(
+                    onClick = { reloadNonce += 1 },
+                    shape = RoundedCornerShape(999.dp),
+                ) {
+                    Text("Retry", color = SoulSyncColors.TextPrimary)
+                }
+            }
+        }
         return
     }
 
@@ -2146,13 +2164,14 @@ fun AlbumDetailScreen(
             }
 
             val playable = t.isOwned
+            val displayTitle = t.title.ifBlank { "Track ${t.trackNumber ?: (idx + 1)}" }
             val rowKey = "${t.id ?: "m-$idx"}"
             val st = reqState[rowKey]
             val isActive = playable && activeTrackId == t.id?.toString()
 
             AlbumTrackRow(
                 trackNumber = t.trackNumber ?: (idx + 1),
-                title = t.title,
+                title = displayTitle,
                 explicit = t.explicit,
                 format = if (playable) t.file?.format?.uppercase() else null,
                 duration = formatTrackDuration(t.duration),
@@ -2163,7 +2182,7 @@ fun AlbumDetailScreen(
                 contextItem = MediaContextItem(
                     itemType = "track",
                     itemId = t.id?.toString() ?: "m-$idx",
-                    title = t.title,
+                    title = displayTitle,
                     subtitle = al.primaryArtist?.name ?: al.title,
                     artworkUrl = coverUrl,
                     streamUrl = if (playable && t.id != null) api.streamUrl("track", t.id.toString()) else null,

@@ -71,10 +71,12 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import net.ssync.pairing.theme.SoulSyncColors
 import net.ssync.pairing.ui.dpadFocusable
@@ -101,7 +103,7 @@ private data class BillboardSlide(
     val previewStreamUrl: String? = null,
 )
 
-private object HomeWarmCache {
+internal object HomeWarmCache {
     var baseUrl: String? = null
     var continueItems: List<ProgressRow> = emptyList()
     var catalog: VideoCatalog = VideoCatalog()
@@ -113,6 +115,7 @@ private object HomeWarmCache {
     var books: List<OwnedBook> = emptyList()
     var homeLayout: HomeLayout = HomeLayout()
     var layoutShared: Boolean = true
+    var liveGuideHighlights: List<HomeLiveHighlight> = emptyList()
     var hasLoadedOnce: Boolean = false
 }
 
@@ -130,6 +133,7 @@ fun HomeScreen(
     onEditorConsumed: () -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
+    val appCacheDir = LocalContext.current.applicationContext.cacheDir
     val warmHit = HomeWarmCache.hasLoadedOnce && HomeWarmCache.baseUrl == api.baseUrl
     var isLoading by remember(api.baseUrl) { mutableStateOf(!warmHit) }
     var isRefreshing by remember { mutableStateOf(false) }
@@ -158,41 +162,54 @@ fun HomeScreen(
     suspend fun loadHomeData(forceRefresh: Boolean) {
         HomeWarmCache.baseUrl = api.baseUrl
         coroutineScope {
-            // Progressive per-section hydration: paint Billboard + top rows the instant
-            // video-catalog / continue arrive instead of blocking on all 9 endpoints!
-            val primaryJob = launch {
-                val cDef = async { api.fetchContinue() }
-                val vDef = async { api.fetchVideoCatalog(forceRefresh = forceRefresh) }
-                val lDef = async { api.fetchHomeLayout(device = "android-phone") }
+            // 1. Prioritize above-the-fold primary endpoints so Billboard + Continue Watching paint ASAP
+            //    without contending with 6 below-the-fold secondary requests on cold start.
+            val cDef = async { api.fetchContinue() }
+            val vDef = async { api.fetchVideoCatalog(forceRefresh = forceRefresh) }
+            val lDef = async { api.fetchHomeLayout(device = "android-phone") }
 
-                when (val v = vDef.await()) {
-                    is MusicApiResult.Success -> {
-                        catalog = v.data
-                        HomeWarmCache.catalog = v.data
-                    }
-                    MusicApiResult.DeviceRevoked -> {
-                        onDeviceRevoked()
-                        return@launch
-                    }
-                    is MusicApiResult.Error -> Unit
+            when (val v = vDef.await()) {
+                is MusicApiResult.Success -> {
+                    catalog = v.data
+                    HomeWarmCache.catalog = v.data
                 }
-                (cDef.await() as? MusicApiResult.Success)?.let {
-                    continueItems = it.data
-                    HomeWarmCache.continueItems = it.data
+                MusicApiResult.DeviceRevoked -> {
+                    onDeviceRevoked()
+                    return@coroutineScope
                 }
-                (lDef.await() as? MusicApiResult.Success)?.let { resp ->
-                    if (resp.data.layout.rows.isNotEmpty()) {
-                        homeLayout = resp.data.layout
-                        layoutShared = resp.data.shared
-                        HomeWarmCache.homeLayout = resp.data.layout
-                        HomeWarmCache.layoutShared = resp.data.shared
-                    }
+                is MusicApiResult.Error -> Unit
+            }
+            (cDef.await() as? MusicApiResult.Success)?.let {
+                continueItems = it.data
+                HomeWarmCache.continueItems = it.data
+            }
+            (lDef.await() as? MusicApiResult.Success)?.let { resp ->
+                if (resp.data.layout.rows.isNotEmpty()) {
+                    homeLayout = resp.data.layout
+                    layoutShared = resp.data.shared
+                    HomeWarmCache.homeLayout = resp.data.layout
+                    HomeWarmCache.layoutShared = resp.data.shared
                 }
-                HomeWarmCache.hasLoadedOnce = true
-                isLoading = false
+            }
+            HomeWarmCache.hasLoadedOnce = true
+            isLoading = false
+
+            // Persist lightweight cold-start snapshot to disk so next app launch renders instantaneously
+            launch(Dispatchers.IO) {
+                net.ssync.player.HomeDiskSnapshot.write(
+                    appCacheDir,
+                    net.ssync.player.HomeDiskSnapshot(
+                        baseUrl = api.baseUrl,
+                        continueItems = HomeWarmCache.continueItems,
+                        catalog = HomeWarmCache.catalog,
+                        studioCollections = HomeWarmCache.studioCollections,
+                        homeLayout = HomeWarmCache.homeLayout,
+                        layoutShared = HomeWarmCache.layoutShared,
+                    ),
+                )
             }
 
-            // Secondary below-the-fold sections hydrate independently without blocking first paint
+            // 2. Hydrate secondary below-the-fold sections in parallel after primary has painted
             launch {
                 (api.fetchWatchlist() as? MusicApiResult.Success)?.let {
                     watchlist = it.data
@@ -229,12 +246,35 @@ fun HomeScreen(
                     HomeWarmCache.books = it.data
                 }
             }
-            primaryJob.join()
         }
     }
 
     LaunchedEffect(api) {
-        if (!warmHit) isLoading = true
+        if (!warmHit) {
+            // Instant cold-start paint from persistent disk snapshot (<20ms) while live refresh runs
+            val snap = withContext(Dispatchers.IO) {
+                net.ssync.player.HomeDiskSnapshot.read(appCacheDir, api.baseUrl)
+            }
+            if (snap != null) {
+                catalog = snap.catalog
+                continueItems = snap.continueItems
+                studioCollections = snap.studioCollections
+                if (snap.homeLayout.rows.isNotEmpty()) {
+                    homeLayout = snap.homeLayout
+                    layoutShared = snap.layoutShared
+                }
+                HomeWarmCache.baseUrl = api.baseUrl
+                HomeWarmCache.catalog = snap.catalog
+                HomeWarmCache.continueItems = snap.continueItems
+                HomeWarmCache.studioCollections = snap.studioCollections
+                HomeWarmCache.homeLayout = homeLayout
+                HomeWarmCache.layoutShared = layoutShared
+                HomeWarmCache.hasLoadedOnce = true
+                isLoading = false
+            } else {
+                isLoading = true
+            }
+        }
         loadHomeData(forceRefresh = false)
         isLoading = false
         // Auto-refresh silently every 60s so newly added episodes & movies land ASAP
@@ -375,12 +415,22 @@ fun HomeScreen(
     val sortedShows = remember(catalog.shows) { catalog.shows.sortedByDescending { it.addedAt.orEmpty() } }
 
     // 1:1 Desktop Parity: On Live TV Right Now, Seasonal Spotlight, Today's Picks & Rediscover
-    val liveGuideHighlights = remember(catalog, studioCollections) {
-        buildHomeLiveGuideHighlights(
-            catalog = catalog,
-            studioCollections = studioCollections,
-            api = api,
-        )
+    // Computed off the main thread on Dispatchers.Default so initial Home composition never drops frames!
+    var liveGuideHighlights by remember(api.baseUrl) {
+        mutableStateOf(if (warmHit) HomeWarmCache.liveGuideHighlights else emptyList())
+    }
+    LaunchedEffect(catalog, studioCollections, api) {
+        if (catalog.movies.isNotEmpty() || catalog.shows.isNotEmpty()) {
+            val built = withContext(Dispatchers.Default) {
+                buildHomeLiveGuideHighlights(
+                    catalog = catalog,
+                    studioCollections = studioCollections,
+                    api = api,
+                )
+            }
+            liveGuideHighlights = built
+            HomeWarmCache.liveGuideHighlights = built
+        }
     }
     val seasonalBundle = remember(catalog.movies, catalog.shows) {
         val cal = java.util.Calendar.getInstance()
