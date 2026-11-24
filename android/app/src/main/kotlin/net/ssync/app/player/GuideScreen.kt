@@ -86,6 +86,7 @@ import net.ssync.player.PlayerApiClient
 import net.ssync.player.PlaylistDetail
 import net.ssync.player.SavedGuideChannel
 import net.ssync.player.VideoCatalog
+import net.ssync.player.StudioCollection
 import net.ssync.player.WatchingSession
 import java.text.Normalizer
 import java.text.SimpleDateFormat
@@ -609,6 +610,7 @@ private fun buildDesktopParityChannels(
     musicChannels: List<MusicChannel>,
     savedChannels: List<SavedGuideChannel>,
     lineup: List<GuideLineupEntry>,
+    studioCollections: List<StudioCollection> = emptyList(),
     api: PlayerApiClient,
     windowStartSec: Long,
     windowEndSec: Long,
@@ -886,6 +888,40 @@ private fun buildDesktopParityChannels(
             )
         }
 
+    // 7b. SoulSync Collection Studio 24/7 Channels (1:1 parity with Desktop studioCollectionChannels)
+    if (studioCollections.isNotEmpty()) {
+        val moviesById = movies.associateBy { it.id }
+        val showsById = shows.associateBy { it.id }
+        studioCollections.forEach { col ->
+            val pool = if (col.mediaType == "movie") {
+                col.members
+                    .mapNotNull { moviesById[it] }
+                    .sortedBy { it.year ?: 0 }
+                    .map { moviePoolItem(it, api) }
+            } else {
+                col.members
+                    .mapNotNull { showsById[it] }
+                    .flatMap { episodesByShow[it.id].orEmpty() }
+            }
+            if (pool.size >= 2) {
+                val cleanName = col.name.replace(Regex("\\s+collection$", RegexOption.IGNORE_CASE), "").ifBlank { col.name }
+                val playable = pool.filter { it.seconds >= 60 }
+                if (playable.size >= 2) {
+                    raw += RawChannel(
+                        id = "studio-col-${col.id}",
+                        name = cleanName,
+                        kind = ChannelKind.COLLECTION,
+                        blurb = col.summary?.takeIf { it.isNotBlank() }
+                            ?: if (col.mediaType == "movie") "${playable.size} films, in order"
+                            else "${col.members.size} curated shows",
+                        pool = playable,
+                        ordered = col.mediaType == "movie",
+                    )
+                }
+            }
+        }
+    }
+
     // 8. Your playlists (up to 8)
     playlists.forEach { pl ->
         val playable = pl.tracks.filter { it.trackId != null }.map { t ->
@@ -1067,6 +1103,120 @@ private fun buildSpecBlurb(spec: GuideChannelSpec, showTitle: String?): String {
     ).filter { it.isNotBlank() }.joinToString(" · ")
 }
 
+// ── Home Live TV Snapshot Helper (exact same deterministic schedule as Guide) ──
+
+internal data class HomeLiveHighlight(
+    val channelId: String,
+    val channelNumber: Int,
+    val channelName: String,
+    val programTitle: String,
+    val programSubtitle: String,
+    val artworkUrl: String?,
+    val progressFraction: Float,
+    val tune: (PlaybackCoordinator) -> Unit,
+)
+
+internal fun buildHomeLiveGuideHighlights(
+    catalog: VideoCatalog,
+    studioCollections: List<StudioCollection>,
+    api: PlayerApiClient,
+    nowSec: Long = System.currentTimeMillis() / 1000L,
+): List<HomeLiveHighlight> {
+    if (catalog.movies.isEmpty() && catalog.shows.isEmpty()) return emptyList()
+    val windowStart = nowSec - 1800L
+    val windowEnd = nowSec + 4L * 3600L
+    val channels = buildDesktopParityChannels(
+        catalog = catalog,
+        musicPoolSongs = emptyList(),
+        playlists = emptyList(),
+        musicChannels = emptyList(),
+        savedChannels = emptyList(),
+        lineup = emptyList(),
+        studioCollections = studioCollections,
+        api = api,
+        windowStartSec = windowStart,
+        windowEndSec = windowEnd,
+    ).filter { !it.isMusic && it.programs.isNotEmpty() }
+
+    val preferred = listOf("type-movies", "type-tv", "pick-top", "pick-comfort", "pick-new", "pick-late")
+    val ordered = buildList {
+        preferred.forEach { pid -> channels.firstOrNull { it.id == pid }?.let { add(it) } }
+        channels.filter { it.id !in preferred }.take(12).forEach { add(it) }
+    }.take(12)
+
+    fun tuneEpg(ch: EpgChannel, coordinator: PlaybackCoordinator) {
+        val currentSec = System.currentTimeMillis() / 1000L
+        val active = ch.programs.firstOrNull { currentSec in it.startEpochSec until it.endEpochSec }
+            ?: ch.programs.firstOrNull() ?: return
+        val offsetMs = if (currentSec in active.startEpochSec until active.endEpochSec) {
+            (currentSec - active.startEpochSec) * 1000L
+        } else {
+            0L
+        }
+        val durMs = ((active.endEpochSec - active.startEpochSec).coerceAtLeast(0L)) * 1000L
+        val upcoming = ch.programs.filter { it.startEpochSec >= active.endEpochSec }.take(10).map { p ->
+            ActivePlayable(
+                itemType = p.itemType,
+                itemId = p.itemId,
+                title = p.title,
+                subtitle = "CH ${ch.number} · ${ch.name}",
+                artworkUrl = p.artworkUrl,
+                streamUrl = api.streamUrl(p.itemType, p.itemId),
+                isVideo = true,
+                resumePositionMs = 0L,
+                durationMs = ((p.endEpochSec - p.startEpochSec).coerceAtLeast(0L)) * 1000L,
+                isLiveGuide = true,
+                channelId = ch.id,
+                channelName = ch.name,
+                channelNumber = ch.number,
+            )
+        }
+        coordinator.liveChannelSurfer = { curId, delta ->
+            val idx = ordered.indexOfFirst { it.id == curId }
+            if (idx >= 0 && ordered.size > 1) {
+                val nextIdx = (idx + delta + ordered.size) % ordered.size
+                tuneEpg(ordered[nextIdx], coordinator)
+            }
+        }
+        coordinator.playVideo(
+            ActivePlayable(
+                itemType = active.itemType,
+                itemId = active.itemId,
+                title = active.title,
+                subtitle = "CH ${ch.number} · ${ch.name}",
+                artworkUrl = active.artworkUrl,
+                streamUrl = api.streamUrl(active.itemType, active.itemId),
+                isVideo = true,
+                resumePositionMs = offsetMs,
+                durationMs = durMs,
+                isLiveGuide = true,
+                channelId = ch.id,
+                channelName = ch.name,
+                channelNumber = ch.number,
+            ),
+            upcoming = upcoming,
+        )
+    }
+
+    return ordered.mapNotNull { ch ->
+        val airing = ch.programs.firstOrNull { nowSec in it.startEpochSec until it.endEpochSec }
+            ?: ch.programs.firstOrNull()
+            ?: return@mapNotNull null
+        val total = (airing.endEpochSec - airing.startEpochSec).coerceAtLeast(1L)
+        val elapsed = (nowSec - airing.startEpochSec).coerceIn(0L, total)
+        HomeLiveHighlight(
+            channelId = ch.id,
+            channelNumber = ch.number,
+            channelName = ch.name,
+            programTitle = airing.title,
+            programSubtitle = "CH ${ch.number} · ${ch.name}",
+            artworkUrl = airing.artworkUrl ?: ch.mosaicArt.firstOrNull(),
+            progressFraction = (elapsed.toFloat() / total.toFloat()).coerceIn(0.03f, 0.99f),
+            tune = { coord -> tuneEpg(ch, coord) },
+        )
+    }
+}
+
 // ── Guide Screen Composable ──────────────────────────────────────────────────
 
 @Composable
@@ -1083,6 +1233,7 @@ fun GuideScreen(
     var musicChannels by remember { mutableStateOf<List<MusicChannel>>(emptyList()) }
     var savedChannels by remember { mutableStateOf<List<SavedGuideChannel>>(emptyList()) }
     var lineup by remember { mutableStateOf<List<GuideLineupEntry>>(emptyList()) }
+    var studioCollections by remember { mutableStateOf<List<StudioCollection>>(emptyList()) }
     var favoritesList by remember { mutableStateOf<List<String>>(emptyList()) }
     val favorites = remember(favoritesList) { favoritesList.toSet() }
     var viewMode by remember { mutableStateOf(GuideViewMode.GRID) }
@@ -1124,11 +1275,13 @@ fun GuideScreen(
             val sDef = async { api.fetchSavedGuideChannels() }
             val lDef = async { api.fetchGuideLineup() }
             val fDef = async { api.fetchGuideFavoritesList() }
+            val cDef = async { api.fetchCollections() }
 
             val v = vDef.await()
             val s = sDef.await()
             val l = lDef.await()
             val f = fDef.await()
+            val c = cDef.await()
 
             if (v is MusicApiResult.DeviceRevoked || s is MusicApiResult.DeviceRevoked) {
                 return@coroutineScope true
@@ -1137,6 +1290,7 @@ fun GuideScreen(
             (s as? MusicApiResult.Success)?.let { savedChannels = it.data }
             (l as? MusicApiResult.Success)?.let { lineup = it.data }
             (f as? MusicApiResult.Success)?.let { favoritesList = it.data }
+            (c as? MusicApiResult.Success)?.let { studioCollections = it.data }
             false
         }
         if (revoked) {
@@ -1151,6 +1305,7 @@ fun GuideScreen(
                 musicChannels = musicChannels,
                 savedChannels = savedChannels,
                 lineup = lineup,
+                studioCollections = studioCollections,
                 api = api,
                 windowStartSec = windowStartSec,
                 windowEndSec = windowEndSec,
@@ -1194,6 +1349,7 @@ fun GuideScreen(
                 musicChannels = musicChannels,
                 savedChannels = savedChannels,
                 lineup = lineup,
+                studioCollections = studioCollections,
                 api = api,
                 windowStartSec = windowStartSec,
                 windowEndSec = windowEndSec,
@@ -1255,6 +1411,16 @@ fun GuideScreen(
     }
 
     fun tuneInChannel(ch: EpgChannel, prog: EpgProgram? = null) {
+        val videoChannels = allChannels.filter { !it.isMusic && it.programs.isNotEmpty() }
+        if (videoChannels.size > 1) {
+            coordinator.liveChannelSurfer = { curId, delta ->
+                val idx = videoChannels.indexOfFirst { it.id == curId }
+                if (idx >= 0) {
+                    val nextIdx = (idx + delta + videoChannels.size) % videoChannels.size
+                    tuneInChannel(videoChannels[nextIdx])
+                }
+            }
+        }
         val active = prog ?: ch.programs.firstOrNull { nowSec in it.startEpochSec until it.endEpochSec }
             ?: ch.programs.firstOrNull() ?: return
         if (ch.isMusic && ch.musicPool.isNotEmpty()) {

@@ -63,6 +63,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import net.ssync.pairing.theme.SOULSYNC_ACCENT_SWATCHES
 import net.ssync.pairing.theme.SoulSyncColors
 import net.ssync.pairing.ui.dpadFocusable
 import net.ssync.player.MusicApiResult
@@ -243,6 +244,79 @@ fun SettingsScreen(
                 scopeBadge = "ALL SCREENS",
                 subtitle = "Synced with your SoulSync profile.",
             ) {
+                // Per-profile synced Accent Color picker (1:1 parity with Desktop & Manager)
+                Column(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(
+                            text = "Accent color",
+                            color = Color.White,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Text(
+                            text = "Personalize your profile's highlight color across all screens.",
+                            color = SoulSyncColors.TextSecondary,
+                            fontSize = 12.sp,
+                        )
+                    }
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        val activeAccent = profileSettings.accentColor.lowercase()
+                        SOULSYNC_ACCENT_SWATCHES.forEach { swatch ->
+                            val selected = activeAccent == swatch.id
+                            Row(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(999.dp))
+                                    .background(
+                                        if (selected) swatch.accent.copy(alpha = 0.22f)
+                                        else Color.White.copy(alpha = 0.05f),
+                                    )
+                                    .border(
+                                        width = if (selected) 1.5.dp else 1.dp,
+                                        color = if (selected) swatch.light else SoulSyncColors.Line,
+                                        shape = RoundedCornerShape(999.dp),
+                                    )
+                                    .clickable(enabled = loadedProfile) {
+                                        SoulSyncColors.applyAccent(swatch.id)
+                                        saveProfile(profileSettings.copy(accentColor = swatch.id))
+                                    }
+                                    .dpadFocusable()
+                                    .padding(horizontal = 11.dp, vertical = 7.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(7.dp),
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(16.dp)
+                                        .clip(CircleShape)
+                                        .background(swatch.accent),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    if (selected) {
+                                        Icon(
+                                            imageVector = Icons.Default.Check,
+                                            contentDescription = null,
+                                            tint = swatch.onAccent,
+                                            modifier = Modifier.size(11.dp),
+                                        )
+                                    }
+                                }
+                                Text(
+                                    text = swatch.label,
+                                    color = if (selected) Color.White else SoulSyncColors.TextSoft,
+                                    fontSize = 12.sp,
+                                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                                )
+                            }
+                        }
+                    }
+                }
+                SettingsDivider()
                 SettingsToggleRow(
                     label = "Share what I'm playing",
                     help = "Show your live session on Watching now so others can join you.",

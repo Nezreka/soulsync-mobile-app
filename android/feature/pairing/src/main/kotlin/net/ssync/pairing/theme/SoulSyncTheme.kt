@@ -6,6 +6,9 @@ import androidx.compose.material3.Shapes
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -13,14 +16,50 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
+data class SoulSyncAccentSwatch(
+    val id: String,
+    val label: String,
+    val accent: Color,
+    val light: Color,
+    val neon: Color,
+    val onAccent: Color,
+)
+
+val SOULSYNC_ACCENT_SWATCHES: List<SoulSyncAccentSwatch> = listOf(
+    SoulSyncAccentSwatch("emerald", "Emerald", Color(0xFF1DB954), Color(0xFF1ED760), Color(0xFF22FF6B), Color(0xFF04140A)),
+    SoulSyncAccentSwatch("violet", "Violet", Color(0xFFA855F7), Color(0xFFC084FC), Color(0xFFD8B4FE), Color(0xFFFFFFFF)),
+    SoulSyncAccentSwatch("ocean", "Ocean", Color(0xFF38BDF8), Color(0xFF7DD3FC), Color(0xFFBAE6FD), Color(0xFF041019)),
+    SoulSyncAccentSwatch("amber", "Amber", Color(0xFFF59E0B), Color(0xFFFBBF24), Color(0xFFFDE68A), Color(0xFF190E02)),
+    SoulSyncAccentSwatch("rose", "Rose", Color(0xFFF43F5E), Color(0xFFFB7185), Color(0xFFFDA4AF), Color(0xFFFFFFFF)),
+    SoulSyncAccentSwatch("crimson", "Crimson", Color(0xFFE50914), Color(0xFFF83842), Color(0xFFFF6B72), Color(0xFFFFFFFF)),
+)
+
 /**
  * Official SoulSync design tokens ported 1:1 from `SoulSync/webui/static/tokens.css`.
+ * Accent tokens are backed by Compose state so profile accent changes recompose live.
  */
 object SoulSyncColors {
-    val Accent = Color(0xFF1DB954)        // --accent-rgb: 29, 185, 84
-    val AccentLight = Color(0xFF1ED760)   // --accent-light-rgb: 30, 215, 96
-    val AccentNeon = Color(0xFF22FF6B)    // --accent-neon-rgb: 34, 255, 107
-    val OnAccent = Color(0xFF04140A)      // --help-on-accent: #04140a
+    var ActiveAccentId by mutableStateOf("emerald")
+        private set
+    var Accent by mutableStateOf(Color(0xFF1DB954))        // --accent-rgb: 29, 185, 84
+        private set
+    var AccentLight by mutableStateOf(Color(0xFF1ED760))   // --accent-light-rgb: 30, 215, 96
+        private set
+    var AccentNeon by mutableStateOf(Color(0xFF22FF6B))    // --accent-neon-rgb: 34, 255, 107
+        private set
+    var OnAccent by mutableStateOf(Color(0xFF04140A))      // --help-on-accent: #04140a
+        private set
+
+    fun applyAccent(key: String?) {
+        val norm = key?.trim()?.lowercase() ?: "emerald"
+        val swatch = SOULSYNC_ACCENT_SWATCHES.firstOrNull { it.id == norm }
+            ?: SOULSYNC_ACCENT_SWATCHES.first()
+        ActiveAccentId = swatch.id
+        Accent = swatch.accent
+        AccentLight = swatch.light
+        AccentNeon = swatch.neon
+        OnAccent = swatch.onAccent
+    }
 
     val BgPrimary = Color(0xFF07070A)     // --pl-ink-rgb: 7, 7, 10 (premier /player canvas)
     val Panel = Color(0xFF101017)         // --sa-panel: #101017
@@ -119,8 +158,34 @@ private val SoulSyncTypography = Typography(
 
 @Composable
 fun SoulSyncTheme(content: @Composable () -> Unit) {
+    val colorScheme = darkColorScheme(
+        primary = SoulSyncColors.Accent,
+        onPrimary = SoulSyncColors.OnAccent,
+        primaryContainer = SoulSyncColors.Accent.copy(alpha = 0.22f),
+        onPrimaryContainer = SoulSyncColors.AccentLight,
+        secondary = SoulSyncColors.Info,
+        onSecondary = SoulSyncColors.BgPrimary,
+        secondaryContainer = SoulSyncColors.BgSecondary,
+        onSecondaryContainer = SoulSyncColors.TextPrimary,
+        tertiary = SoulSyncColors.HiRes,
+        onTertiary = SoulSyncColors.OnAccent,
+        background = SoulSyncColors.BgPrimary,
+        onBackground = SoulSyncColors.TextPrimary,
+        surface = SoulSyncColors.Panel,
+        onSurface = SoulSyncColors.TextPrimary,
+        surfaceVariant = SoulSyncColors.Card,
+        onSurfaceVariant = SoulSyncColors.TextSecondary,
+        surfaceContainerLow = SoulSyncColors.Panel,
+        surfaceContainer = SoulSyncColors.Card,
+        surfaceContainerHigh = SoulSyncColors.CardRaised,
+        surfaceContainerHighest = SoulSyncColors.BgSecondary,
+        outline = SoulSyncColors.LineStrong,
+        outlineVariant = SoulSyncColors.Line,
+        error = SoulSyncColors.Danger,
+        onError = Color.White,
+    )
     MaterialTheme(
-        colorScheme = SoulSyncDarkColorScheme,
+        colorScheme = colorScheme,
         shapes = SoulSyncShapes,
         typography = SoulSyncTypography,
         content = content,

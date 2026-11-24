@@ -1050,6 +1050,8 @@ data class PlayerSettings(
     val showTvEpisodeCount: Boolean = true,
     @SerialName("show_year_on_cards")
     val showYearOnCards: Boolean = true,
+    @SerialName("accent_color")
+    val accentColor: String = "emerald",
 )
 
 data class DeviceProfileInfo(
@@ -1179,15 +1181,14 @@ data class HomeLayout(
         fun defaultRows(): List<LayoutRow> = listOf(
             LayoutRow("continue", "wide", true),
             LayoutRow("new-episodes", "wide", true),
+            LayoutRow("live-guide", "wide", true),
+            LayoutRow("seasonal", "standard", true),
             LayoutRow("collections", "standard", true),
             LayoutRow("top-rated", "ranked", true),
             LayoutRow("recent-movies", "standard", true),
             LayoutRow("recent-shows", "standard", true),
             LayoutRow("discovery-playlists", "standard", true),
             LayoutRow("recent-music", "standard", true),
-            LayoutRow("youtube", "wide", true),
-            LayoutRow("podcasts", "standard", true),
-            LayoutRow("audiobooks", "standard", true),
         )
     }
 }

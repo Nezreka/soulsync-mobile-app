@@ -293,6 +293,10 @@ fun PlayerShell(
     }
     var playerSettings by remember { mutableStateOf(net.ssync.player.PlayerSettings()) }
 
+    LaunchedEffect(playerSettings.accentColor) {
+        SoulSyncColors.applyAccent(playerSettings.accentColor)
+    }
+
     LaunchedEffect(api) {
         (api.fetchPresence() as? MusicApiResult.Success)?.let { p ->
             watchingOthersCount = p.data.sessions.count { !it.you }
@@ -530,6 +534,11 @@ fun PlayerShell(
                         onLeaveParty = { coordinator.detachWatchParty() },
                         nextVideoTitle = coordinator.videoQueue.getOrNull(1)?.title,
                         onVideoEnded = { coordinator.playNextVideo() },
+                        onSurfChannel = if (videoItem.isLiveGuide && coordinator.liveChannelSurfer != null) {
+                            { delta -> coordinator.surfLiveChannel(delta) }
+                        } else {
+                            null
+                        },
                         onClose = { pos, dur -> coordinator.closeVideo(pos, dur) },
                     )
                 }

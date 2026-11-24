@@ -128,6 +128,7 @@ fun VideoPlayerOverlay(
     onLeaveParty: (() -> Unit)? = null,
     nextVideoTitle: String? = null,
     onVideoEnded: (() -> Unit)? = null,
+    onSurfChannel: ((delta: Int) -> Unit)? = null,
     onClose: (positionMs: Long, durationMs: Long) -> Unit,
 ) {
     val context = LocalContext.current
@@ -776,6 +777,47 @@ fun VideoPlayerOverlay(
                     }
 
                     Spacer(modifier = Modifier.width(8.dp))
+                    if (item.isLiveGuide && onSurfChannel != null) {
+                        Row(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(999.dp))
+                                .background(Color.White.copy(alpha = 0.12f))
+                                .border(1.dp, Color.White.copy(alpha = 0.18f), RoundedCornerShape(999.dp))
+                                .padding(horizontal = 4.dp, vertical = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(2.dp),
+                        ) {
+                            Text(
+                                text = "CH ▼",
+                                color = Color.White,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(999.dp))
+                                    .clickable {
+                                        onSurfChannel(-1)
+                                        hudPoke++
+                                    }
+                                    .dpadFocusable(RoundedCornerShape(999.dp))
+                                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                            )
+                            Text(
+                                text = "CH ▲",
+                                color = SoulSyncColors.AccentLight,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(999.dp))
+                                    .clickable {
+                                        onSurfChannel(1)
+                                        hudPoke++
+                                    }
+                                    .dpadFocusable(RoundedCornerShape(999.dp))
+                                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                    }
                     IconButton(
                         onClick = {
                             if (onOpenCast != null) {

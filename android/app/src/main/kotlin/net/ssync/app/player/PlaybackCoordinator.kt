@@ -63,6 +63,14 @@ class PlaybackCoordinator(
     var lyricsText by mutableStateOf<String?>(null)
         private set
 
+    /** Registered by GuideScreen/HomeScreen so VideoPlayerOverlay can surf live channels (CH ▲ / CH ▼). */
+    var liveChannelSurfer by mutableStateOf<((currentChannelId: String, delta: Int) -> Unit)?>(null)
+
+    fun surfLiveChannel(delta: Int) {
+        val currentCh = activeItem?.channelId ?: return
+        liveChannelSurfer?.invoke(currentCh, delta)
+    }
+
     private fun resolveOffline(item: ActivePlayable): ActivePlayable {
         val local = OfflineDownloadManager.localUriIfDownloaded(item.itemType, item.itemId)
         return if (local != null) item.copy(streamUrl = local) else item

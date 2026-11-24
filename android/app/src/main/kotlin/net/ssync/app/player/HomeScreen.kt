@@ -374,6 +374,62 @@ fun HomeScreen(
     val sortedMovies = remember(catalog.movies) { catalog.movies.sortedByDescending { it.addedAt.orEmpty() } }
     val sortedShows = remember(catalog.shows) { catalog.shows.sortedByDescending { it.addedAt.orEmpty() } }
 
+    // 1:1 Desktop Parity: On Live TV Right Now, Seasonal Spotlight, Today's Picks & Rediscover
+    val liveGuideHighlights = remember(catalog, studioCollections) {
+        buildHomeLiveGuideHighlights(
+            catalog = catalog,
+            studioCollections = studioCollections,
+            api = api,
+        )
+    }
+    val seasonalBundle = remember(catalog.movies, catalog.shows) {
+        val cal = java.util.Calendar.getInstance()
+        val month = cal.get(java.util.Calendar.MONTH) // 0..11
+        val daySeed = cal.get(java.util.Calendar.YEAR) * 1000 + cal.get(java.util.Calendar.DAY_OF_YEAR)
+        val (label, genres) = when (month) {
+            0 -> "Winter escape" to setOf("adventure", "sci-fi", "science fiction", "fantasy")
+            1 -> "Date night & romance" to setOf("romance", "drama", "comedy")
+            2 -> "Spring awakening" to setOf("comedy", "adventure", "family")
+            3 -> "Mind-bending thrillers" to setOf("thriller", "mystery", "sci-fi", "science fiction")
+            4 -> "Action blockbuster season" to setOf("action", "adventure", "sci-fi", "science fiction")
+            5 -> "Summer vibes" to setOf("comedy", "adventure", "music", "family")
+            6 -> "Summer blockbusters" to setOf("action", "adventure", "fantasy")
+            7 -> "Late summer mysteries" to setOf("mystery", "crime", "thriller")
+            8 -> "Back-to-school & drama" to setOf("drama", "documentary", "biography", "history")
+            9 -> "October chills & Halloween" to setOf("horror", "thriller", "mystery")
+            10 -> "Cozy autumn nights" to setOf("drama", "family", "comedy", "fantasy")
+            else -> "Holiday & winter cinema" to setOf("family", "fantasy", "comedy", "animation")
+        }
+        val movieMatches = catalog.movies.filter { m -> m.genres.any { it.lowercase() in genres } }
+            .map { Triple("movie", it.id, it.title) }
+        val showMatches = catalog.shows.filter { s -> s.genres.any { it.lowercase() in genres } }
+            .map { Triple("show", it.id, it.title) }
+        val combined = (movieMatches + showMatches)
+            .sortedBy { (k, id, _) -> ((id * 2654435761L) xor daySeed.toLong() xor k.hashCode().toLong()) }
+            .take(18)
+        label to combined
+    }
+    val dailyGenrePick = remember(catalog.movies) {
+        val counts = mutableMapOf<String, Int>()
+        catalog.movies.forEach { m -> m.genres.forEach { g -> counts[g] = (counts[g] ?: 0) + 1 } }
+        val eligible = counts.entries.filter { it.value >= 4 }.map { it.key }.sorted()
+        if (eligible.isEmpty()) null else {
+            val daySeed = java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_YEAR)
+            val chosen = eligible[daySeed % eligible.size]
+            chosen to catalog.movies.filter { m -> m.genres.any { it.equals(chosen, ignoreCase = true) } }
+                .sortedByDescending { it.rating ?: 0.0 }
+                .take(18)
+        }
+    }
+    val rediscoverMovies = remember(catalog.movies) {
+        val daySeed = java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_YEAR).toLong()
+        catalog.movies
+            .sortedBy { it.addedAt.orEmpty() }
+            .take(40)
+            .sortedBy { (it.id.toLong() * 1103515245L) xor daySeed }
+            .take(18)
+    }
+
     androidx.compose.material3.pulltorefresh.PullToRefreshBox(
         isRefreshing = isRefreshing,
         onRefresh = {
@@ -638,6 +694,98 @@ fun HomeScreen(
                     }
                 }
                 row.id == "watchlist" -> Unit
+                row.id == "live-guide" && liveGuideHighlights.isNotEmpty() -> {
+                    item(key = "row-live-guide") {
+                        MediaRail(
+                            title = "On Live TV Right Now",
+                            actionLabel = "Guide",
+                            onAction = { onNavigate(PlayerDestination.Guide) },
+                        ) {
+                            items(liveGuideHighlights, key = { "live-${it.channelId}" }) { ch ->
+                                WideMediaCard(
+                                    title = ch.programTitle,
+                                    subtitle = "LIVE · ${ch.programSubtitle}",
+                                    artworkUrl = ch.artworkUrl,
+                                    progress = ch.progressFraction,
+                                    onClick = { ch.tune(coordinator) },
+                                )
+                            }
+                        }
+                    }
+                }
+                row.id == "seasonal" && seasonalBundle.second.isNotEmpty() -> {
+                    item(key = "row-seasonal") {
+                        MediaRail(
+                            title = seasonalBundle.first,
+                            actionLabel = "Movies",
+                            onAction = { onNavigate(PlayerDestination.Movies) },
+                        ) {
+                            items(seasonalBundle.second, key = { (k, id, _) -> "season-$k-$id" }) { (kind, id, title) ->
+                                if (kind == "movie") {
+                                    val m = moviesById[id]
+                                    PosterCard(
+                                        title = title,
+                                        subtitle = m?.year?.toString(),
+                                        artworkUrl = api.artwork.moviePoster(id),
+                                        badge = m?.rating?.let { "%.1f".format(it) },
+                                        width = cardWidth,
+                                        onClick = { onNavigate(PlayerDestination.MovieDetail(id)) },
+                                    )
+                                } else {
+                                    val s = showsById[id]
+                                    PosterCard(
+                                        title = title,
+                                        subtitle = s?.episodeCount?.let { "$it episodes" },
+                                        artworkUrl = api.artwork.showPoster(id),
+                                        badge = s?.rating?.let { "%.1f".format(it) },
+                                        width = cardWidth,
+                                        onClick = { onNavigate(PlayerDestination.ShowDetail(id)) },
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+                row.id == "genre-picks" && dailyGenrePick != null && dailyGenrePick.second.isNotEmpty() -> {
+                    item(key = "row-genre-picks") {
+                        MediaRail(
+                            title = "Today's Picks: ${dailyGenrePick.first}",
+                            actionLabel = "Movies",
+                            onAction = { onNavigate(PlayerDestination.Movies) },
+                        ) {
+                            items(dailyGenrePick.second, key = { "gpick-${it.id}" }) { m ->
+                                PosterCard(
+                                    title = m.title,
+                                    subtitle = m.year?.toString(),
+                                    artworkUrl = api.artwork.moviePoster(m.id),
+                                    badge = m.rating?.let { "%.1f".format(it) },
+                                    width = cardWidth,
+                                    onClick = { onNavigate(PlayerDestination.MovieDetail(m.id)) },
+                                )
+                            }
+                        }
+                    }
+                }
+                row.id == "rediscover" && rediscoverMovies.isNotEmpty() -> {
+                    item(key = "row-rediscover") {
+                        MediaRail(
+                            title = "Rediscover",
+                            actionLabel = "All",
+                            onAction = { onNavigate(PlayerDestination.Movies) },
+                        ) {
+                            items(rediscoverMovies, key = { "redisc-${it.id}" }) { m ->
+                                PosterCard(
+                                    title = m.title,
+                                    subtitle = m.year?.toString(),
+                                    artworkUrl = api.artwork.moviePoster(m.id),
+                                    badge = m.rating?.let { "%.1f".format(it) },
+                                    width = cardWidth,
+                                    onClick = { onNavigate(PlayerDestination.MovieDetail(m.id)) },
+                                )
+                            }
+                        }
+                    }
+                }
                 row.id == "collections" && studioCollections.isNotEmpty() -> {
                     val visibleCols = studioCollections.mapNotNull { c ->
                         val members = c.members.filter { id ->
