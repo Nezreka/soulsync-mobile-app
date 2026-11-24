@@ -33,6 +33,7 @@ import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.filled.Bedtime
 import androidx.compose.material.icons.filled.Cast
 import androidx.compose.material.icons.filled.CastConnected
+import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -212,6 +213,33 @@ fun AudioNowPlayingSheet(
                     }
                 }
 
+                var showReportIssue by remember { mutableStateOf(false) }
+                IconButton(
+                    onClick = { showReportIssue = true },
+                    modifier = Modifier
+                        .size(38.dp)
+                        .clip(CircleShape)
+                        .background(Color.White.copy(alpha = 0.08f)),
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Flag,
+                        contentDescription = "Report issue",
+                        tint = Color.White.copy(alpha = 0.85f),
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+                if (showReportIssue) {
+                    ReportIssueDialog(
+                        api = api,
+                        itemType = item.itemType,
+                        itemId = item.itemId,
+                        title = item.title,
+                        subtitle = item.subtitle,
+                        positionSec = (coordinator.positionMs / 1000L).toInt(),
+                        onDismiss = { showReportIssue = false },
+                    )
+                }
+                Spacer(modifier = Modifier.width(6.dp))
                 if (onOpenCast != null) {
                     IconButton(
                         onClick = onOpenCast,

@@ -684,6 +684,57 @@ class PlayerApiClient(
             }
         }
 
+    // ── Media Issue Reporting (all media types) ──────────────────────────────
+
+    suspend fun fetchIssues(status: String? = null): MusicApiResult<PlayerIssuesResponse> {
+        val url = if (!status.isNullOrBlank()) "$base/api/player/issues?status=$status" else "$base/api/player/issues"
+        return getJson(url) { body ->
+            json.decodeFromString<PlayerIssuesResponse>(body)
+        }
+    }
+
+    suspend fun reportIssue(
+        itemType: String,
+        itemId: String,
+        title: String,
+        subtitle: String = "",
+        category: String = "playback",
+        note: String = "",
+        positionSec: Int = 0,
+    ): MusicApiResult<PlayerIssue?> = withContext(Dispatchers.IO) {
+        val payload = PlayerIssueCreateRequest(
+            itemType = itemType,
+            itemId = itemId,
+            title = title,
+            subtitle = subtitle,
+            category = category,
+            note = note,
+            positionSec = positionSec,
+        )
+        val req = Request.Builder()
+            .url("$base/api/player/issues")
+            .post(json.encodeToString(PlayerIssueCreateRequest.serializer(), payload).toRequestBody(JSON_MEDIA_TYPE))
+            .build()
+        execute(req) { body ->
+            json.decodeFromString<PlayerIssueEnvelope>(body).issue
+        }
+    }
+
+    suspend fun updateIssueStatus(
+        issueId: Int,
+        status: String,
+        adminNote: String? = null,
+    ): MusicApiResult<PlayerIssue?> = withContext(Dispatchers.IO) {
+        val payload = PlayerIssueUpdateRequest(status = status, adminNote = adminNote)
+        val req = Request.Builder()
+            .url("$base/api/player/issues/$issueId")
+            .put(json.encodeToString(PlayerIssueUpdateRequest.serializer(), payload).toRequestBody(JSON_MEDIA_TYPE))
+            .build()
+        execute(req) { body ->
+            json.decodeFromString<PlayerIssueEnvelope>(body).issue
+        }
+    }
+
     suspend fun fetchCommercialSchedule(
         items: List<CommercialScheduleItem>,
         era: String? = null,

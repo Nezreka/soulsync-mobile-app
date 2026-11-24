@@ -3,6 +3,8 @@ package net.ssync.app.player
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.material.icons.filled.Flag
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -492,23 +494,48 @@ fun PodcastDetailScreen(
         }
         items(episodes) { ep ->
             val stream = ep.enclosureUrl ?: api.streamUrl("podcast", ep.guid ?: ep.title)
-            SimpleTrackRow(
-                title = ep.title,
-                subtitle = listOfNotNull(ep.pubDate, ep.durationSeconds?.let { "${it / 60}m" }).joinToString(" • "),
-                artworkUrl = api.artwork.resolve(ep.artworkUrl ?: sub.artworkUrl),
-                onClick = {
-                    coordinator.playAudio(
-                        ActivePlayable(
-                            itemType = "podcast",
-                            itemId = ep.guid ?: ep.title,
-                            title = ep.title,
-                            subtitle = sub.title,
-                            artworkUrl = api.artwork.resolve(ep.artworkUrl ?: sub.artworkUrl),
-                            streamUrl = stream,
-                        ),
+            var showEpReport by remember(ep.guid ?: ep.title) { mutableStateOf(false) }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(modifier = Modifier.weight(1f)) {
+                    SimpleTrackRow(
+                        title = ep.title,
+                        subtitle = listOfNotNull(ep.pubDate, ep.durationSeconds?.let { "${it / 60}m" }).joinToString(" • "),
+                        artworkUrl = api.artwork.resolve(ep.artworkUrl ?: sub.artworkUrl),
+                        onClick = {
+                            coordinator.playAudio(
+                                ActivePlayable(
+                                    itemType = "podcast",
+                                    itemId = ep.guid ?: ep.title,
+                                    title = ep.title,
+                                    subtitle = sub.title,
+                                    artworkUrl = api.artwork.resolve(ep.artworkUrl ?: sub.artworkUrl),
+                                    streamUrl = stream,
+                                ),
+                            )
+                        },
                     )
-                },
-            )
+                }
+                androidx.compose.material3.IconButton(onClick = { showEpReport = true }) {
+                    Icon(
+                        imageVector = Icons.Default.Flag,
+                        contentDescription = "Report issue",
+                        tint = SoulSyncColors.TextSecondary,
+                    )
+                }
+            }
+            if (showEpReport) {
+                ReportIssueDialog(
+                    api = api,
+                    itemType = "podcast",
+                    itemId = ep.guid ?: ep.title,
+                    title = ep.title,
+                    subtitle = sub.title,
+                    onDismiss = { showEpReport = false },
+                )
+            }
         }
     }
 }
@@ -609,6 +636,30 @@ fun AudiobookDetailScreen(
             Icon(Icons.Default.PlayArrow, contentDescription = null)
             Spacer(modifier = Modifier.width(6.dp))
             Text("Listen")
+        }
+        Spacer(modifier = Modifier.height(10.dp))
+        var showBookReport by remember(book.asin) { mutableStateOf(false) }
+        androidx.compose.material3.OutlinedButton(
+            onClick = { showBookReport = true },
+            modifier = Modifier.fillMaxWidth().height(46.dp),
+        ) {
+            Icon(
+                imageVector = Icons.Default.Flag,
+                contentDescription = null,
+                tint = SoulSyncColors.TextSecondary,
+            )
+            Spacer(modifier = Modifier.width(6.dp))
+            Text("Report issue", color = SoulSyncColors.TextPrimary)
+        }
+        if (showBookReport) {
+            ReportIssueDialog(
+                api = api,
+                itemType = "audiobook",
+                itemId = book.asin,
+                title = book.title,
+                subtitle = book.author.orEmpty(),
+                onDismiss = { showBookReport = false },
+            )
         }
     }
 }

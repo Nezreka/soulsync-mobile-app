@@ -44,6 +44,7 @@ import androidx.compose.material.icons.filled.Brightness6
 import androidx.compose.material.icons.filled.Cast
 import androidx.compose.material.icons.filled.CastConnected
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Forward10
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -818,6 +819,37 @@ fun VideoPlayerOverlay(
                         }
                         Spacer(modifier = Modifier.width(8.dp))
                     }
+                    var showReportDialog by remember(item.itemId) { mutableStateOf(false) }
+                    IconButton(
+                        onClick = {
+                            showReportDialog = true
+                            hudPoke++
+                        },
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(CircleShape)
+                            .background(Color.White.copy(alpha = 0.12f))
+                            .dpadFocusable(CircleShape),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Flag,
+                            contentDescription = "Report issue",
+                            tint = Color.White,
+                            modifier = Modifier.size(19.dp),
+                        )
+                    }
+                    if (showReportDialog) {
+                        ReportIssueDialog(
+                            api = api,
+                            itemType = item.itemType,
+                            itemId = item.itemId,
+                            title = item.title,
+                            subtitle = item.subtitle,
+                            positionSec = (effectivePositionMs() / 1000L).toInt(),
+                            onDismiss = { showReportDialog = false },
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
                     IconButton(
                         onClick = {
                             if (onOpenCast != null) {

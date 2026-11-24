@@ -26,6 +26,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Cast
 import androidx.compose.material.icons.filled.CastConnected
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.Forward30
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -1110,6 +1111,30 @@ fun CastDeviceSheet(
                                     )
                                 }
                             }
+                        }
+                    }
+
+                    var showCastReport by remember { mutableStateOf(false) }
+                    if (activeItem != null) {
+                        OutlinedButton(
+                            onClick = { showCastReport = true },
+                            modifier = Modifier.fillMaxWidth(),
+                            border = BorderStroke(1.dp, SoulSyncColors.LineStrong),
+                        ) {
+                            Icon(Icons.Default.Flag, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Report Issue with Current Media", color = Color.White, fontWeight = FontWeight.SemiBold)
+                        }
+                        if (showCastReport) {
+                            ReportIssueDialog(
+                                api = api,
+                                itemType = activeItem.itemType,
+                                itemId = activeItem.itemId,
+                                title = activeItem.title,
+                                subtitle = activeItem.subtitle,
+                                positionSec = (currentPositionMs / 1000L).toInt(),
+                                onDismiss = { showCastReport = false },
+                            )
                         }
                     }
 

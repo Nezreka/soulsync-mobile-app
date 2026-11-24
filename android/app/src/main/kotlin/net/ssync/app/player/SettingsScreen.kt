@@ -250,8 +250,8 @@ fun SettingsScreen(
                 (api.fetchCommercialsConfig() as? MusicApiResult.Success)?.let {
                     commConfig = it.data
                     commStatus = it.data.status
+                    isAdminUser = it.data.canEdit
                 }
-                (api.fetchMyDownloads(includeRemoved = false) as? MusicApiResult.Success)?.let { isAdminUser = it.data.isAdmin }
             }
             fun updateServerComm(enabled: Boolean? = null, era: String? = null, mode: String? = null) {
                 if (!isAdminUser || savingComm) return
@@ -405,6 +405,133 @@ fun SettingsScreen(
                                         fontSize = 12.sp,
                                         fontWeight = FontWeight.SemiBold,
                                     )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 1d. Reported Media Issues (Admin triage queue / Member's own reports — 1:1 Desktop parity)
+        item {
+            var issuesResp by remember { mutableStateOf<net.ssync.player.PlayerIssuesResponse?>(null) }
+            var updatingIssueId by remember { mutableStateOf<Int?>(null) }
+            LaunchedEffect(api) {
+                (api.fetchIssues() as? MusicApiResult.Success)?.let { issuesResp = it.data }
+            }
+            fun setStatus(issueId: Int, status: String) {
+                if (updatingIssueId != null) return
+                updatingIssueId = issueId
+                scope.launch {
+                    (api.updateIssueStatus(issueId, status) as? MusicApiResult.Success)?.let {
+                        (api.fetchIssues() as? MusicApiResult.Success)?.let { refreshed ->
+                            issuesResp = refreshed.data
+                        }
+                        flashSaved()
+                    }
+                    updatingIssueId = null
+                }
+            }
+            val openCount = issuesResp?.openCount ?: 0
+            val badge = when {
+                openCount > 0 -> "$openCount OPEN"
+                issuesResp?.canManage == true -> "ADMIN QUEUE"
+                else -> "MY REPORTS"
+            }
+            SettingsCard(
+                icon = Icons.Default.Tv,
+                title = "Reported media issues",
+                scopeBadge = badge,
+                subtitle = "Broken files, audio/sync issues, or bad metadata flagged from movies, episodes, YouTube, music, podcasts, and audiobooks.",
+            ) {
+                val list = issuesResp?.issues.orEmpty()
+                if (list.isEmpty()) {
+                    Text(
+                        text = "No reported media issues yet. Tap the flag icon on any movie, episode, YouTube video, track, podcast, or audiobook to report a broken file.",
+                        color = SoulSyncColors.TextSecondary,
+                        fontSize = 13.sp,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                    )
+                } else {
+                    Column(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        list.take(20).forEach { iss ->
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(Color.White.copy(alpha = 0.04f))
+                                    .border(1.dp, Color.White.copy(alpha = 0.10f), RoundedCornerShape(12.dp))
+                                    .padding(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    Text(
+                                        text = iss.title,
+                                        color = Color.White,
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                    Text(
+                                        text = iss.status.uppercase(),
+                                        color = if (iss.status == "open") Color(0xFFFFD180) else Color(0xFF8FF0B3),
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(999.dp))
+                                            .background(
+                                                if (iss.status == "open") Color(0x2EFFA500) else Color(0x282ECC71),
+                                            )
+                                            .padding(horizontal = 8.dp, vertical = 2.dp),
+                                    )
+                                }
+                                Text(
+                                    text = "${iss.itemType.uppercase()} · ${iss.category}" +
+                                        (if (iss.profileName.isNotBlank()) " · by ${iss.profileName}" else ""),
+                                    color = SoulSyncColors.AccentLight,
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.Medium,
+                                )
+                                if (iss.note.isNotBlank()) {
+                                    Text(
+                                        text = iss.note,
+                                        color = Color(0xFFD0D6E4),
+                                        fontSize = 12.5.sp,
+                                    )
+                                }
+                                if (iss.filePath.isNotBlank()) {
+                                    Text(
+                                        text = iss.filePath,
+                                        color = SoulSyncColors.TextSoft,
+                                        fontSize = 11.sp,
+                                    )
+                                }
+                                if (issuesResp?.canManage == true && iss.status == "open") {
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        androidx.compose.material3.OutlinedButton(
+                                            enabled = updatingIssueId == null,
+                                            onClick = { setStatus(iss.id, "resolved") },
+                                            shape = RoundedCornerShape(999.dp),
+                                            border = BorderStroke(1.dp, SoulSyncColors.LineStrong),
+                                        ) {
+                                            Text("Resolve", color = Color.White, fontSize = 12.sp)
+                                        }
+                                        androidx.compose.material3.OutlinedButton(
+                                            enabled = updatingIssueId == null,
+                                            onClick = { setStatus(iss.id, "dismissed") },
+                                            shape = RoundedCornerShape(999.dp),
+                                            border = BorderStroke(1.dp, SoulSyncColors.LineStrong),
+                                        ) {
+                                            Text("Dismiss", color = SoulSyncColors.TextSecondary, fontSize = 12.sp)
+                                        }
+                                    }
                                 }
                             }
                         }

@@ -1112,8 +1112,75 @@ data class CommercialsConfig(
     val enabled: Boolean = false,
     val era: String = "auto",
     val mode: String = "cable",
+    @SerialName("can_edit")
+    val canEdit: Boolean = false,
     val clips: List<CommercialClip> = emptyList(),
     val status: CommercialsStatus? = null,
+)
+
+@Serializable
+data class PlayerIssue(
+    val id: Int = 0,
+    @SerialName("profile_id")
+    val profileId: Int = 0,
+    @SerialName("profile_name")
+    val profileName: String = "",
+    @SerialName("item_type")
+    val itemType: String = "",
+    @SerialName("item_id")
+    val itemId: String = "",
+    val title: String = "",
+    val subtitle: String = "",
+    @SerialName("file_path")
+    val filePath: String = "",
+    val category: String = "playback",
+    val note: String = "",
+    @SerialName("position_sec")
+    val positionSec: Int = 0,
+    val status: String = "open",
+    @SerialName("admin_note")
+    val adminNote: String = "",
+    @SerialName("created_at")
+    val createdAt: Long = 0L,
+    @SerialName("resolved_at")
+    val resolvedAt: Long? = null,
+)
+
+@Serializable
+data class PlayerIssuesResponse(
+    val success: Boolean = false,
+    @SerialName("can_manage")
+    val canManage: Boolean = false,
+    @SerialName("open_count")
+    val openCount: Int = 0,
+    val issues: List<PlayerIssue> = emptyList(),
+)
+
+@Serializable
+internal data class PlayerIssueCreateRequest(
+    @SerialName("item_type")
+    val itemType: String,
+    @SerialName("item_id")
+    val itemId: String,
+    val title: String,
+    val subtitle: String = "",
+    val category: String = "playback",
+    val note: String = "",
+    @SerialName("position_sec")
+    val positionSec: Int = 0,
+)
+
+@Serializable
+internal data class PlayerIssueUpdateRequest(
+    val status: String? = null,
+    @SerialName("admin_note")
+    val adminNote: String? = null,
+)
+
+@Serializable
+internal data class PlayerIssueEnvelope(
+    val success: Boolean = false,
+    val issue: PlayerIssue? = null,
 )
 
 @Serializable

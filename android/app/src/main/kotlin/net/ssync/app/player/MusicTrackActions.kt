@@ -23,6 +23,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.QueueMusic
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -162,6 +163,7 @@ internal fun TrackRowActionIcons(
             )
         }
         if (playable != null) {
+            var showReport by remember(playable.itemId) { mutableStateOf(false) }
             OfflineDownloadButton(
                 api = likedState.api,
                 itemType = playable.itemType,
@@ -174,6 +176,27 @@ internal fun TrackRowActionIcons(
                 parentId = playable.parentId,
                 compact = true,
             )
+            IconButton(
+                onClick = { showReport = true },
+                modifier = Modifier.size(32.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Flag,
+                    contentDescription = "Report issue",
+                    tint = SoulSyncColors.TextSecondary,
+                    modifier = Modifier.size(16.dp),
+                )
+            }
+            if (showReport) {
+                ReportIssueDialog(
+                    api = likedState.api,
+                    itemType = playable.itemType,
+                    itemId = playable.itemId,
+                    title = playable.title,
+                    subtitle = playable.subtitle,
+                    onDismiss = { showReport = false },
+                )
+            }
         }
     }
 }
