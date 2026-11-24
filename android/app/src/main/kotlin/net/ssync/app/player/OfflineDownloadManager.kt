@@ -9,6 +9,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
@@ -155,16 +156,17 @@ object OfflineDownloadManager {
     ) {
         val dir = offlineDir ?: return
         val key = keyOf(itemType, itemId)
-        if (_active.value.containsKey(key)) return
+        // one at a time, but a failed one can be tried again
+        if (_active.value[key]?.let { it.error == null } == true) return
 
-        _active.value = _active.value + (key to DownloadTaskState(key = key, title = title, itemType = itemType, progress = 0f))
+        _active.update { it + (key to DownloadTaskState(key = key, title = title, itemType = itemType, progress = 0f)) }
 
         scope.launch {
             try {
                 // Check server download permission first
                 val permCheck = api.fetchMyDownloads(includeRemoved = false)
                 if (permCheck is MusicApiResult.Success && !permCheck.data.allowDownloads && !permCheck.data.isAdmin) {
-                    _active.value = _active.value + (key to DownloadTaskState(key, title, itemType, error = "Downloads disabled by admin"))
+                    _active.update { it + (key to DownloadTaskState(key, title, itemType, error = "Downloads disabled by admin")) }
                     return@launch
                 }
 
@@ -193,7 +195,7 @@ object OfflineDownloadManager {
                                 if (now - lastEmit >= 200L) {
                                     lastEmit = now
                                     val prog = if (total > 0L) (read.toFloat() / total.toFloat()).coerceIn(0f, 1f) else -1f
-                                    _active.value = _active.value + (key to DownloadTaskState(key, title, itemType, prog, read, total))
+                                    _active.update { it + (key to DownloadTaskState(key, title, itemType, prog, read, total)) }
                                 }
                             }
                         }
@@ -217,7 +219,7 @@ object OfflineDownloadManager {
                     val nextList = listOf(saved) + _items.value.filterNot { it.key == key }
                     _items.value = nextList
                     saveManifest(nextList)
-                    _active.value = _active.value - key
+                    _active.update { it - key }
 
                     // Log to server so admin & user history stay in sync
                     api.logOfflineDownload(
@@ -236,7 +238,7 @@ object OfflineDownloadManager {
                     )
                 }
             } catch (e: Exception) {
-                _active.value = _active.value + (key to DownloadTaskState(key, title, itemType, error = e.localizedMessage ?: "Download failed"))
+                _active.update { it + (key to DownloadTaskState(key, title, itemType, error = e.localizedMessage ?: "Download failed")) }
             }
         }
     }
@@ -258,6 +260,6 @@ object OfflineDownloadManager {
     }
 
     fun dismissError(key: String) {
-        _active.value = _active.value - key
+        _active.update { it - key }
     }
 }

@@ -285,15 +285,40 @@ class SoulSyncPlaybackService : MediaSessionService() {
         super.onDestroy()
     }
 
-    private fun buildPinnedPlaybackClient(): OkHttpClient {
-        val record = runBlocking { KeystoreServerVault(applicationContext).load() }
-        return if (record != null) {
-            CertPinningOkHttp.createPinnedClient(
-                expectedCertFingerprintSha256 = record.certFingerprintSha256,
-                deviceTokenProvider = { record.deviceToken },
-            )
-        } else {
-            OkHttpClient()
+    /**
+     * the playback client, from the pairing in the vault. it was read once
+     * when the service started: unpair and pair again (or start unpaired)
+     * while the service lived and every stream failed the old pin, or went
+     * out with no token. this re-reads the vault now and then and rebuilds
+     * the client when the pairing changed.
+     */
+    private fun buildPinnedPlaybackClient(): okhttp3.Call.Factory = VaultCallFactory()
+
+    private inner class VaultCallFactory : okhttp3.Call.Factory {
+        @Volatile private var key: String? = null
+        @Volatile private var client: OkHttpClient = OkHttpClient()
+        @Volatile private var checkedAt = 0L
+
+        private fun current(): OkHttpClient {
+            val now = System.currentTimeMillis()
+            if (now - checkedAt < 30_000L && key != null) return client
+            checkedAt = now
+            val record = runCatching { runBlocking { KeystoreServerVault(applicationContext).load() } }.getOrNull()
+            val nextKey = record?.let { "${it.certFingerprintSha256}|${it.deviceToken}" } ?: ""
+            if (nextKey != key) {
+                client = if (record != null) {
+                    CertPinningOkHttp.createPinnedClient(
+                        expectedCertFingerprintSha256 = record.certFingerprintSha256,
+                        deviceTokenProvider = { record.deviceToken },
+                    )
+                } else {
+                    OkHttpClient()
+                }
+                key = nextKey
+            }
+            return client
         }
+
+        override fun newCall(request: okhttp3.Request): okhttp3.Call = current().newCall(request)
     }
 }
