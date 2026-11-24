@@ -168,6 +168,8 @@ class SoulSyncCastController(private val appContext: Context) {
     private var lastQueueItemId: Int = MediaQueueItem.INVALID_ITEM_ID
     private var sawActivePlaybackForItem: Boolean = false
     private var finishedFiredForSession: Boolean = false
+    private var lastVolumeWriteMs: Long = 0L
+    private var lastVolumeRpcMs: Long = 0L
 
     private val remoteCallback = object : RemoteMediaClient.Callback() {
         override fun onStatusUpdated() {
@@ -486,11 +488,19 @@ class SoulSyncCastController(private val appContext: Context) {
         val session = activeSession ?: castContext?.sessionManager?.currentCastSession ?: return
         activeSession = session
         attachRemoteCallback(session)
-        runCatching {
-            remoteVolume = session.volume.toFloat().coerceIn(0f, 1f)
-            remoteMuted = session.isMute
+        val remote = session.remoteMediaClient
+        // Avoid snapping the slider back while the user is actively adjusting volume
+        if (System.currentTimeMillis() - lastVolumeWriteMs > 1_500L) {
+            runCatching {
+                val streamVol = remote?.mediaStatus?.streamVolume?.toFloat()
+                val devVol = session.volume.toFloat()
+                // Prefer stream volume when active media is loaded (works even on fixed-volume HDMI/CEC TVs)
+                val effective = if (streamVol != null && streamVol in 0f..1f) streamVol else devVol
+                remoteVolume = effective.coerceIn(0f, 1f)
+                remoteMuted = (remote?.mediaStatus?.isMute == true) || session.isMute
+            }
         }
-        val remote = session.remoteMediaClient ?: return
+        if (remote == null) return
         handleRemoteStatusUpdate()
         val hasMedia = remote.hasMediaSession()
         if (hasMedia) {
@@ -543,26 +553,37 @@ class SoulSyncCastController(private val appContext: Context) {
         seekTo(clamped)
     }
 
-    fun setVolume(volume: Float) {
-        val session = activeSession ?: return
+    fun setVolume(volume: Float, forceImmediate: Boolean = false) {
+        val session = activeSession ?: castContext?.sessionManager?.currentCastSession ?: return
+        activeSession = session
         val v = volume.coerceIn(0f, 1f)
-        runCatching {
-            session.setVolume(v.toDouble())
-            remoteVolume = v
-            if (v > 0f && remoteMuted) {
-                session.setMute(false)
-                remoteMuted = false
-            }
+        val now = System.currentTimeMillis()
+        remoteVolume = v
+        lastVolumeWriteMs = now
+        if (!forceImmediate && now - lastVolumeRpcMs < 110L) return
+        lastVolumeRpcMs = now
+
+        val remote = session.remoteMediaClient
+        // Set BOTH receiver stream volume (always works on HDMI-CEC / Google TV / Shield with fixed
+        // device volume) AND Cast device volume (for Chromecast speakers/dongles with variable volume).
+        runCatching { remote?.setStreamVolume(v.toDouble()) }
+        runCatching { session.setVolume(v.toDouble()) }
+        if (v > 0f && remoteMuted) {
+            runCatching { remote?.setStreamMute(false) }
+            runCatching { session.setMute(false) }
+            remoteMuted = false
         }
     }
 
     fun toggleMute() {
-        val session = activeSession ?: return
-        runCatching {
-            val next = !session.isMute
-            session.setMute(next)
-            remoteMuted = next
-        }
+        val session = activeSession ?: castContext?.sessionManager?.currentCastSession ?: return
+        activeSession = session
+        val remote = session.remoteMediaClient
+        val next = !remoteMuted
+        lastVolumeWriteMs = System.currentTimeMillis()
+        remoteMuted = next
+        runCatching { remote?.setStreamMute(next) }
+        runCatching { session.setMute(next) }
     }
 
     fun toggleRemotePlayPause() {
@@ -957,6 +978,7 @@ fun CastDeviceSheet(
                         Slider(
                             value = if (castController.remoteMuted) 0f else castController.remoteVolume,
                             onValueChange = { castController.setVolume(it) },
+                            onValueChangeFinished = { castController.setVolume(castController.remoteVolume, forceImmediate = true) },
                             colors = SliderDefaults.colors(
                                 thumbColor = Color.White,
                                 activeTrackColor = Color.White,
