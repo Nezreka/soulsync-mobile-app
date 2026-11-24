@@ -653,6 +653,17 @@ class PlayerApiClient(
             }
         }
 
+    suspend fun clearCommercialsCache(): MusicApiResult<CommercialsStatus> =
+        withContext(Dispatchers.IO) {
+            val req = Request.Builder()
+                .url("$base/api/player/commercials/cache")
+                .delete()
+                .build()
+            execute(req) { body ->
+                json.decodeFromString<CommercialsStatus>(body)
+            }
+        }
+
     suspend fun fetchCommercialBreak(
         era: String? = null,
         mode: String? = null,

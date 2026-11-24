@@ -1117,6 +1117,8 @@ data class CommercialsStatus(
     val localCount: Int = 0,
     @SerialName("cache_mb")
     val cacheMb: Double = 0.0,
+    @SerialName("max_cache_mb")
+    val maxCacheMb: Int = 500,
     val warming: Boolean = false,
     val error: String? = null,
 )

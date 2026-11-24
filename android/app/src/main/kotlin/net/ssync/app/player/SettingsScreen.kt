@@ -242,20 +242,23 @@ fun SettingsScreen(
         item {
             var commStatus by remember { mutableStateOf<net.ssync.player.CommercialsStatus?>(null) }
             var warmingComm by remember { mutableStateOf(false) }
+            var clearingComm by remember { mutableStateOf(false) }
+            var isAdminUser by remember { mutableStateOf(false) }
             LaunchedEffect(api, profileSettings.commercialsEnabled, profileSettings.commercialsEra) {
                 (api.fetchCommercialsStatus() as? MusicApiResult.Success)?.let { commStatus = it.data }
+                (api.fetchMyDownloads(includeRemoved = false) as? MusicApiResult.Success)?.let { isAdminUser = it.data.isAdmin }
             }
             SettingsCard(
                 icon = Icons.Default.Tv,
                 title = "Retro commercial breaks",
                 scopeBadge = "ALL SCREENS",
-                subtitle = "Optional vintage TV spots from Archive.org (auto-cached in background, zero manual downloading) between Live Guide shows.",
+                subtitle = "Optional vintage TV spots from Archive.org (auto-cached up to 500 MB, zero manual downloading) between Live Guide shows.",
             ) {
                 val statusHint = when {
                     commStatus?.warming == true || warmingComm -> "Fetching retro spots from Archive.org…"
                     (commStatus?.totalCount ?: 0) > 0 ->
-                        "${commStatus!!.totalCount} retro spots ready (${commStatus!!.cacheMb} MB cached)."
-                    else -> "Off by default. Turn on to automatically cache vintage 15–60s spots."
+                        "${commStatus!!.totalCount} retro spots ready (${commStatus!!.cacheMb} / ${commStatus!!.maxCacheMb} MB cached)."
+                    else -> "Off by default. Turn on to automatically cache vintage 15–60s spots (max 500 MB)."
                 }
                 SettingsToggleRow(
                     label = "Play retro commercials between shows",
@@ -347,26 +350,52 @@ fun SettingsScreen(
                             }
                         }
 
-                        androidx.compose.material3.OutlinedButton(
-                            onClick = {
-                                if (warmingComm) return@OutlinedButton
-                                warmingComm = true
-                                scope.launch {
-                                    (api.warmCommercials(profileSettings.commercialsEra) as? MusicApiResult.Success)?.let {
-                                        commStatus = it.data
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            androidx.compose.material3.OutlinedButton(
+                                onClick = {
+                                    if (warmingComm) return@OutlinedButton
+                                    warmingComm = true
+                                    scope.launch {
+                                        (api.warmCommercials(profileSettings.commercialsEra) as? MusicApiResult.Success)?.let {
+                                            commStatus = it.data
+                                        }
+                                        warmingComm = false
                                     }
-                                    warmingComm = false
+                                },
+                                shape = RoundedCornerShape(999.dp),
+                                border = BorderStroke(1.dp, SoulSyncColors.LineStrong),
+                            ) {
+                                Text(
+                                    text = if (warmingComm || commStatus?.warming == true) "Fetching spots…" else "Fetch spots now",
+                                    color = Color.White,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                            }
+                            if (isAdminUser) {
+                                androidx.compose.material3.OutlinedButton(
+                                    onClick = {
+                                        if (clearingComm || (commStatus?.cachedCount ?: 0) == 0) return@OutlinedButton
+                                        clearingComm = true
+                                        scope.launch {
+                                            (api.clearCommercialsCache() as? MusicApiResult.Success)?.let {
+                                                commStatus = it.data
+                                            }
+                                            clearingComm = false
+                                        }
+                                    },
+                                    enabled = !clearingComm && (commStatus?.cachedCount ?: 0) > 0,
+                                    shape = RoundedCornerShape(999.dp),
+                                    border = BorderStroke(1.dp, SoulSyncColors.LineStrong),
+                                ) {
+                                    Text(
+                                        text = if (clearingComm) "Clearing…" else "Clear cache",
+                                        color = Color.White,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                    )
                                 }
-                            },
-                            shape = RoundedCornerShape(999.dp),
-                            border = BorderStroke(1.dp, SoulSyncColors.LineStrong),
-                        ) {
-                            Text(
-                                text = if (warmingComm || commStatus?.warming == true) "Fetching spots…" else "Fetch spots now",
-                                color = Color.White,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.SemiBold,
-                            )
+                            }
                         }
                     }
                 }
