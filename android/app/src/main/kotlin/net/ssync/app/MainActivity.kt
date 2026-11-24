@@ -81,50 +81,45 @@ private fun SoulSyncRoot() {
         }
     }
 
-    if (!loaded) {
-        Box(
-            modifier = Modifier.fillMaxSize().background(SoulSyncColors.BgPrimary),
-            contentAlignment = Alignment.Center,
-        ) {
-            CircularProgressIndicator(color = SoulSyncColors.Accent)
-        }
-        return
-    }
-
-    val activeRecord = pairedRecord
-    if (activeRecord == null) {
-        val pairingViewModel = remember(vault, revokedNotice) {
-            PairingViewModel(
-                vault = vault,
-                rendezvousClient = RendezvousClient(baseUrl = BuildConfig.CONNECT_BASE_URL),
-            )
-        }
-        PairingScreen(
-            viewModel = pairingViewModel,
-            noticeBanner = revokedNotice,
-            onPaired = { saved ->
-                revokedNotice = null
-                pairedRecord = saved
-            },
-        )
-    } else {
-        PlayerShell(
-            record = activeRecord,
-            mediaController = controller,
-            onDeviceRevoked = {
-                scope.launch {
-                    vault.clear()
-                    revokedNotice = "This device was revoked in SoulSync. Pair again to continue listening."
-                    pairedRecord = null
+    Box(modifier = Modifier.fillMaxSize()) {
+        if (loaded) {
+            val activeRecord = pairedRecord
+            if (activeRecord == null) {
+                val pairingViewModel = remember(vault, revokedNotice) {
+                    PairingViewModel(
+                        vault = vault,
+                        rendezvousClient = RendezvousClient(baseUrl = BuildConfig.CONNECT_BASE_URL),
+                    )
                 }
-            },
-            onUnpair = {
-                scope.launch {
-                    vault.clear()
-                    revokedNotice = null
-                    pairedRecord = null
-                }
-            },
-        )
+                PairingScreen(
+                    viewModel = pairingViewModel,
+                    noticeBanner = revokedNotice,
+                    onPaired = { saved ->
+                        revokedNotice = null
+                        pairedRecord = saved
+                    },
+                )
+            } else {
+                PlayerShell(
+                    record = activeRecord,
+                    mediaController = controller,
+                    onDeviceRevoked = {
+                        scope.launch {
+                            vault.clear()
+                            revokedNotice = "This device was revoked in SoulSync. Pair again to continue listening."
+                            pairedRecord = null
+                        }
+                    },
+                    onUnpair = {
+                        scope.launch {
+                            vault.clear()
+                            revokedNotice = null
+                            pairedRecord = null
+                        }
+                    },
+                )
+            }
+        }
+        SoulSyncBootOverlay(ready = loaded)
     }
 }

@@ -318,6 +318,7 @@ fun SettingsScreen(
                                         .clickable(enabled = isAdminUser && !savingComm) {
                                             updateServerComm(era = key)
                                         }
+                                        .dpadFocusable(RoundedCornerShape(999.dp))
                                         .padding(horizontal = 12.dp, vertical = 7.dp),
                                 ) {
                                     Text(
@@ -349,6 +350,7 @@ fun SettingsScreen(
                                         .clickable(enabled = isAdminUser && !savingComm) {
                                             updateServerComm(mode = key)
                                         }
+                                        .dpadFocusable(RoundedCornerShape(999.dp))
                                         .padding(horizontal = 12.dp, vertical = 7.dp),
                                 ) {
                                     Text(

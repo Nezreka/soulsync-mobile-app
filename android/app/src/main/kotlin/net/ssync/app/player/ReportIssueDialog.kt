@@ -35,6 +35,7 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import net.ssync.pairing.theme.SoulSyncColors
+import net.ssync.pairing.ui.dpadFocusable
 import net.ssync.player.MusicApiResult
 import net.ssync.player.PlayerApiClient
 
@@ -126,6 +127,7 @@ fun ReportIssueDialog(
                                         RoundedCornerShape(999.dp),
                                     )
                                     .clickable(enabled = !submitting) { selectedCategory = preset.key }
+                                    .dpadFocusable(RoundedCornerShape(999.dp))
                                     .padding(horizontal = 12.dp, vertical = 7.dp),
                             )
                         }

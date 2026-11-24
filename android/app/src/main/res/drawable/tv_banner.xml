@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape android:shape="rectangle">
+            <size android:width="320dp" android:height="180dp" />
+            <gradient
+                android:angle="135"
+                android:startColor="#0A0E17"
+                android:centerColor="#11192B"
+                android:endColor="#090D14"
+                android:type="linear" />
+        </shape>
+    </item>
+    <item
+        android:drawable="@drawable/soulsync_logo"
+        android:gravity="center"
+        android:width="116dp"
+        android:height="116dp" />
+</layer-list>
