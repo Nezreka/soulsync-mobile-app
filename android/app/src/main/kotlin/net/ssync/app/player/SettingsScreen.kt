@@ -238,43 +238,54 @@ fun SettingsScreen(
             }
         }
 
-        // 1c. Retro Commercial Breaks (Synced across all screens — 1:1 Desktop parity)
+        // 1c. Retro Commercial Breaks (Server-wide shared broadcast setting — 1:1 Desktop parity)
         item {
+            var commConfig by remember { mutableStateOf<net.ssync.player.CommercialsConfig?>(null) }
             var commStatus by remember { mutableStateOf<net.ssync.player.CommercialsStatus?>(null) }
+            var savingComm by remember { mutableStateOf(false) }
             var warmingComm by remember { mutableStateOf(false) }
             var clearingComm by remember { mutableStateOf(false) }
             var isAdminUser by remember { mutableStateOf(false) }
-            LaunchedEffect(api, profileSettings.commercialsEnabled, profileSettings.commercialsEra) {
-                (api.fetchCommercialsStatus() as? MusicApiResult.Success)?.let { commStatus = it.data }
+            LaunchedEffect(api) {
+                (api.fetchCommercialsConfig() as? MusicApiResult.Success)?.let {
+                    commConfig = it.data
+                    commStatus = it.data.status
+                }
                 (api.fetchMyDownloads(includeRemoved = false) as? MusicApiResult.Success)?.let { isAdminUser = it.data.isAdmin }
+            }
+            fun updateServerComm(enabled: Boolean? = null, era: String? = null, mode: String? = null) {
+                if (!isAdminUser || savingComm) return
+                savingComm = true
+                scope.launch {
+                    (api.saveCommercialsConfig(enabled = enabled, era = era, mode = mode) as? MusicApiResult.Success)?.let {
+                        commConfig = it.data
+                        commStatus = it.data.status
+                        flashSaved()
+                    }
+                    savingComm = false
+                }
             }
             SettingsCard(
                 icon = Icons.Default.Tv,
                 title = "Retro commercial breaks",
-                scopeBadge = "ALL SCREENS",
-                subtitle = "Optional vintage TV spots from Archive.org (auto-cached up to 500 MB, zero manual downloading) between Live Guide shows.",
+                scopeBadge = "SERVER-WIDE",
+                subtitle = "Shared broadcast commercial breaks built directly into the Live Guide clock so every viewer stays 100% in sync.",
             ) {
+                val adminSuffix = if (isAdminUser) "" else " Managed by server admin."
                 val statusHint = when {
                     commStatus?.warming == true || warmingComm -> "Fetching retro spots from Archive.org…"
                     (commStatus?.totalCount ?: 0) > 0 ->
-                        "${commStatus!!.totalCount} retro spots ready (${commStatus!!.cacheMb} / ${commStatus!!.maxCacheMb} MB cached)."
-                    else -> "Off by default. Turn on to automatically cache vintage 15–60s spots (max 500 MB)."
+                        "${commStatus!!.totalCount} retro spots ready (${commStatus!!.cacheMb} / ${commStatus!!.maxCacheMb} MB cached).$adminSuffix"
+                    else -> "Off by default. Auto-caches vintage 15–60s spots (max 500 MB).$adminSuffix"
                 }
                 SettingsToggleRow(
-                    label = "Play retro commercials between shows",
+                    label = "Include retro commercials in Live Guide",
                     help = statusHint,
-                    checked = profileSettings.commercialsEnabled,
-                    enabled = loadedProfile,
-                    onCheckedChange = { enabled ->
-                        saveProfile(profileSettings.copy(commercialsEnabled = enabled))
-                        if (enabled) {
-                            scope.launch {
-                                (api.fetchCommercialsStatus() as? MusicApiResult.Success)?.let { commStatus = it.data }
-                            }
-                        }
-                    },
+                    checked = commConfig?.enabled == true,
+                    enabled = isAdminUser && !savingComm,
+                    onCheckedChange = { enabled -> updateServerComm(enabled = enabled) },
                 )
-                if (profileSettings.commercialsEnabled) {
+                if (commConfig?.enabled == true) {
                     SettingsDivider()
                     Column(
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
@@ -299,13 +310,13 @@ fun SettingsScreen(
                                 "kids" to "Kids",
                                 "mix" to "Mix",
                             ).forEach { (key, label) ->
-                                val active = profileSettings.commercialsEra == key
+                                val active = (commConfig?.era ?: "auto") == key
                                 Box(
                                     modifier = Modifier
                                         .clip(RoundedCornerShape(999.dp))
                                         .background(if (active) SoulSyncColors.Accent else Color.White.copy(alpha = 0.08f))
-                                        .clickable(enabled = loadedProfile) {
-                                            saveProfile(profileSettings.copy(commercialsEra = key))
+                                        .clickable(enabled = isAdminUser && !savingComm) {
+                                            updateServerComm(era = key)
                                         }
                                         .padding(horizontal = 12.dp, vertical = 7.dp),
                                 ) {
@@ -330,13 +341,13 @@ fun SettingsScreen(
                                 "cable" to "Classic cable",
                                 "short" to "Short (1–2 spots)",
                             ).forEach { (key, label) ->
-                                val active = profileSettings.commercialsMode == key
+                                val active = (commConfig?.mode ?: "cable") == key
                                 Box(
                                     modifier = Modifier
                                         .clip(RoundedCornerShape(999.dp))
                                         .background(if (active) SoulSyncColors.Accent else Color.White.copy(alpha = 0.08f))
-                                        .clickable(enabled = loadedProfile) {
-                                            saveProfile(profileSettings.copy(commercialsMode = key))
+                                        .clickable(enabled = isAdminUser && !savingComm) {
+                                            updateServerComm(mode = key)
                                         }
                                         .padding(horizontal = 12.dp, vertical = 7.dp),
                                 ) {
@@ -350,29 +361,29 @@ fun SettingsScreen(
                             }
                         }
 
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            androidx.compose.material3.OutlinedButton(
-                                onClick = {
-                                    if (warmingComm) return@OutlinedButton
-                                    warmingComm = true
-                                    scope.launch {
-                                        (api.warmCommercials(profileSettings.commercialsEra) as? MusicApiResult.Success)?.let {
-                                            commStatus = it.data
+                        if (isAdminUser) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                androidx.compose.material3.OutlinedButton(
+                                    onClick = {
+                                        if (warmingComm) return@OutlinedButton
+                                        warmingComm = true
+                                        scope.launch {
+                                            (api.warmCommercials(commConfig?.era ?: "mix") as? MusicApiResult.Success)?.let {
+                                                commStatus = it.data
+                                            }
+                                            warmingComm = false
                                         }
-                                        warmingComm = false
-                                    }
-                                },
-                                shape = RoundedCornerShape(999.dp),
-                                border = BorderStroke(1.dp, SoulSyncColors.LineStrong),
-                            ) {
-                                Text(
-                                    text = if (warmingComm || commStatus?.warming == true) "Fetching spots…" else "Fetch spots now",
-                                    color = Color.White,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                )
-                            }
-                            if (isAdminUser) {
+                                    },
+                                    shape = RoundedCornerShape(999.dp),
+                                    border = BorderStroke(1.dp, SoulSyncColors.LineStrong),
+                                ) {
+                                    Text(
+                                        text = if (warmingComm || commStatus?.warming == true) "Fetching spots…" else "Fetch spots now",
+                                        color = Color.White,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                    )
+                                }
                                 androidx.compose.material3.OutlinedButton(
                                     onClick = {
                                         if (clearingComm || (commStatus?.cachedCount ?: 0) == 0) return@OutlinedButton

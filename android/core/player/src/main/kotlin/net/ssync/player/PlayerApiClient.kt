@@ -637,6 +637,26 @@ class PlayerApiClient(
 
     // ── Retro Commercial Breaks ──────────────────────────────────────────────
 
+    suspend fun fetchCommercialsConfig(): MusicApiResult<CommercialsConfig> =
+        getJson("$base/api/player/commercials/config") { body ->
+            json.decodeFromString<CommercialsConfig>(body)
+        }
+
+    suspend fun saveCommercialsConfig(
+        enabled: Boolean? = null,
+        era: String? = null,
+        mode: String? = null,
+    ): MusicApiResult<CommercialsConfig> = withContext(Dispatchers.IO) {
+        val payload = CommercialsConfigPutRequest(enabled = enabled, era = era, mode = mode)
+        val req = Request.Builder()
+            .url("$base/api/player/commercials/config")
+            .put(json.encodeToString(CommercialsConfigPutRequest.serializer(), payload).toRequestBody(JSON_MEDIA_TYPE))
+            .build()
+        execute(req) { body ->
+            json.decodeFromString<CommercialsConfig>(body)
+        }
+    }
+
     suspend fun fetchCommercialsStatus(): MusicApiResult<CommercialsStatus> =
         getJson("$base/api/player/commercials/status") { body ->
             json.decodeFromString<CommercialsStatus>(body)

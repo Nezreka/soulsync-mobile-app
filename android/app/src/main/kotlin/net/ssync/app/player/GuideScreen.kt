@@ -78,6 +78,8 @@ import net.ssync.player.CatalogMovie
 import net.ssync.player.CatalogShow
 import net.ssync.player.CatalogShowEpisode
 import net.ssync.player.CatalogYoutube
+import net.ssync.player.CommercialClip
+import net.ssync.player.CommercialsConfig
 import net.ssync.player.GuideChannelSpec
 import net.ssync.player.GuideLineupEntry
 import net.ssync.player.LibSong
@@ -396,6 +398,7 @@ private fun scheduleVideoPrograms(
     ordered: Boolean,
     windowStartSec: Long,
     windowEndSec: Long,
+    commercialsConfig: CommercialsConfig? = null,
 ): List<EpgProgram> {
     val items = pool
         .filter { it.seconds >= GUIDE_MIN_SECONDS }
@@ -404,6 +407,35 @@ private fun scheduleVideoPrograms(
 
     val fromMs = windowStartSec * 1000L
     val toMs = windowEndSec * 1000L
+    val commClips = if (commercialsConfig?.enabled == true && commercialsConfig.clips.isNotEmpty()) {
+        commercialsConfig.clips
+    } else {
+        null
+    }
+
+    fun inferChannelEra(cid: String): String {
+        val low = cid.lowercase(Locale.US)
+        return when {
+            low.contains("1970") || low.contains("70s") -> "70s"
+            low.contains("1980") || low.contains("80s") -> "80s"
+            low.contains("1990") || low.contains("90s") -> "90s"
+            low.contains("2000") || low.contains("00s") -> "2000s"
+            low.contains("kid") || low.contains("animat") || low.contains("family") -> "kids"
+            low.contains("horror") || low.contains("late") || low.contains("thriller") -> "horror"
+            else -> "mix"
+        }
+    }
+
+    fun eraForYear(y: Int?): String? = when {
+        y == null -> null
+        y in 1970..1979 -> "70s"
+        y in 1980..1989 -> "80s"
+        y in 1990..1999 -> "90s"
+        y in 2000..2011 -> "2000s"
+        else -> null
+    }
+
+    val yearRegex = Regex("\\b(19[5-9]\\d|20[0-2]\\d)\\b")
 
     fun scheduleDayExact(dayStartMs: Long): List<EpgProgram> {
         val dayEndMs = dayStartMs + 24L * 60L * 60L * 1000L
@@ -411,6 +443,68 @@ private fun scheduleVideoPrograms(
         val seed = hashSeed32("$channelId|$dayStamp")
         val out = mutableListOf<EpgProgram>()
         var cursor = dayStartMs
+        var contentSinceBreakSec = 0
+        var lastBreakIds = emptySet<String>()
+
+        fun placeCommercialBreak(afterItem: PoolItem) {
+            val comm = commercialsConfig ?: return
+            val clips = commClips ?: return
+            if (cursor >= dayEndMs) return
+            val ym = yearRegex.find("${afterItem.subtitle} ${afterItem.title}")
+            val itemYear = ym?.groupValues?.get(1)?.toIntOrNull()
+            val yearEra = if (comm.era == "auto") eraForYear(itemYear) else null
+            val targetEra = yearEra ?: if (comm.era == "auto") inferChannelEra(channelId) else comm.era
+            val brkSeed = hashSeed32("$channelId|$dayStamp|brk|$cursor")
+
+            val closeYear = if (comm.era == "auto" && itemYear != null && yearEra != null) {
+                clips.filter { c -> val cy = c.year; cy != null && abs(cy - itemYear) <= 4 }
+            } else {
+                emptyList()
+            }
+            val exactEra = clips.filter { it.era == targetEra }
+            val tiers = listOf(closeYear, exactEra, clips)
+            val orderedSpots = mutableListOf<CommercialClip>()
+            val seenIds = HashSet<String>()
+            for (ti in tiers.indices) {
+                val shuf = seededShuffle32(tiers[ti], brkSeed + ti.toUInt() * 7919u)
+                for (c in shuf) {
+                    if (seenIds.add(c.id)) {
+                        orderedSpots += c
+                    }
+                }
+            }
+            val freshFirst = orderedSpots.filter { it.id !in lastBreakIds } +
+                orderedSpots.filter { it.id in lastBreakIds }
+            val targetCount = if (comm.mode == "short") 2 else 3
+            val budget = if (comm.mode == "short") 65 else 120
+            val chosen = mutableListOf<CommercialClip>()
+            var usedSec = 0
+            for (c in freshFirst) {
+                if (chosen.size >= targetCount) break
+                val dur = (if (c.durationSeconds > 0) c.durationSeconds else 30).coerceIn(10, 95)
+                if (chosen.isNotEmpty() && usedSec + dur > budget) continue
+                chosen += c
+                usedSec += dur
+            }
+            if (chosen.isEmpty()) return
+            lastBreakIds = chosen.map { it.id }.toSet()
+            for (c in chosen) {
+                if (cursor >= dayEndMs) break
+                val dur = (if (c.durationSeconds > 0) c.durationSeconds else 30).coerceIn(10, 95)
+                val cEnd = cursor + dur.toLong() * 1000L
+                out += EpgProgram(
+                    itemType = "commercial",
+                    itemId = c.id,
+                    detailId = null,
+                    title = c.title,
+                    subtitle = "Commercial Break",
+                    artworkUrl = null,
+                    startEpochSec = cursor / 1000L,
+                    endEpochSec = cEnd / 1000L,
+                )
+                cursor = cEnd
+            }
+        }
 
         fun place(item: PoolItem) {
             if (cursor >= dayEndMs) return
@@ -427,7 +521,15 @@ private fun scheduleVideoPrograms(
                     endEpochSec = end / 1000L,
                 )
             }
+            val airedSec = maxOf(0, kotlin.math.round((end - cursor) / 1000.0).toInt())
             cursor = maxOf(cursor, end)
+            if (commClips != null && airedSec > 0) {
+                contentSinceBreakSec += airedSec
+                if (contentSinceBreakSec >= 300) {
+                    placeCommercialBreak(item)
+                    contentSinceBreakSec = 0
+                }
+            }
         }
 
         if (ordered) {
@@ -618,6 +720,7 @@ private fun buildDesktopParityChannels(
     api: PlayerApiClient,
     windowStartSec: Long,
     windowEndSec: Long,
+    commercialsConfig: CommercialsConfig? = null,
 ): List<EpgChannel> {
     val raw = mutableListOf<RawChannel>()
     val nowMs = System.currentTimeMillis()
@@ -1016,7 +1119,7 @@ private fun buildDesktopParityChannels(
             val progs = if (c.isMusic) {
                 scheduleMusicBlocks(c.id, c.name, c.blurb, c.pool, windowStartSec, windowEndSec)
             } else {
-                scheduleVideoPrograms(c.id, c.pool, c.ordered, windowStartSec, windowEndSec)
+                scheduleVideoPrograms(c.id, c.pool, c.ordered, windowStartSec, windowEndSec, commercialsConfig)
             }
             EpgChannel(
                 id = c.id,
@@ -1140,6 +1243,7 @@ internal fun buildHomeLiveGuideHighlights(
         api = api,
         windowStartSec = windowStart,
         windowEndSec = windowEnd,
+        commercialsConfig = if (GuideWarmCache.baseUrl == api.baseUrl) GuideWarmCache.commercialsConfig else null,
     ).filter { !it.isMusic && it.programs.isNotEmpty() }
 
     val preferred = listOf("type-movies", "type-tv", "pick-top", "pick-comfort", "pick-new", "pick-late")
@@ -1195,6 +1299,7 @@ internal fun buildHomeLiveGuideHighlights(
                 api = api,
                 windowStartSec = now,
                 windowEndSec = now + 8L * 3600L,
+                commercialsConfig = if (GuideWarmCache.baseUrl == api.baseUrl) GuideWarmCache.commercialsConfig else null,
             ).firstOrNull { it.id == chId }
             fresh?.programs.orEmpty()
                 .filter { it.endEpochSec > now + 5L }
@@ -1268,6 +1373,7 @@ private object GuideWarmCache {
     var lineup: List<GuideLineupEntry> = emptyList()
     var studioCollections: List<StudioCollection> = emptyList()
     var favoritesList: List<String> = emptyList()
+    var commercialsConfig: CommercialsConfig? = null
     var allChannels: List<EpgChannel> = emptyList()
     var windowStartSec: Long = 0L
     var builtAtSec: Long = 0L
@@ -1342,6 +1448,7 @@ fun GuideScreen(
         )
     }
     var favoritesList by remember(api.baseUrl) { mutableStateOf(if (cacheSameHost) GuideWarmCache.favoritesList else emptyList()) }
+    var commercialsConfig by remember(api.baseUrl) { mutableStateOf(if (cacheSameHost) GuideWarmCache.commercialsConfig else null) }
     val favorites = remember(favoritesList) { favoritesList.toSet() }
     var viewMode by remember { mutableStateOf(GuideViewMode.GRID) }
     var filter by remember { mutableStateOf(GuideFilter.ALL) }
@@ -1376,6 +1483,7 @@ fun GuideScreen(
         GuideWarmCache.lineup = lineup
         GuideWarmCache.studioCollections = studioCollections
         GuideWarmCache.favoritesList = favoritesList
+        GuideWarmCache.commercialsConfig = commercialsConfig
         GuideWarmCache.allChannels = channels
         GuideWarmCache.windowStartSec = windowStartSec
         GuideWarmCache.builtAtSec = nowSec
@@ -1397,6 +1505,7 @@ fun GuideScreen(
                     api = api,
                     windowStartSec = windowStartSec,
                     windowEndSec = windowEndSec,
+                    commercialsConfig = commercialsConfig,
                 )
             }
             if (rebuilt.isNotEmpty()) {
@@ -1423,6 +1532,7 @@ fun GuideScreen(
                     api = api,
                     windowStartSec = windowStartSec,
                     windowEndSec = windowEndSec,
+                    commercialsConfig = commercialsConfig,
                 )
             }
             if (seedChannels.isNotEmpty()) {
@@ -1434,19 +1544,21 @@ fun GuideScreen(
             isLoading = true
         }
 
-        // Phase 1: fetch catalog (cached 5m in PlayerApiClient), saved channels, lineup, favorites, collections
+        // Phase 1: fetch catalog (cached 5m in PlayerApiClient), saved channels, lineup, favorites, collections, shared commercials config
         val revoked = coroutineScope {
             val vDef = async { api.fetchVideoCatalog() }
             val sDef = async { api.fetchSavedGuideChannels() }
             val lDef = async { api.fetchGuideLineup() }
             val fDef = async { api.fetchGuideFavoritesList() }
             val cDef = async { api.fetchCollections() }
+            val commDef = async { api.fetchCommercialsConfig() }
 
             val v = vDef.await()
             val s = sDef.await()
             val l = lDef.await()
             val f = fDef.await()
             val c = cDef.await()
+            val comm = commDef.await()
 
             if (v is MusicApiResult.DeviceRevoked || s is MusicApiResult.DeviceRevoked) {
                 return@coroutineScope true
@@ -1456,6 +1568,7 @@ fun GuideScreen(
             (l as? MusicApiResult.Success)?.let { lineup = it.data }
             (f as? MusicApiResult.Success)?.let { favoritesList = it.data }
             (c as? MusicApiResult.Success)?.let { studioCollections = it.data }
+            (comm as? MusicApiResult.Success)?.let { commercialsConfig = it.data }
             false
         }
         if (revoked) {
@@ -1474,6 +1587,7 @@ fun GuideScreen(
                 api = api,
                 windowStartSec = windowStartSec,
                 windowEndSec = windowEndSec,
+                commercialsConfig = commercialsConfig,
             )
         }
         allChannels = phase1Channels
@@ -1520,6 +1634,7 @@ fun GuideScreen(
                 api = api,
                 windowStartSec = windowStartSec,
                 windowEndSec = windowEndSec,
+                commercialsConfig = commercialsConfig,
             )
         }
         allChannels = phase2Channels
@@ -1603,6 +1718,7 @@ fun GuideScreen(
                 api = api,
                 windowStartSec = now,
                 windowEndSec = now + 8L * 3600L,
+                commercialsConfig = commercialsConfig,
             ).firstOrNull { it.id == chId && !it.isMusic }
             fresh?.programs.orEmpty()
                 .filter { it.endEpochSec > now + 5L }
@@ -1612,7 +1728,7 @@ fun GuideScreen(
                         itemType = p.itemType,
                         itemId = p.itemId,
                         title = p.title,
-                        subtitle = "CH ${fresh!!.number} · ${fresh.name}",
+                        subtitle = if (p.itemType == "commercial") "Commercial Break · CH ${fresh!!.number} ${fresh.name}" else "CH ${fresh!!.number} · ${fresh.name}",
                         artworkUrl = p.artworkUrl,
                         streamUrl = api.streamUrl(p.itemType, p.itemId),
                         isVideo = true,
@@ -1654,13 +1770,13 @@ fun GuideScreen(
             val progDurMs = ((active.endEpochSec - active.startEpochSec).coerceAtLeast(0L)) * 1000L
             val baseUpcoming = ch.programs
                 .filter { it.startEpochSec >= active.endEpochSec }
-                .take(12)
+                .take(18)
                 .map { p ->
                     ActivePlayable(
                         itemType = p.itemType,
                         itemId = p.itemId,
                         title = p.title,
-                        subtitle = "CH ${ch.number} · ${ch.name}",
+                        subtitle = if (p.itemType == "commercial") "Commercial Break · CH ${ch.number} ${ch.name}" else "CH ${ch.number} · ${ch.name}",
                         artworkUrl = p.artworkUrl,
                         streamUrl = api.streamUrl(p.itemType, p.itemId),
                         isVideo = true,
@@ -1676,7 +1792,7 @@ fun GuideScreen(
                 itemType = active.itemType,
                 itemId = active.itemId,
                 title = active.title,
-                subtitle = "CH ${ch.number} · ${ch.name}",
+                subtitle = if (active.itemType == "commercial") "Commercial Break · CH ${ch.number} ${ch.name}" else "CH ${ch.number} · ${ch.name}",
                 artworkUrl = active.artworkUrl,
                 streamUrl = api.streamUrl(active.itemType, active.itemId),
                 isVideo = true,
@@ -1687,89 +1803,8 @@ fun GuideScreen(
                 channelName = ch.name,
                 channelNumber = ch.number,
             )
-            // If Retro Commercial Breaks are enabled for this profile, interleave continuous
-            // year-matched breaks between EVERY show in the queue (5-min cooldown; works locally AND on Chromecast!)
-            scope.launch {
-                val prefs = (api.fetchSettings() as? MusicApiResult.Success)?.data
-                val finalUpcoming = if (prefs?.commercialsEnabled == true && baseUpcoming.isNotEmpty()) {
-                    val upcomingProgs = ch.programs
-                        .filter { it.startEpochSec >= active.endEpochSec }
-                        .take(12)
-                    val allProgs = listOf(active) + upcomingProgs
-                    val schedItems = allProgs.map { p ->
-                        val yr = when (p.itemType) {
-                            "movie" -> catalog.movies.firstOrNull { it.id == p.detailId }?.year
-                            "episode" -> catalog.shows.firstOrNull { it.id == p.detailId }?.year
-                            else -> null
-                        } ?: Regex("\\b(19[5-9]\\d|20[0-2]\\d)\\b").find("${p.subtitle} ${p.title}")?.groupValues?.get(1)?.toIntOrNull()
-                        net.ssync.player.CommercialScheduleItem(
-                            id = p.itemId,
-                            title = p.title,
-                            year = yr,
-                            durationSeconds = ((p.endEpochSec - p.startEpochSec).coerceAtLeast(60L)).toInt(),
-                        )
-                    }
-                    val breaksMap = (api.fetchCommercialSchedule(
-                        items = schedItems,
-                        era = prefs.commercialsEra,
-                        mode = prefs.commercialsMode,
-                        channelId = ch.id,
-                        channelName = ch.name,
-                        minGapSeconds = 300,
-                    ) as? MusicApiResult.Success)?.data.orEmpty()
-                    if (breaksMap.isNotEmpty()) {
-                        buildList {
-                            // Break right after active show (index 0)
-                            breaksMap["0"]?.forEach { clip ->
-                                add(
-                                    ActivePlayable(
-                                        itemType = "commercial",
-                                        itemId = clip.id,
-                                        title = clip.title,
-                                        subtitle = "Commercial Break · CH ${ch.number} ${ch.name}",
-                                        artworkUrl = null,
-                                        streamUrl = api.streamUrl("commercial", clip.id),
-                                        isVideo = true,
-                                        resumePositionMs = 0L,
-                                        durationMs = clip.durationSeconds * 1000L,
-                                        isLiveGuide = true,
-                                        channelId = ch.id,
-                                        channelName = ch.name,
-                                        channelNumber = ch.number,
-                                    ),
-                                )
-                            }
-                            baseUpcoming.forEachIndexed { idx, showItem ->
-                                add(showItem)
-                                breaksMap[(idx + 1).toString()]?.forEach { clip ->
-                                    add(
-                                        ActivePlayable(
-                                            itemType = "commercial",
-                                            itemId = clip.id,
-                                            title = clip.title,
-                                            subtitle = "Commercial Break · CH ${ch.number} ${ch.name}",
-                                            artworkUrl = null,
-                                            streamUrl = api.streamUrl("commercial", clip.id),
-                                            isVideo = true,
-                                            resumePositionMs = 0L,
-                                            durationMs = clip.durationSeconds * 1000L,
-                                            isLiveGuide = true,
-                                            channelId = ch.id,
-                                            channelName = ch.name,
-                                            channelNumber = ch.number,
-                                        ),
-                                    )
-                                }
-                            }
-                        }
-                    } else {
-                        baseUpcoming
-                    }
-                } else {
-                    baseUpcoming
-                }
-                coordinator.playVideo(primaryPlayable, upcoming = finalUpcoming)
-            }
+            // Retro commercials are natively scheduled on the shared deterministic broadcast clock in ch.programs
+            coordinator.playVideo(primaryPlayable, upcoming = baseUpcoming)
         }
     }
 
@@ -2417,9 +2452,11 @@ fun GuideScreen(
                                 musicChannels = musicChannels,
                                 savedChannels = updatedSaved,
                                 lineup = lineup,
+                                studioCollections = studioCollections,
                                 api = api,
                                 windowStartSec = windowStartSec,
                                 windowEndSec = windowEndSec,
+                                commercialsConfig = commercialsConfig,
                             )
                         }
                     }

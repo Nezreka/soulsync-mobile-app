@@ -1099,11 +1099,28 @@ data class CommercialClip(
     val id: String,
     val title: String = "Retro Commercial",
     val era: String = "mix",
+    val year: Int? = null,
     @SerialName("duration_seconds")
     val durationSeconds: Int = 30,
     val source: String = "archive",
     @SerialName("stream_path")
     val streamPath: String = "",
+)
+
+@Serializable
+data class CommercialsConfig(
+    val enabled: Boolean = false,
+    val era: String = "auto",
+    val mode: String = "cable",
+    val clips: List<CommercialClip> = emptyList(),
+    val status: CommercialsStatus? = null,
+)
+
+@Serializable
+internal data class CommercialsConfigPutRequest(
+    val enabled: Boolean? = null,
+    val era: String? = null,
+    val mode: String? = null,
 )
 
 @Serializable
