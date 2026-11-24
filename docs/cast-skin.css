@@ -1,9 +1,14 @@
-/* SoulSync Google Cast Styled Media Receiver Skin
+/* SoulSync Google Cast Styled Media Receiver Skin — Cinema OLED Edition
  * Official Styled Media Receiver classes: .background, .logo, .progressBar, .splash, .watermark
  */
 
 .background {
-  background: radial-gradient(circle at 50% 45%, #0c1320 0%, #05070c 60%, #000000 100%);
+  background:
+    radial-gradient(ellipse 46% 42% at 44% 44%, rgba(236, 72, 153, 0.14) 0%, transparent 70%),
+    radial-gradient(ellipse 48% 44% at 56% 52%, rgba(34, 211, 238, 0.14) 0%, transparent 72%),
+    radial-gradient(circle at 50% 48%, #090d16 0%, #030408 58%, #000000 100%);
+  background-size: 130% 130%;
+  animation: ss-aura-drift 6.4s ease-in-out infinite alternate;
 }
 
 .logo {
@@ -17,60 +22,97 @@
   background-image: url("https://cdn.jsdelivr.net/gh/Nezreka/soulsync-mobile-app@main/docs/cast-logo.png");
   background-repeat: no-repeat;
   background-position: center;
-  background-size: 360px auto;
-  animation: ss-breathe 2.8s ease-in-out infinite;
-  will-change: transform, filter;
+  background-size: 380px auto;
+  animation:
+    ss-reveal 0.72s cubic-bezier(0.22, 1, 0.36, 1) forwards,
+    ss-breathe 3.2s ease-in-out 0.72s infinite;
+  will-change: transform, filter, opacity;
 }
 
+/* Dual-band prism specular sheen masked strictly to the infinity ribbon silhouette */
 .splash::after {
   content: "";
   position: absolute;
   inset: 0;
   background: linear-gradient(
     115deg,
-    transparent 35%,
-    rgba(255, 255, 255, 0.55) 50%,
-    transparent 65%
+    transparent 30%,
+    rgba(255, 224, 180, 0.22) 44%,
+    rgba(255, 255, 255, 0.72) 50%,
+    rgba(165, 243, 252, 0.26) 56%,
+    transparent 70%
   );
-  background-size: 250% 250%;
+  background-size: 260% 260%;
   mix-blend-mode: screen;
   -webkit-mask-image: url("https://cdn.jsdelivr.net/gh/Nezreka/soulsync-mobile-app@main/docs/cast-logo.png");
-  -webkit-mask-size: 360px auto;
+  -webkit-mask-size: 380px auto;
   -webkit-mask-repeat: no-repeat;
   -webkit-mask-position: center;
   mask-image: url("https://cdn.jsdelivr.net/gh/Nezreka/soulsync-mobile-app@main/docs/cast-logo.png");
-  mask-size: 360px auto;
+  mask-size: 380px auto;
   mask-repeat: no-repeat;
   mask-position: center;
-  animation: ss-sheen 2.8s ease-in-out infinite;
+  animation: ss-sheen 3.2s cubic-bezier(0.45, 0, 0.55, 1) 0.4s infinite;
   pointer-events: none;
+}
+
+@keyframes ss-reveal {
+  0% {
+    opacity: 0;
+    transform: scale(0.9) translateY(8px);
+    filter: blur(10px) brightness(0.85);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+    filter: blur(0) brightness(1) drop-shadow(0 0 18px rgba(167, 139, 250, 0.16));
+  }
 }
 
 @keyframes ss-breathe {
   0%,
   100% {
-    transform: scale(1);
-    filter: drop-shadow(0 0 0 rgba(255, 255, 255, 0));
+    transform: scale(1) translateY(0) rotate(-0.45deg);
+    filter:
+      brightness(1)
+      saturate(1)
+      drop-shadow(0 0 16px rgba(236, 72, 153, 0.16))
+      drop-shadow(0 0 28px rgba(34, 211, 238, 0.14));
   }
   50% {
-    transform: scale(1.03);
-    filter: drop-shadow(0 0 22px rgba(130, 180, 255, 0.28));
+    transform: scale(1.035) translateY(-5px) rotate(0.45deg);
+    filter:
+      brightness(1.08)
+      saturate(1.14)
+      drop-shadow(0 0 26px rgba(251, 146, 60, 0.28))
+      drop-shadow(0 0 42px rgba(56, 189, 248, 0.28));
   }
 }
 
 @keyframes ss-sheen {
   0%,
   100% {
-    background-position: 150% 0%;
+    background-position: 155% 0%;
     opacity: 0;
   }
-  15%,
-  85% {
-    opacity: 1;
+  16% {
+    opacity: 0.95;
   }
-  95% {
-    background-position: -50% 0%;
+  78% {
+    opacity: 0.95;
+  }
+  92% {
+    background-position: -55% 0%;
     opacity: 0;
+  }
+}
+
+@keyframes ss-aura-drift {
+  0% {
+    background-position: 40% 42%;
+  }
+  100% {
+    background-position: 60% 58%;
   }
 }
 
@@ -83,5 +125,5 @@
   background-size: 96px auto;
   background-repeat: no-repeat;
   background-position: bottom right;
-  opacity: 0.75;
+  opacity: 0.78;
 }

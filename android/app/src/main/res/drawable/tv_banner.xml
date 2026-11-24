@@ -5,15 +5,15 @@
             <size android:width="320dp" android:height="180dp" />
             <gradient
                 android:angle="135"
-                android:startColor="#0A0E17"
-                android:centerColor="#11192B"
-                android:endColor="#090D14"
+                android:startColor="#0D0814"
+                android:centerColor="#090D16"
+                android:endColor="#050A12"
                 android:type="linear" />
         </shape>
     </item>
     <item
-        android:drawable="@drawable/soulsync_logo"
+        android:drawable="@drawable/soulsync_mark"
         android:gravity="center"
-        android:width="116dp"
-        android:height="116dp" />
+        android:width="124dp"
+        android:height="124dp" />
 </layer-list>
