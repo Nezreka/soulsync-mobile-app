@@ -327,8 +327,8 @@ fun SettingsScreen(
                         )
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             listOf(
-                                "short" to "Short (1–2 spots)",
                                 "cable" to "Classic cable",
+                                "short" to "Short (1–2 spots)",
                             ).forEach { (key, label) ->
                                 val active = profileSettings.commercialsMode == key
                                 Box(

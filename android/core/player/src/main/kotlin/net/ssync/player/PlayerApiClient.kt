@@ -664,6 +664,31 @@ class PlayerApiClient(
             }
         }
 
+    suspend fun fetchCommercialSchedule(
+        items: List<CommercialScheduleItem>,
+        era: String? = null,
+        mode: String? = null,
+        channelId: String? = null,
+        channelName: String? = null,
+        minGapSeconds: Int = 300,
+    ): MusicApiResult<Map<String, List<CommercialClip>>> = withContext(Dispatchers.IO) {
+        val payload = CommercialScheduleRequest(
+            items = items,
+            era = era,
+            mode = mode,
+            channelId = channelId,
+            channelName = channelName,
+            minGapSeconds = minGapSeconds,
+        )
+        val req = Request.Builder()
+            .url("$base/api/player/commercials/schedule")
+            .post(json.encodeToString(CommercialScheduleRequest.serializer(), payload).toRequestBody(JSON_MEDIA_TYPE))
+            .build()
+        execute(req) { body ->
+            json.decodeFromString<CommercialScheduleEnvelope>(body).breaks
+        }
+    }
+
     suspend fun fetchCommercialBreak(
         era: String? = null,
         mode: String? = null,

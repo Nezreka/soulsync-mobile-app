@@ -1091,7 +1091,7 @@ data class PlayerSettings(
     @SerialName("commercials_era")
     val commercialsEra: String = "auto",
     @SerialName("commercials_mode")
-    val commercialsMode: String = "short",
+    val commercialsMode: String = "cable",
 )
 
 @Serializable
@@ -1126,6 +1126,33 @@ data class CommercialsStatus(
 @Serializable
 internal data class CommercialBreakEnvelope(
     val clips: List<CommercialClip> = emptyList(),
+)
+
+@Serializable
+data class CommercialScheduleItem(
+    val id: String,
+    val title: String = "",
+    val year: Int? = null,
+    @SerialName("duration_seconds")
+    val durationSeconds: Int = 1800,
+)
+
+@Serializable
+internal data class CommercialScheduleRequest(
+    val items: List<CommercialScheduleItem>,
+    val era: String? = null,
+    val mode: String? = null,
+    @SerialName("channel_id")
+    val channelId: String? = null,
+    @SerialName("channel_name")
+    val channelName: String? = null,
+    @SerialName("min_gap_seconds")
+    val minGapSeconds: Int = 300,
+)
+
+@Serializable
+internal data class CommercialScheduleEnvelope(
+    val breaks: Map<String, List<CommercialClip>> = emptyMap(),
 )
 
 data class DeviceProfileInfo(

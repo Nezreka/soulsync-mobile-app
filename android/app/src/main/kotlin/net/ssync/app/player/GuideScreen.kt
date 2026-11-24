@@ -1687,42 +1687,81 @@ fun GuideScreen(
                 channelName = ch.name,
                 channelNumber = ch.number,
             )
-            // If Retro Commercial Breaks are enabled for this profile, splice 1-3 vintage spots
-            // between the current show and the next show (works locally AND on Chromecast queueLoad!)
+            // If Retro Commercial Breaks are enabled for this profile, interleave continuous
+            // year-matched breaks between EVERY show in the queue (5-min cooldown; works locally AND on Chromecast!)
             scope.launch {
                 val prefs = (api.fetchSettings() as? MusicApiResult.Success)?.data
                 val finalUpcoming = if (prefs?.commercialsEnabled == true && baseUpcoming.isNotEmpty()) {
-                    val activeYear = when (active.itemType) {
-                        "movie" -> catalog.movies.firstOrNull { it.id == active.detailId }?.year
-                        "episode" -> catalog.shows.firstOrNull { it.id == active.detailId }?.year
-                        else -> null
-                    } ?: Regex("\\b(19[5-9]\\d|20[0-2]\\d)\\b").find("${active.subtitle} ${active.title}")?.groupValues?.get(1)?.toIntOrNull()
-                    val clips = (api.fetchCommercialBreak(
+                    val upcomingProgs = ch.programs
+                        .filter { it.startEpochSec >= active.endEpochSec }
+                        .take(12)
+                    val allProgs = listOf(active) + upcomingProgs
+                    val schedItems = allProgs.map { p ->
+                        val yr = when (p.itemType) {
+                            "movie" -> catalog.movies.firstOrNull { it.id == p.detailId }?.year
+                            "episode" -> catalog.shows.firstOrNull { it.id == p.detailId }?.year
+                            else -> null
+                        } ?: Regex("\\b(19[5-9]\\d|20[0-2]\\d)\\b").find("${p.subtitle} ${p.title}")?.groupValues?.get(1)?.toIntOrNull()
+                        net.ssync.player.CommercialScheduleItem(
+                            id = p.itemId,
+                            title = p.title,
+                            year = yr,
+                            durationSeconds = ((p.endEpochSec - p.startEpochSec).coerceAtLeast(60L)).toInt(),
+                        )
+                    }
+                    val breaksMap = (api.fetchCommercialSchedule(
+                        items = schedItems,
                         era = prefs.commercialsEra,
                         mode = prefs.commercialsMode,
                         channelId = ch.id,
                         channelName = ch.name,
-                        year = activeYear,
+                        minGapSeconds = 300,
                     ) as? MusicApiResult.Success)?.data.orEmpty()
-                    if (clips.isNotEmpty()) {
-                        val commItems = clips.map { clip ->
-                            ActivePlayable(
-                                itemType = "commercial",
-                                itemId = clip.id,
-                                title = clip.title,
-                                subtitle = "Commercial Break · CH ${ch.number} ${ch.name}",
-                                artworkUrl = null,
-                                streamUrl = api.streamUrl("commercial", clip.id),
-                                isVideo = true,
-                                resumePositionMs = 0L,
-                                durationMs = clip.durationSeconds * 1000L,
-                                isLiveGuide = true,
-                                channelId = ch.id,
-                                channelName = ch.name,
-                                channelNumber = ch.number,
-                            )
+                    if (breaksMap.isNotEmpty()) {
+                        buildList {
+                            // Break right after active show (index 0)
+                            breaksMap["0"]?.forEach { clip ->
+                                add(
+                                    ActivePlayable(
+                                        itemType = "commercial",
+                                        itemId = clip.id,
+                                        title = clip.title,
+                                        subtitle = "Commercial Break · CH ${ch.number} ${ch.name}",
+                                        artworkUrl = null,
+                                        streamUrl = api.streamUrl("commercial", clip.id),
+                                        isVideo = true,
+                                        resumePositionMs = 0L,
+                                        durationMs = clip.durationSeconds * 1000L,
+                                        isLiveGuide = true,
+                                        channelId = ch.id,
+                                        channelName = ch.name,
+                                        channelNumber = ch.number,
+                                    ),
+                                )
+                            }
+                            baseUpcoming.forEachIndexed { idx, showItem ->
+                                add(showItem)
+                                breaksMap[(idx + 1).toString()]?.forEach { clip ->
+                                    add(
+                                        ActivePlayable(
+                                            itemType = "commercial",
+                                            itemId = clip.id,
+                                            title = clip.title,
+                                            subtitle = "Commercial Break · CH ${ch.number} ${ch.name}",
+                                            artworkUrl = null,
+                                            streamUrl = api.streamUrl("commercial", clip.id),
+                                            isVideo = true,
+                                            resumePositionMs = 0L,
+                                            durationMs = clip.durationSeconds * 1000L,
+                                            isLiveGuide = true,
+                                            channelId = ch.id,
+                                            channelName = ch.name,
+                                            channelNumber = ch.number,
+                                        ),
+                                    )
+                                }
+                            }
                         }
-                        commItems + baseUpcoming
                     } else {
                         baseUpcoming
                     }
