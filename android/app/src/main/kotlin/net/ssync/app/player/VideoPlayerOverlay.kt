@@ -66,6 +66,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.foundation.focusable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -96,6 +99,7 @@ import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
@@ -152,7 +156,8 @@ fun VideoPlayerOverlay(
     }
 
     val exoPlayer = remember(item.streamUrl) {
-        val dataSourceFactory = OkHttpDataSource.Factory(pinnedHttpClient)
+        // a downloaded video is a file:// uri: OkHttp alone can't open it
+        val dataSourceFactory = DefaultDataSource.Factory(context, OkHttpDataSource.Factory(pinnedHttpClient))
         val audioAttributes = AudioAttributes.Builder()
             .setUsage(C.USAGE_MEDIA)
             .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
@@ -269,6 +274,17 @@ fun VideoPlayerOverlay(
         } else {
             exoPlayer.seekTo(clamped)
         }
+    }
+
+    /**
+     * ten seconds on or back from the remote: on the item's own clock (a
+     * transcoded stream's player clock starts where the stream did), and
+     * never to 0 when the length isn't known yet (fast forward restarted it)
+     */
+    fun skipBy(deltaMs: Long) {
+        val total = effectiveDurationMs()
+        val target = (effectivePositionMs() + deltaMs).coerceAtLeast(0L)
+        seekOrTranscode(if (total > 0L) target.coerceAtMost(total) else target)
     }
 
     DisposableEffect(exoPlayer) {
@@ -584,10 +600,18 @@ fun VideoPlayerOverlay(
         return
     }
 
+    // on a tv the player takes focus as it opens: otherwise focus stayed on the
+    // card underneath, d-pad center re-opened it, and channel, media and seek
+    // keys never reached the player
+    val rootFocus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { runCatching { rootFocus.requestFocus() } }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black)
+            .focusRequester(rootFocus)
+            .focusable()
             .onPreviewKeyEvent { ev ->
                 if (ev.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                 when (ev.nativeKeyEvent.keyCode) {
@@ -632,20 +656,20 @@ fun VideoPlayerOverlay(
                         true
                     }
                     android.view.KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> {
-                        exoPlayer.seekTo((exoPlayer.currentPosition + 10_000L).coerceAtMost(exoPlayer.duration.coerceAtLeast(0L)))
+                        skipBy(10_000L)
                         showHud = true
                         hudPoke++
                         true
                     }
                     android.view.KeyEvent.KEYCODE_MEDIA_REWIND -> {
-                        exoPlayer.seekTo((exoPlayer.currentPosition - 10_000L).coerceAtLeast(0L))
+                        skipBy(-10_000L)
                         showHud = true
                         hudPoke++
                         true
                     }
                     android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> {
                         if (!showHud) {
-                            exoPlayer.seekTo((exoPlayer.currentPosition + 10_000L).coerceAtMost(exoPlayer.duration.coerceAtLeast(0L)))
+                            skipBy(10_000L)
                             showHud = true
                             hudPoke++
                             true
@@ -655,7 +679,7 @@ fun VideoPlayerOverlay(
                     }
                     android.view.KeyEvent.KEYCODE_DPAD_LEFT -> {
                         if (!showHud) {
-                            exoPlayer.seekTo((exoPlayer.currentPosition - 10_000L).coerceAtLeast(0L))
+                            skipBy(-10_000L)
                             showHud = true
                             hudPoke++
                             true
@@ -1179,6 +1203,7 @@ fun VideoPlayerOverlay(
             WatchPartyFullscreenReactions(
                 partyId = item.partyId,
                 movieTitle = item.title,
+                playingItemId = item.itemId,
                 api = api,
                 exoPlayer = exoPlayer,
                 currentPositionMs = { effectivePositionMs() },
@@ -1487,6 +1512,8 @@ private data class FloatingPartyEmoji(
 private fun WatchPartyFullscreenReactions(
     partyId: String,
     movieTitle: String,
+    /** what's playing here: the room's clock only applies to the room's title */
+    playingItemId: String,
     api: PlayerApiClient,
     exoPlayer: ExoPlayer,
     currentPositionMs: () -> Long,
@@ -1565,13 +1592,28 @@ private fun WatchPartyFullscreenReactions(
         }
     }
 
+    var lastSyncSeekMs by remember { mutableLongStateOf(0L) }
+
     fun applyPartySync(p: net.ssync.player.WatchParty) {
         party = p
         if (p.serverNow > 0.0) {
             serverOffsetSec = p.serverNow - (System.currentTimeMillis() / 1000.0)
         }
+        // another title is playing (the next episode): the room's clock isn't its
+        if (p.itemId.isNotBlank() && p.itemId != playingItemId) return
         val estServerNow = (System.currentTimeMillis() / 1000.0) + serverOffsetSec
-        val recentlyActed = (System.currentTimeMillis() - lastLocalActionMs) < 1500L
+        // a poll cycle plus the request, as the web player: a poll that left
+        // before this viewer's change landed mustn't undo it
+        val recentlyActed = (System.currentTimeMillis() - lastLocalActionMs) < 3000L
+        // a seek this sync made is still landing (a transcode restarting, or
+        // buffering at the new spot): seeking again restarted it every poll
+        val settling = exoPlayer.playbackState == Player.STATE_BUFFERING ||
+            System.currentTimeMillis() - lastSyncSeekMs < 6000L
+        fun syncSeek(ms: Long) {
+            if (settling) return
+            lastSyncSeekMs = System.currentTimeMillis()
+            onSeekMs(ms)
+        }
         val inResumeCountdown = (p.resumeAt ?: 0.0) > estServerNow
         val localPosSec = currentPositionMs() / 1000.0
 
@@ -1581,16 +1623,16 @@ private fun WatchPartyFullscreenReactions(
             }
             val targetSec = if (p.position > 0.0) p.position else p.livePosition
             if (kotlin.math.abs(localPosSec - targetSec) > 2.5 && !recentlyActed) {
-                onSeekMs((targetSec * 1000.0).toLong())
+                syncSeek((targetSec * 1000.0).toLong())
             }
         } else if (p.status == "playing" && !inResumeCountdown) {
             if (!exoPlayer.isPlaying && !recentlyActed) {
                 if (kotlin.math.abs(localPosSec - p.livePosition) > 2.5) {
-                    onSeekMs((p.livePosition * 1000.0).toLong())
+                    syncSeek((p.livePosition * 1000.0).toLong())
                 }
                 exoPlayer.play()
             } else if (exoPlayer.isPlaying && kotlin.math.abs(localPosSec - p.livePosition) > 4.5 && !recentlyActed) {
-                onSeekMs((p.livePosition * 1000.0).toLong())
+                syncSeek((p.livePosition * 1000.0).toLong())
             }
         }
     }

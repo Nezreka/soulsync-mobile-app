@@ -349,7 +349,11 @@ class SoulSyncCastController(private val appContext: Context) {
         router.selectRoute(route)
     }
 
+    /** the queue appender of the last cast, if it's still adding */
+    private var appendJob: kotlinx.coroutines.Job? = null
+
     fun disconnect() {
+        appendJob?.cancel()
         runCatching {
             castContext?.sessionManager?.endCurrentSession(true)
             mediaRouter?.unselect(MediaRouter.UNSELECT_REASON_DISCONNECTED)
@@ -447,6 +451,7 @@ class SoulSyncCastController(private val appContext: Context) {
         positionMs: Long = 0L,
         upcoming: List<ActivePlayable> = emptyList(),
     ): Boolean {
+        appendJob?.cancel()
         val session = activeSession ?: castContext?.sessionManager?.currentCastSession
         val remote = session?.remoteMediaClient
         if (remote == null) {
@@ -508,7 +513,10 @@ class SoulSyncCastController(private val appContext: Context) {
             // Append remaining upcoming shows asynchronously after TV playback has already started
             val rest = upcoming.drop(1).take(6)
             if (rest.isNotEmpty()) {
-                kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                // one appender at a time: casting something else (or disconnecting)
+                // stops it, or the old show's episodes landed in the new queue
+                appendJob?.cancel()
+                appendJob = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
                     for (next in rest) {
                         val prep = runCatching { prepareCastMedia(api, baseUrl, next, 0L) }.getOrNull() ?: continue
                         val qItem = MediaQueueItem.Builder(prep.mediaInfo)

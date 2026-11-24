@@ -91,7 +91,7 @@ class MusicApiClientTest {
 
     @Test
     fun revokedDeviceTokenReturnsDeviceRevokedCleanly() = runTest {
-        soulSyncServer.enqueue(MockResponse().setResponseCode(401))
+        soulSyncServer.enqueue(MockResponse().setResponseCode(401).setBody("""{"success":false,"error":"device_token_invalid","message":"This device isn't paired with this server any more."}"""))
         val client = MusicApiClient(
             baseUrl = soulSyncServer.url("/").toString().trimEnd('/'),
             pinnedAuthenticatedClient = OkHttpClient(),

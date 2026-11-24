@@ -100,6 +100,17 @@ class PlayerApiClient(
         return res
     }
 
+    /**
+     * the Live Guide's pool: the catalog as it was the first time anyone asked
+     * today (core/player/guide_day.py). every device schedules from it, so a
+     * download mid-day doesn't re-seed the shared timeline. browse screens keep
+     * [fetchVideoCatalog]
+     */
+    suspend fun fetchGuideCatalog(): MusicApiResult<VideoCatalog> =
+        getJson("$base/api/player/video-catalog?guide=1") { body ->
+            VideoCatalogDecoder.decode(json.parseToJsonElement(body).jsonObject)
+        }
+
     // ── Movies & TV Detail ───────────────────────────────────────────────────
 
     suspend fun fetchMovieDetail(movieId: Int): MusicApiResult<MovieDetail> =
@@ -643,8 +654,9 @@ class PlayerApiClient(
 
     // ── Retro Commercial Breaks ──────────────────────────────────────────────
 
-    suspend fun fetchCommercialsConfig(): MusicApiResult<CommercialsConfig> =
-        getJson("$base/api/player/commercials/config") { body ->
+    /** [forGuide]: the clips the day's breaks are scheduled from, frozen for the day */
+    suspend fun fetchCommercialsConfig(forGuide: Boolean = false): MusicApiResult<CommercialsConfig> =
+        getJson("$base/api/player/commercials/config" + if (forGuide) "?guide=1" else "") { body ->
             json.decodeFromString<CommercialsConfig>(body)
         }
 
@@ -1189,7 +1201,7 @@ class PlayerApiClient(
         try {
             pinnedAuthenticatedClient.newCall(req).execute().use { response ->
                 val body = response.body?.string().orEmpty()
-                if (response.code == 401) return@withContext MusicApiResult.DeviceRevoked
+                if (response.code == 401 && net.ssync.network.isRevocation(body)) return@withContext MusicApiResult.DeviceRevoked
                 val root = runCatching { json.parseToJsonElement(body).jsonObject }.getOrNull()
                 if (response.isSuccessful && (root?.get("success") as? kotlinx.serialization.json.JsonPrimitive)?.content == "true") {
                     val prof = root["profile"] as? JsonObject
@@ -1308,7 +1320,7 @@ class PlayerApiClient(
         try {
             pinnedAuthenticatedClient.newCall(req).execute().use { response ->
                 val body = response.body?.string().orEmpty()
-                if (response.code == 401) return@withContext MusicApiResult.DeviceRevoked
+                if (response.code == 401 && net.ssync.network.isRevocation(body)) return@withContext MusicApiResult.DeviceRevoked
                 val root = runCatching { json.parseToJsonElement(body).jsonObject }.getOrNull()
                 val success = (root?.get("success") as? kotlinx.serialization.json.JsonPrimitive)
                     ?.content?.toBooleanStrictOrNull() ?: false
@@ -1367,7 +1379,7 @@ class PlayerApiClient(
         try {
             pinnedAuthenticatedClient.newCall(req).execute().use { response ->
                 val body = response.body?.string().orEmpty()
-                if (response.code == 401) return@withContext MusicApiResult.DeviceRevoked
+                if (response.code == 401 && net.ssync.network.isRevocation(body)) return@withContext MusicApiResult.DeviceRevoked
                 val root = runCatching { json.parseToJsonElement(body).jsonObject }.getOrNull()
                 val success = (root?.get("success") as? kotlinx.serialization.json.JsonPrimitive)
                     ?.content?.toBooleanStrictOrNull() ?: false
@@ -1399,7 +1411,8 @@ class PlayerApiClient(
                 val body = response.body?.string().orEmpty()
                 when {
                     response.isSuccessful -> MusicApiResult.Success(parser(body))
-                    response.code == 401 -> MusicApiResult.DeviceRevoked
+                    response.code == 401 && net.ssync.network.isRevocation(body) -> MusicApiResult.DeviceRevoked
+                    response.code == 401 -> MusicApiResult.Error("Not signed in to SoulSync. Pick your profile again.")
                     else -> MusicApiResult.Error("Server returned HTTP ${response.code}")
                 }
             }

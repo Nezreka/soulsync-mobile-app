@@ -10,6 +10,7 @@ import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.database.StandaloneDatabaseProvider
 import androidx.media3.datasource.DataSpec
+import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.datasource.cache.CacheWriter
 import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor
@@ -91,6 +92,10 @@ class SoulSyncPlaybackService : MediaSessionService() {
             .setCache(audioCache)
             .setUpstreamDataSourceFactory(upstreamFactory)
             .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
+        // a downloaded song is a file:// uri, which OkHttp can't open ("Malformed
+        // URL"): DefaultDataSource sends files to the file reader and the rest
+        // through the pinned, cached http source
+        val playbackDataSourceFactory = DefaultDataSource.Factory(this, cacheDataSourceFactory)
 
         val audioAttributes = AudioAttributes.Builder()
             .setUsage(C.USAGE_MEDIA)
@@ -98,14 +103,14 @@ class SoulSyncPlaybackService : MediaSessionService() {
             .build()
 
         val player = ExoPlayer.Builder(this)
-            .setMediaSourceFactory(DefaultMediaSourceFactory(cacheDataSourceFactory))
+            .setMediaSourceFactory(DefaultMediaSourceFactory(playbackDataSourceFactory))
             .setAudioAttributes(audioAttributes, /* handleAudioFocus = */ true)
             .setHandleAudioBecomingNoisy(true)
             .build()
 
         // Secondary deck used solely for equal-power crossfade tail (no audio focus theft)
         fadeOutPlayer = ExoPlayer.Builder(this)
-            .setMediaSourceFactory(DefaultMediaSourceFactory(cacheDataSourceFactory))
+            .setMediaSourceFactory(DefaultMediaSourceFactory(playbackDataSourceFactory))
             .setAudioAttributes(audioAttributes, /* handleAudioFocus = */ false)
             .build()
 
@@ -118,6 +123,19 @@ class SoulSyncPlaybackService : MediaSessionService() {
 
             override fun onTimelineChanged(timeline: androidx.media3.common.Timeline, reason: Int) {
                 triggerLookaheadPrefetch(player, cacheDataSourceFactory, prefs)
+            }
+
+            // a pause mid-crossfade pauses all of it: the outgoing deck kept
+            // playing for up to 12 seconds under a paused player
+            override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+                if (playWhenReady) return
+                activeFadeJob?.cancel()
+                activeFadeJob = null
+                fadeOutPlayer?.let {
+                    it.stop()
+                    it.clearMediaItems()
+                }
+                player.volume = 1f
             }
         })
 

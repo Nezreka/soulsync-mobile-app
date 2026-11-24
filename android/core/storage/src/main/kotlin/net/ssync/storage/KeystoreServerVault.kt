@@ -51,10 +51,18 @@ class KeystoreServerVault(
         val ciphertext = ByteArray(buffer.remaining())
         buffer.get(ciphertext)
 
-        val cipher = Cipher.getInstance(TRANSFORMATION)
-        cipher.init(Cipher.DECRYPT_MODE, getOrCreateKey(), GCMParameterSpec(GCM_TAG_BITS, iv))
-        val plaintext = cipher.doFinal(ciphertext)
-        json.decodeFromString<PairedServerRecord>(plaintext.toString(Charsets.UTF_8))
+        // a key the keystore invalidated (lock screen changed, a restore), a
+        // corrupt file or an old record shape: unpaired, not a crash on every
+        // launch. the unreadable file goes, so the next pairing starts clean
+        runCatching {
+            val cipher = Cipher.getInstance(TRANSFORMATION)
+            cipher.init(Cipher.DECRYPT_MODE, getOrCreateKey(), GCMParameterSpec(GCM_TAG_BITS, iv))
+            val plaintext = cipher.doFinal(ciphertext)
+            json.decodeFromString<PairedServerRecord>(plaintext.toString(Charsets.UTF_8))
+        }.getOrElse {
+            vaultFile.delete()
+            null
+        }
     }
 
     override suspend fun save(record: PairedServerRecord) = withContext(Dispatchers.IO) {

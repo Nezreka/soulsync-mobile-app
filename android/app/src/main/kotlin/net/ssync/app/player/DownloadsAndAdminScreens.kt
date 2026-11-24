@@ -496,7 +496,8 @@ fun AdminUsersScreen(
                 )
             }
         } else {
-            val data = overview!!
+            // nothing loaded (a refused first load): nothing to show, not a crash
+            val data = overview ?: return@LazyColumn
             // Summary Row
             item {
                 LazyRow(

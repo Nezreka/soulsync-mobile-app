@@ -73,7 +73,7 @@ class PlayerApiClientTest {
 
     @Test
     fun revokedDeviceReturnsDeviceRevoked() = runTest {
-        server.enqueue(MockResponse().setResponseCode(401))
+        server.enqueue(MockResponse().setResponseCode(401).setBody("""{"success":false,"error":"device_token_invalid","message":"This device isn't paired with this server any more."}"""))
         assertTrue(client.fetchContinue() is MusicApiResult.DeviceRevoked)
     }
 }

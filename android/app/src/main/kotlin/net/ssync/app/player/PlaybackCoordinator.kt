@@ -41,11 +41,18 @@ data class ActivePlayable(
  */
 @Stable
 class PlaybackCoordinator(
-    private val api: PlayerApiClient,
+    /**
+     * the current client. it's replaced when the phone moves between wi-fi
+     * and mobile data (another base url) or the profile changes; the
+     * coordinator stays, so what's playing doesn't vanish mid-video
+     */
+    api: PlayerApiClient,
     private val scope: CoroutineScope,
     private val controllerProvider: () -> MediaController?,
     private val castHandler: (suspend (ActivePlayable, List<ActivePlayable>) -> Boolean)? = null,
 ) {
+    var api: PlayerApiClient = api
+
     var activeItem by mutableStateOf<ActivePlayable?>(null)
         private set
     var queue by mutableStateOf<List<ActivePlayable>>(emptyList())
@@ -86,6 +93,8 @@ class PlaybackCoordinator(
         isVideoMinimized = false
         activeItem = resolvedItem
         queue = listOf(resolvedItem) + resolvedUpcoming
+        // an earlier video session's queue mustn't start on the tv when this ends
+        videoQueue = emptyList()
         lyricsText = null
 
         val caster = castHandler
@@ -94,6 +103,7 @@ class PlaybackCoordinator(
                 val handledByCast = caster(item, queue.drop(1))
                 if (handledByCast) {
                     controllerProvider()?.pause()
+                    audioOnCast = true
                     isPlaying = true
                     reportPresence(item, paused = false)
                     return@launch
@@ -116,6 +126,7 @@ class PlaybackCoordinator(
     }
 
     private fun startLocalAudio(item: ActivePlayable) {
+        audioOnCast = false
         val controller = controllerProvider()
         if (controller != null) {
             val mediaItems = queue.map { toMediaItem(it) }
@@ -200,9 +211,13 @@ class PlaybackCoordinator(
 
     /** Hide the local video overlay when handing off playback to Chromecast while keeping activeItem & videoQueue intact. */
     fun hideLocalVideoForCast() {
+        handingOffToCast = true
         showVideoOverlay = false
         isVideoMinimized = false
     }
+
+    /** the local overlay is closing because the tv took over: keep the queue */
+    private var handingOffToCast = false
 
     /** Advance to the next queued video (e.g., next scheduled program on a Live Guide channel). */
     fun playNextVideo(): Boolean {
@@ -224,14 +239,20 @@ class PlaybackCoordinator(
         }
         if (remaining.isEmpty()) return false
         val next = remaining.first().copy(resumePositionMs = 0L)
-        // Keep queue topped up when running low on a Live Guide channel
-        if (remaining.size <= 3 && next.isLiveGuide && !next.channelId.isNullOrBlank()) {
-            val extra = liveChannelRefiller?.invoke(next.channelId!!)
-                ?.map { resolveOffline(it).copy(isVideo = true) }
-                ?.filter { cand -> remaining.none { it.itemType == cand.itemType && it.itemId == cand.itemId } }
-                .orEmpty()
-            if (extra.isNotEmpty()) {
-                remaining = remaining + extra
+        // keep a Live Guide queue topped up. rebuilding every channel is heavy:
+        // it runs off the main thread (it janked or stalled the tv at each
+        // program change) and lands on the queue when it's done
+        val refill = liveChannelRefiller
+        if (remaining.size <= 3 && next.isLiveGuide && !next.channelId.isNullOrBlank() && refill != null) {
+            val channelId = next.channelId!!
+            scope.launch {
+                val extra = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                    refill(channelId).map { resolveOffline(it).copy(isVideo = true) }
+                }
+                if (activeItem?.channelId != channelId) return@launch
+                val have = videoQueue
+                val add = extra.filter { cand -> have.none { it.itemType == cand.itemType && it.itemId == cand.itemId } }
+                if (add.isNotEmpty()) videoQueue = have + add
             }
         }
         videoQueue = remaining
@@ -307,18 +328,30 @@ class PlaybackCoordinator(
         }
     }
 
-    fun closeVideo(lastPositionMs: Long, totalDurationMs: Long) {
-        val current = activeItem
-        showVideoOverlay = false
-        isVideoMinimized = false
-        isPlaying = false
-        if (current?.isVideo == true) {
+    /**
+     * the overlay for [closed] went away. its position is saved under [closed],
+     * never under whatever is active now: the overlay also goes when the next
+     * program, a channel surf or a new video replaces it, and reading
+     * activeItem then closed the new one and saved the old position on it.
+     * the player only shuts when [closed] is still what's active (the person
+     * closed it), and never on a hand-off to cast.
+     */
+    fun closeVideo(closed: ActivePlayable, lastPositionMs: Long, totalDurationMs: Long) {
+        val current = closed
+        val stillActive = activeItem?.let { it.itemId == closed.itemId && it.streamUrl == closed.streamUrl } == true
+        val toCast = handingOffToCast
+        handingOffToCast = false
+        if (stillActive && !toCast) {
+            showVideoOverlay = false
+            isVideoMinimized = false
+            isPlaying = false
             activeItem = null
             videoQueue = emptyList()
         }
-        if (current != null) {
+        run {
             scope.launch {
-                if (!current.partyId.isNullOrBlank()) {
+                // a hand-off to the next item (or the tv) isn't leaving the party
+                if (stillActive && !toCast && !current.partyId.isNullOrBlank()) {
                     api.leaveWatchParty(current.partyId)
                 }
                 val reachedCredits = totalDurationMs > 0 && lastPositionMs >= (totalDurationMs * 0.92)
@@ -340,7 +373,7 @@ class PlaybackCoordinator(
                         api.markWatched(itemType = current.itemType, itemId = current.itemId)
                     }
                 }
-                api.clearPresence()
+                if (stillActive && !toCast) api.clearPresence()
             }
         }
     }
@@ -404,10 +437,32 @@ class PlaybackCoordinator(
 
     private var lastAudioPresenceBeatMs = 0L
 
+    /** the audio is on a cast device: the local controller holds a paused old item */
+    private var audioOnCast = false
+    private var lastProgressSaveMs = 0L
+    private var wasPlayingAudio = false
+
     fun syncAudioProgress() {
-        val item = activeItem ?: return
+        var item = activeItem ?: return
         if (item.isVideo) return
+        // the tv is playing it: the paused local player says nothing true about it
+        if (audioOnCast) return
         val controller = controllerProvider() ?: return
+        // the queue moved on (skip, auto-advance, crossfade): what's playing is
+        // the controller's item, not the one this started with
+        val playingId = controller.currentMediaItem?.mediaId
+        if (playingId != null && playingId != item.itemId) {
+            val next = queue.firstOrNull { it.itemId == playingId } ?: return
+            activeItem = next
+            item = next
+            lyricsText = null
+            if (next.itemType == "track") {
+                scope.launch {
+                    val res = api.fetchTrackLyrics(next.itemId)
+                    if (res is MusicApiResult.Success && activeItem?.itemId == next.itemId) lyricsText = res.data
+                }
+            }
+        }
         positionMs = controller.currentPosition.coerceAtLeast(0L)
         durationMs = controller.duration.coerceAtLeast(0L)
         isPlaying = controller.isPlaying
@@ -418,14 +473,25 @@ class PlaybackCoordinator(
             reportPresence(item, paused = !isPlaying, overridePositionMs = positionMs, overrideDurationMs = durationMs)
         }
 
-        if (!item.isLiveGuide && positionMs > 0 && item.itemType in setOf("podcast_episode", "audiobook")) {
+        // every 15 seconds while it plays, and once as it pauses: it was every
+        // second, paused or not
+        val pausedNow = wasPlayingAudio && !isPlaying
+        val due = isPlaying && now - lastProgressSaveMs >= 15_000L
+        wasPlayingAudio = isPlaying
+        if ((due || pausedNow) && !item.isLiveGuide && positionMs > 0 &&
+            item.itemType in setOf("podcast_episode", "audiobook")
+        ) {
+            lastProgressSaveMs = now
+            val saving = item
+            val at = positionMs
+            val length = durationMs
             scope.launch {
                 api.saveProgress(
-                    itemType = item.itemType,
-                    itemId = item.itemId,
-                    positionSeconds = positionMs / 1000.0,
-                    durationSeconds = durationMs.takeIf { it > 0 }?.let { it / 1000.0 },
-                    meta = buildProgressMeta(item),
+                    itemType = saving.itemType,
+                    itemId = saving.itemId,
+                    positionSeconds = at / 1000.0,
+                    durationSeconds = length.takeIf { it > 0 }?.let { it / 1000.0 },
+                    meta = buildProgressMeta(saving),
                 )
             }
         }

@@ -81,6 +81,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
@@ -218,14 +219,17 @@ fun PlayerShell(
     val castController = rememberCastController()
     val latestMediaController by rememberUpdatedState(mediaController)
     val latestBaseUrl by rememberUpdatedState(activeBaseUrl)
-    val coordinator = remember(api, castController) {
+    val latestApi by rememberUpdatedState(api)
+    // one coordinator for the session: a network switch or a new api client
+    // used to rebuild it, and the open video and mini bar vanished mid-play
+    val coordinator = remember(castController) {
         PlaybackCoordinator(
             api = api,
             scope = scope,
             controllerProvider = { latestMediaController },
             castHandler = { item, upcoming ->
                 if (castController.isConnected) {
-                    val ok = castController.castItem(api, latestBaseUrl, item, item.resumePositionMs, upcoming)
+                    val ok = castController.castItem(latestApi, latestBaseUrl, item, item.resumePositionMs, upcoming)
                     if (ok && !castController.isCastingMedia) showCastSheet = true
                     ok
                 } else {
@@ -234,6 +238,7 @@ fun PlayerShell(
             },
         )
     }
+    SideEffect { coordinator.api = api }
 
     // Keep Chromecast Live Guide & queued playback advancing continuously even when the Cast sheet is closed
     LaunchedEffect(castController, coordinator) {
@@ -553,7 +558,7 @@ fun PlayerShell(
                         } else {
                             null
                         },
-                        onClose = { pos, dur -> coordinator.closeVideo(pos, dur) },
+                        onClose = { pos, dur -> coordinator.closeVideo(videoItem, pos, dur) },
                     )
                 }
             }

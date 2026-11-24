@@ -106,7 +106,7 @@ class MusicApiClient(
                 val body = response.body?.string().orEmpty()
                 when {
                     response.isSuccessful -> MusicApiResult.Success(parser(body))
-                    response.code == 401 -> MusicApiResult.DeviceRevoked
+                    response.code == 401 && net.ssync.network.isRevocation(body) -> MusicApiResult.DeviceRevoked
                     else -> MusicApiResult.Error("Server returned HTTP ${response.code}")
                 }
             }

@@ -1094,7 +1094,10 @@ private fun buildDesktopParityChannels(
     val lineupPos = lineup.withIndex().associate { it.value.channelId to it.index }
     val lineupById = lineup.associateBy { it.channelId }
 
-    val lined = raw.withIndex()
+    // two names can make one id ("Disney+" and "Disney" are both network-disney):
+    // the first keeps it, the same rule as the web guide, so numbers still match.
+    // a second one with the same key crashed the guide's LazyColumn
+    val lined = raw.distinctBy { it.id }.withIndex()
         .sortedWith { a, b ->
             val pa = lineupPos[a.value.id]
             val pb = lineupPos[b.value.id]
@@ -1546,12 +1549,13 @@ fun GuideScreen(
 
         // Phase 1: fetch catalog (cached 5m in PlayerApiClient), saved channels, lineup, favorites, collections, shared commercials config
         val revoked = coroutineScope {
-            val vDef = async { api.fetchVideoCatalog() }
+            // the day's frozen pool, the same one the web guide schedules from
+            val vDef = async { api.fetchGuideCatalog() }
             val sDef = async { api.fetchSavedGuideChannels() }
             val lDef = async { api.fetchGuideLineup() }
             val fDef = async { api.fetchGuideFavoritesList() }
             val cDef = async { api.fetchCollections() }
-            val commDef = async { api.fetchCommercialsConfig() }
+            val commDef = async { api.fetchCommercialsConfig(forGuide = true) }
 
             val v = vDef.await()
             val s = sDef.await()

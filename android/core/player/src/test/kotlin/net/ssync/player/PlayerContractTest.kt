@@ -87,4 +87,18 @@ class PlayerContractTest {
         val n = json.decodeFromString<PlayerNote>("""{"id":3,"body":"hi","created_at":1732400000.25}""")
         assertEquals(1732400000.25, n.createdAt!!, 0.001)
     }
+
+    @Test
+    fun aPlain401IsNotAnUnpairing() = runTest {
+        // "Not signed in" (a lapsed profile pick), an expired cast token: the
+        // device stays paired. only the server's revocation codes unpair it
+        server.enqueue(MockResponse().setResponseCode(401).setBody("""{"success":false,"error":"Not signed in"}"""))
+        val res = client.fetchHomeLayout()
+        assertTrue(res is MusicApiResult.Error)
+        server.enqueue(
+            MockResponse().setResponseCode(401)
+                .setBody("""{"success":false,"error":"device_pick_expired","message":"No profile was picked in time."}"""),
+        )
+        assertTrue(client.fetchHomeLayout() is MusicApiResult.DeviceRevoked)
+    }
 }

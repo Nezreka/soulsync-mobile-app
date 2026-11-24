@@ -102,9 +102,16 @@ private class BearerTokenInterceptor(
         }
 
         val response = chain.proceed(request)
-        if (response.code == 401) {
+        // only the server saying this device is gone unpairs it. other 401s
+        // ("Not signed in", an expired cast token, a service not signed in)
+        // used to wipe the vault too
+        if (response.code == 401 && isRevocation(response.peekBody(4096).string())) {
             onUnauthorized?.invoke()
         }
         return response
     }
 }
+
+/** the server's words for "this device isn't paired any more" (core/connect/device_access.py) */
+fun isRevocation(body: String): Boolean =
+    body.contains("\"device_token_invalid\"") || body.contains("\"device_pick_expired\"")
