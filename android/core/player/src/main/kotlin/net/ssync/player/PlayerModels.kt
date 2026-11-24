@@ -1191,13 +1191,6 @@ internal data class PlayerIssueEnvelope(
 )
 
 @Serializable
-internal data class CommercialsConfigPutRequest(
-    val enabled: Boolean? = null,
-    val era: String? = null,
-    val mode: String? = null,
-)
-
-@Serializable
 data class CommercialsStatus(
     val ready: Boolean = false,
     @SerialName("total_count")

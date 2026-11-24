@@ -255,12 +255,26 @@ fun SettingsScreen(
             }
             fun updateServerComm(enabled: Boolean? = null, era: String? = null, mode: String? = null) {
                 if (!isAdminUser || savingComm) return
+                val before = commConfig
+                // flips at once; a refusal puts it back and says so
+                commConfig = before?.copy(
+                    enabled = enabled ?: before.enabled,
+                    era = era ?: before.era,
+                    mode = mode ?: before.mode,
+                )
                 savingComm = true
+                saveError = null
                 scope.launch {
-                    (api.saveCommercialsConfig(enabled = enabled, era = era, mode = mode) as? MusicApiResult.Success)?.let {
-                        commConfig = it.data
-                        commStatus = it.data.status
-                        flashSaved()
+                    when (val res = api.saveCommercialsConfig(enabled = enabled, era = era, mode = mode)) {
+                        is MusicApiResult.Success -> {
+                            commConfig = res.data
+                            commStatus = res.data.status
+                            flashSaved()
+                        }
+                        else -> {
+                            commConfig = before
+                            saveError = "Couldn't save the commercial settings. Try again in a moment."
+                        }
                     }
                     savingComm = false
                 }

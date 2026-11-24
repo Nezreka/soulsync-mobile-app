@@ -75,6 +75,18 @@ class PlayerContractTest {
     }
 
     @Test
+    fun theCommercialsSwitchSendsOnlyWhatChanged() = runTest {
+        // {"enabled":true,"era":null,"mode":null}: the server saved era "none",
+        // refused it, and the switch never moved
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"success":true,"enabled":true,"era":"auto","mode":"cable","can_edit":true}"""))
+        client.saveCommercialsConfig(enabled = true)
+        assertEquals("""{"enabled":true}""", server.takeRequest().body.readUtf8())
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"success":true,"enabled":true,"era":"80s","mode":"cable","can_edit":true}"""))
+        client.saveCommercialsConfig(era = "80s")
+        assertEquals("""{"era":"80s"}""", server.takeRequest().body.readUtf8())
+    }
+
+    @Test
     fun scannerWrittenNumbersDoNotFailTheList() {
         // sqlite keeps what a scanner wrote: a float in an INTEGER column, a
         // bitrate as "320kbps". one such row failed the whole album

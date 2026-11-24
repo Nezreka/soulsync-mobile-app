@@ -669,10 +669,16 @@ class PlayerApiClient(
         era: String? = null,
         mode: String? = null,
     ): MusicApiResult<CommercialsConfig> = withContext(Dispatchers.IO) {
-        val payload = CommercialsConfigPutRequest(enabled = enabled, era = era, mode = mode)
+        // only the fields being changed: a null era read as "none" (refused)
+        // and a null enabled as off on servers before the fix
+        val payload = kotlinx.serialization.json.buildJsonObject {
+            enabled?.let { put("enabled", kotlinx.serialization.json.JsonPrimitive(it)) }
+            era?.let { put("era", kotlinx.serialization.json.JsonPrimitive(it)) }
+            mode?.let { put("mode", kotlinx.serialization.json.JsonPrimitive(it)) }
+        }
         val req = Request.Builder()
             .url("$base/api/player/commercials/config")
-            .put(json.encodeToString(CommercialsConfigPutRequest.serializer(), payload).toRequestBody(JSON_MEDIA_TYPE))
+            .put(payload.toString().toRequestBody(JSON_MEDIA_TYPE))
             .build()
         execute(req) { body ->
             json.decodeFromString<CommercialsConfig>(body)
