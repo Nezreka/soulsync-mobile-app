@@ -302,7 +302,9 @@ fun MoviesScreen(
                         if (visibleStudio.isNotEmpty()) {
                             items(visibleStudio, key = { (c, _) -> "studio-col-${c.id}" }) { (c, mem) ->
                                 val posters = buildList {
-                                    api.artwork.resolve(c.poster)?.let { add(it) }
+                                    c.poster?.takeIf { !it.startsWith("/api/video/collections/") }?.let {
+                                        api.artwork.resolve(it)?.let { resolved -> add(resolved) }
+                                    }
                                     mem.take(4).forEach { id ->
                                         val u = api.artwork.moviePoster(id)
                                         if (u !in this) add(u)

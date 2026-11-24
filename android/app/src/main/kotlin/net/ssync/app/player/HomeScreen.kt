@@ -100,6 +100,7 @@ private data class BillboardSlide(
     val previewStreamUrl: String? = null,
 )
 
+@kotlin.OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
     api: PlayerApiClient,
@@ -114,6 +115,7 @@ fun HomeScreen(
 ) {
     val scope = rememberCoroutineScope()
     var isLoading by remember { mutableStateOf(true) }
+    var isRefreshing by remember { mutableStateOf(false) }
     var continueItems by remember { mutableStateOf<List<ProgressRow>>(emptyList()) }
     var catalog by remember { mutableStateOf(VideoCatalog()) }
     var watchlist by remember { mutableStateOf<List<WatchlistItem>>(emptyList()) }
@@ -136,11 +138,10 @@ fun HomeScreen(
 
     var billboardIndex by remember { mutableIntStateOf(0) }
 
-    LaunchedEffect(api) {
-        isLoading = true
+    suspend fun loadHomeData(forceRefresh: Boolean) {
         coroutineScope {
             val cDef = async { api.fetchContinue() }
-            val vDef = async { api.fetchVideoCatalog() }
+            val vDef = async { api.fetchVideoCatalog(forceRefresh = forceRefresh) }
             val wDef = async { api.fetchWatchlist() }
             val aDef = async { api.fetchAlbums(limit = 20) }
             val pDef = async { api.fetchPodcastSubs() }
@@ -184,7 +185,17 @@ fun HomeScreen(
                 }
             }
         }
+    }
+
+    LaunchedEffect(api) {
+        isLoading = true
+        loadHomeData(forceRefresh = false)
         isLoading = false
+        // Auto-refresh silently every 60s so newly added episodes & movies land ASAP
+        while (true) {
+            delay(60_000L)
+            loadHomeData(forceRefresh = true)
+        }
     }
 
     // Build New Releases Billboard slides from newest Movies + TV Shows (1:1 with desktop /player)
@@ -282,6 +293,19 @@ fun HomeScreen(
     val sortedMovies = remember(catalog.movies) { catalog.movies.sortedByDescending { it.addedAt.orEmpty() } }
     val sortedShows = remember(catalog.shows) { catalog.shows.sortedByDescending { it.addedAt.orEmpty() } }
 
+    androidx.compose.material3.pulltorefresh.PullToRefreshBox(
+        isRefreshing = isRefreshing,
+        onRefresh = {
+            if (!isRefreshing) {
+                scope.launch {
+                    isRefreshing = true
+                    loadHomeData(forceRefresh = true)
+                    isRefreshing = false
+                }
+            }
+        },
+        modifier = Modifier.fillMaxSize(),
+    ) {
     LazyColumn(
         state = listState,
         modifier = Modifier.fillMaxSize(),
@@ -548,7 +572,8 @@ fun HomeScreen(
                                 onAction = { onNavigate(PlayerDestination.Movies) },
                             ) {
                                 items(visibleCols, key = { (c, _) -> "col-${c.id}" }) { (c, members) ->
-                                    val art = api.artwork.resolve(c.poster ?: c.memberPosters.firstOrNull())
+                                    val safePoster = c.poster?.takeIf { !it.startsWith("/api/video/collections/") }
+                                    val art = api.artwork.resolve(safePoster ?: c.memberPosters.firstOrNull())
                                         ?: api.artwork.forItem(
                                             if (c.mediaType == "movie") "movie" else "show",
                                             members.first().toString(),
@@ -957,6 +982,7 @@ fun HomeScreen(
                 }
             }
         }
+    }
     }
 
     if (showEditor) {

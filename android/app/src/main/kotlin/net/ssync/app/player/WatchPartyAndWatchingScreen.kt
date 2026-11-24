@@ -1405,6 +1405,42 @@ private fun WatchPartyRoomDialog(
         }
     }
 
+    var lobbyMuted by remember(partyId) { mutableStateOf(false) }
+    var lastAutoPlayedLobbyTrackId by remember(partyId) { mutableStateOf<String?>(null) }
+
+    // Auto-play synced SoulSync library lobby music while waiting in the Theater Room
+    LaunchedEffect(party?.lobbyTrack?.trackId, party?.status, lobbyMuted) {
+        val p = party ?: return@LaunchedEffect
+        val lt = p.lobbyTrack
+        val shouldPlay = !lobbyMuted && lt != null && (p.status == "lobby" || p.status == "scheduled")
+        if (shouldPlay && lt != null) {
+            if (lastAutoPlayedLobbyTrackId != lt.trackId || !coordinator.isPlaying) {
+                lastAutoPlayedLobbyTrackId = lt.trackId
+                coordinator.playAudio(
+                    ActivePlayable(
+                        itemType = "track",
+                        itemId = lt.trackId,
+                        title = lt.title,
+                        subtitle = "${lt.artist} · Theater Lobby",
+                        artworkUrl = api.artwork.resolve(lt.artwork) ?: api.artwork.albumArtwork(lt.albumId),
+                        streamUrl = api.streamUrl("track", lt.trackId),
+                        resumePositionMs = (lt.livePosition * 1000.0).toLong().coerceAtLeast(0L),
+                    ),
+                )
+            }
+        } else if (lobbyMuted && coordinator.activeItem?.subtitle?.contains("Theater Lobby") == true && coordinator.isPlaying) {
+            coordinator.togglePlayPause()
+        }
+    }
+
+    androidx.compose.runtime.DisposableEffect(partyId) {
+        onDispose {
+            if (coordinator.activeItem?.subtitle?.contains("Theater Lobby") == true && coordinator.isPlaying) {
+                coordinator.togglePlayPause()
+            }
+        }
+    }
+
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
@@ -1718,22 +1754,24 @@ private fun WatchPartyRoomDialog(
                                                 Text(lt.artist, color = SoulSyncColors.TextSecondary, fontSize = 11.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                             }
                                         }
-                                        IconButton(
+                                        OutlinedButton(
                                             onClick = {
-                                                coordinator.playAudio(
-                                                    ActivePlayable(
-                                                        itemType = "track",
-                                                        itemId = lt.trackId,
-                                                        title = lt.title,
-                                                        subtitle = "${lt.artist} · Theater Lobby",
-                                                        artworkUrl = api.artwork.resolve(lt.artwork) ?: api.artwork.albumArtwork(lt.albumId),
-                                                        streamUrl = api.streamUrl("track", lt.trackId),
-                                                        resumePositionMs = (lt.livePosition * 1000.0).toLong(),
-                                                    ),
-                                                )
+                                                lobbyMuted = !lobbyMuted
+                                                if (!lobbyMuted) {
+                                                    lastAutoPlayedLobbyTrackId = null
+                                                }
                                             },
+                                            shape = CircleShape,
+                                            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f)),
+                                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                                            modifier = Modifier.height(30.dp),
                                         ) {
-                                            Icon(Icons.Default.PlayArrow, contentDescription = "Play lobby music", tint = SoulSyncColors.AccentLight)
+                                            Text(
+                                                text = if (lobbyMuted) "Unmute" else "Mute",
+                                                color = Color.White,
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                            )
                                         }
                                         if (p.canControl) {
                                             IconButton(
@@ -1743,8 +1781,9 @@ private fun WatchPartyRoomDialog(
                                                         refreshRoom()
                                                     }
                                                 },
+                                                modifier = Modifier.size(32.dp),
                                             ) {
-                                                Icon(Icons.Default.Shuffle, contentDescription = "Shuffle lobby track", tint = Color.White)
+                                                Icon(Icons.Default.Shuffle, contentDescription = "Shuffle lobby track", tint = Color.White, modifier = Modifier.size(18.dp))
                                             }
                                         }
                                     }
@@ -1763,7 +1802,7 @@ private fun WatchPartyRoomDialog(
                             }
                         }
 
-                        // Primary Action Controls
+                        // Premier Screening Room Action Controls
                         item {
                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 if (p.status == "lobby" || p.status == "scheduled") {
@@ -1783,15 +1822,21 @@ private fun WatchPartyRoomDialog(
                                             },
                                             enabled = canStartFromLobby && !starting,
                                             shape = CircleShape,
-                                            colors = ButtonDefaults.buttonColors(containerColor = SoulSyncColors.Accent, contentColor = SoulSyncColors.OnAccent),
-                                            modifier = Modifier.weight(1.25f).height(44.dp),
+                                            colors = ButtonDefaults.buttonColors(
+                                                containerColor = Color.White,
+                                                contentColor = Color(0xFF090C14),
+                                                disabledContainerColor = Color.White.copy(alpha = 0.25f),
+                                                disabledContentColor = Color.White.copy(alpha = 0.55f),
+                                            ),
+                                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                                            modifier = Modifier.weight(1.25f).height(38.dp),
                                         ) {
-                                            Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
-                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
+                                            Spacer(modifier = Modifier.width(5.dp))
                                             Text(
-                                                text = if (starting) "Unfurling…" else "Start Presentation",
-                                                fontWeight = FontWeight.Bold,
-                                                fontSize = 12.5.sp,
+                                                text = if (starting) "Starting…" else "Start Screening",
+                                                fontWeight = FontWeight.ExtraBold,
+                                                fontSize = 13.sp,
                                             )
                                         }
                                         OutlinedButton(
@@ -1802,17 +1847,24 @@ private fun WatchPartyRoomDialog(
                                                 }
                                             },
                                             shape = CircleShape,
-                                            border = BorderStroke(1.dp, if (me?.ready == true) SoulSyncColors.Success else SoulSyncColors.Line),
-                                            modifier = Modifier.weight(0.9f).height(44.dp),
+                                            colors = ButtonDefaults.outlinedButtonColors(
+                                                containerColor = if (me?.ready == true) Color(0x2834D399) else Color.White.copy(alpha = 0.08f),
+                                            ),
+                                            border = BorderStroke(
+                                                1.dp,
+                                                if (me?.ready == true) Color(0x9934D399) else Color.White.copy(alpha = 0.18f),
+                                            ),
+                                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+                                            modifier = Modifier.weight(0.9f).height(38.dp),
                                         ) {
                                             if (me?.ready == true) {
-                                                Icon(Icons.Default.Check, contentDescription = null, tint = SoulSyncColors.Success, modifier = Modifier.size(16.dp))
+                                                Icon(Icons.Default.Check, contentDescription = null, tint = Color(0xFF6EE7B7), modifier = Modifier.size(15.dp))
                                                 Spacer(modifier = Modifier.width(4.dp))
                                             }
                                             Text(
-                                                text = if (me?.ready == true) "Ready!" else "Mark Ready",
-                                                color = if (me?.ready == true) SoulSyncColors.Success else Color.White,
-                                                fontWeight = FontWeight.SemiBold,
+                                                text = if (me?.ready == true) "Ready" else "Mark Ready",
+                                                color = if (me?.ready == true) Color(0xFF6EE7B7) else Color.White,
+                                                fontWeight = FontWeight.Bold,
                                                 fontSize = 12.5.sp,
                                             )
                                         }
@@ -1822,12 +1874,16 @@ private fun WatchPartyRoomDialog(
                                         Button(
                                             onClick = { launchSyncedVideo(p) },
                                             shape = CircleShape,
-                                            colors = ButtonDefaults.buttonColors(containerColor = SoulSyncColors.Accent, contentColor = SoulSyncColors.OnAccent),
-                                            modifier = Modifier.weight(1f).height(44.dp),
+                                            colors = ButtonDefaults.buttonColors(
+                                                containerColor = Color.White,
+                                                contentColor = Color(0xFF090C14),
+                                            ),
+                                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                                            modifier = Modifier.weight(1f).height(38.dp),
                                         ) {
-                                            Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
-                                            Spacer(modifier = Modifier.width(4.dp))
-                                            Text("Watch & Sync", fontWeight = FontWeight.Bold, fontSize = 12.5.sp)
+                                            Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
+                                            Spacer(modifier = Modifier.width(5.dp))
+                                            Text("Join Live", fontWeight = FontWeight.ExtraBold, fontSize = 13.sp)
                                         }
                                         OutlinedButton(
                                             onClick = {

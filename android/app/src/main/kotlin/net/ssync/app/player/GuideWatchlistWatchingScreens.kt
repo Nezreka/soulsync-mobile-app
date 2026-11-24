@@ -290,20 +290,26 @@ fun SearchScreen(
     }
 
     val q = query.trim().lowercase()
+    val qTokens = remember(q) { q.split(Regex("\\s+")).filter { it.isNotBlank() } }
+    fun matchesTokens(vararg fields: String?): Boolean {
+        if (qTokens.isEmpty()) return false
+        val combined = fields.filterNotNull().joinToString(" ").lowercase()
+        return qTokens.all { tok -> combined.contains(tok) }
+    }
     val movieHits = if (q.isEmpty()) emptyList() else catalog.movies.filter {
-        it.title.lowercase().contains(q) || it.genres.any { g -> g.lowercase().contains(q) } || (it.studio?.lowercase()?.contains(q) == true)
+        matchesTokens(it.title, it.studio, it.year?.toString(), it.genres.joinToString(" "))
     }.take(24)
     val showHits = if (q.isEmpty()) emptyList() else catalog.shows.filter {
-        it.title.lowercase().contains(q) || it.genres.any { g -> g.lowercase().contains(q) } || (it.network?.lowercase()?.contains(q) == true)
+        matchesTokens(it.title, it.network, it.year?.toString(), it.genres.joinToString(" "))
     }.take(24)
     val ytHits = if (q.isEmpty()) emptyList() else catalog.youtube.filter {
-        it.title.lowercase().contains(q) || (it.channelTitle?.lowercase()?.contains(q) == true)
+        matchesTokens(it.title, it.channelTitle)
     }.take(20)
     val podcastHits = if (q.isEmpty()) emptyList() else podcasts.filter {
-        it.title.lowercase().contains(q) || (it.author?.lowercase()?.contains(q) == true)
+        matchesTokens(it.title, it.author)
     }.take(12)
     val bookHits = if (q.isEmpty()) emptyList() else books.filter {
-        it.title.lowercase().contains(q) || (it.author?.lowercase()?.contains(q) == true)
+        matchesTokens(it.title, it.author)
     }.take(12)
 
     val musicCount = artists.size + albums.size + songs.size
