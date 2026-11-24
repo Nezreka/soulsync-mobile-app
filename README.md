@@ -57,7 +57,8 @@ Stream **Movies, TV Shows, YouTube, Music, Podcasts, Audiobooks, and Live Guide*
 - **Zero cloud playback dependency:** All media, artwork, and API calls after pairing go directly to the user's SoulSync server over certificate-pinned HTTPS.
 - **No MetaSync / SIN calls:** This repository never calls `metasync.ssync.net`, SIN, or bundles any server-side code.
 - **Zero raw code leakage:** Raw pairing codes travel only `user → app` and `app → SoulSync` over the direct cert-pinned channel. `connect.ssync.net` sees only `code_hash` and an ephemeral public key.
-- **Playback-only device scope:** Paired apps receive a `KIND_PLAYER` device token scoped strictly to playback, browse, and artwork endpoints — never admin settings, downloads, or user management.
+- **Playback-scoped device tokens:** Paired apps receive a `KIND_PLAYER` device token scoped to playback, browse, and artwork endpoints. They never reach SoulSync's admin settings, downloads, or user management.
+- **Player admin actions on admin profiles:** When the app is signed into an admin profile, it can also manage the player's own server-wide options: the retro commercials settings and cache, and triaging reported media issues (resolve, dismiss, reopen, delete). Members only see and delete their own issue reports.
 - **Secret hygiene:** `lookup_id`, raw pairing codes, and `device_token` are redacted from logs/`toString()` and encrypted at rest in Android Keystore.
 
 ---
