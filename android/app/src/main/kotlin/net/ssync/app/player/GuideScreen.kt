@@ -1467,9 +1467,10 @@ fun GuideScreen(
             .groupBy { it.channel!!.id }
     }
 
+    val onScreen = rememberOnScreen()
     LaunchedEffect(api) {
         while (true) {
-            (api.fetchPresence() as? MusicApiResult.Success)?.let {
+            if (onScreen.value) (api.fetchPresence() as? MusicApiResult.Success)?.let {
                 liveSessions = it.data.sessions
             }
             delay(8_000L)

@@ -258,6 +258,7 @@ fun HomeScreen(
         }
     }
 
+    val onScreen = rememberOnScreen()
     LaunchedEffect(api) {
         if (!warmHit) {
             // Instant cold-start paint from persistent disk snapshot (<20ms) while live refresh runs
@@ -289,7 +290,7 @@ fun HomeScreen(
         // Auto-refresh silently every 60s so newly added episodes & movies land ASAP
         while (true) {
             delay(60_000L)
-            loadHomeData(forceRefresh = true)
+            if (onScreen.value) loadHomeData(forceRefresh = true)
         }
     }
 

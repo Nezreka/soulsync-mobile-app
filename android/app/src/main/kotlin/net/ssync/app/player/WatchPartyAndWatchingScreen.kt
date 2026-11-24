@@ -183,13 +183,14 @@ fun WatchingNowScreen(
         }
     }
 
+    val onScreen = rememberOnScreen()
     LaunchedEffect(api) {
         isLoading = true
         refreshAll()
         isLoading = false
         while (true) {
             delay(8_000L)
-            refreshAll()
+            if (onScreen.value) refreshAll()
         }
     }
 
