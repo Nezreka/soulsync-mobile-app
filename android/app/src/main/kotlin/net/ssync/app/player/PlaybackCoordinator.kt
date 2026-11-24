@@ -44,7 +44,7 @@ class PlaybackCoordinator(
     private val api: PlayerApiClient,
     private val scope: CoroutineScope,
     private val controllerProvider: () -> MediaController?,
-    private val castHandler: (suspend (ActivePlayable) -> Boolean)? = null,
+    private val castHandler: (suspend (ActivePlayable, List<ActivePlayable>) -> Boolean)? = null,
 ) {
     var activeItem by mutableStateOf<ActivePlayable?>(null)
         private set
@@ -65,6 +65,9 @@ class PlaybackCoordinator(
 
     /** Registered by GuideScreen/HomeScreen so VideoPlayerOverlay can surf live channels (CH ▲ / CH ▼). */
     var liveChannelSurfer by mutableStateOf<((currentChannelId: String, delta: Int) -> Unit)?>(null)
+
+    /** Registered by GuideScreen/HomeScreen so a 24/7 Live Guide channel refills its upcoming schedule forever. */
+    var liveChannelRefiller by mutableStateOf<((channelId: String) -> List<ActivePlayable>)?>(null)
 
     fun surfLiveChannel(delta: Int) {
         val currentCh = activeItem?.channelId ?: return
@@ -88,7 +91,7 @@ class PlaybackCoordinator(
         val caster = castHandler
         if (caster != null) {
             scope.launch {
-                val handledByCast = caster(item)
+                val handledByCast = caster(item, queue.drop(1))
                 if (handledByCast) {
                     controllerProvider()?.pause()
                     isPlaying = true
@@ -140,14 +143,15 @@ class PlaybackCoordinator(
         showAudioSheet = false
         isVideoMinimized = false
         val videoItem = resolveOffline(item).copy(isVideo = true)
-        videoQueue = listOf(videoItem) + upcoming.map { resolveOffline(it).copy(isVideo = true) }
+        val resolvedUpcoming = upcoming.map { resolveOffline(it).copy(isVideo = true) }
+        videoQueue = listOf(videoItem) + resolvedUpcoming
         activeItem = videoItem
         positionMs = videoItem.resumePositionMs.coerceAtLeast(0L)
         durationMs = videoItem.durationMs.coerceAtLeast(0L)
         val caster = castHandler
         if (caster != null) {
             scope.launch {
-                val handledByCast = caster(videoItem)
+                val handledByCast = caster(videoItem, resolvedUpcoming)
                 if (handledByCast) {
                     showVideoOverlay = false
                     isPlaying = true
@@ -165,16 +169,26 @@ class PlaybackCoordinator(
         reportPresence(videoItem, paused = false, overridePositionMs = positionMs, overrideDurationMs = durationMs)
     }
 
-    /** Advance to the next queued video (e.g., next scheduled program on a Live Guide channel). */
-    fun playNextVideo(): Boolean {
-        if (videoQueue.size <= 1) return false
+    /**
+     * Called when Chromecast's native media queue advances on its own to the next
+     * queued item on the TV. Keeps activeItem, videoQueue, and Live Presence in sync
+     * without interrupting Chromecast playback.
+     */
+    fun syncCastAdvancedTo(title: String?) {
+        if (videoQueue.size <= 1) return
         val finished = activeItem
         if (finished != null && finished.isLiveGuide && finished.itemType == "movie") {
             scope.launch {
                 api.markWatched(itemType = "movie", itemId = finished.itemId)
             }
         }
-        val remaining = videoQueue.drop(1)
+        val idx = if (!title.isNullOrBlank()) {
+            videoQueue.indexOfFirst { it.title.equals(title, ignoreCase = true) }.takeIf { it > 0 } ?: 1
+        } else {
+            1
+        }
+        val remaining = videoQueue.drop(idx)
+        if (remaining.isEmpty()) return
         val next = remaining.first().copy(resumePositionMs = 0L)
         videoQueue = remaining
         activeItem = next
@@ -182,6 +196,61 @@ class PlaybackCoordinator(
         durationMs = next.durationMs.coerceAtLeast(0L)
         isPlaying = true
         reportPresence(next, paused = false, overridePositionMs = 0L, overrideDurationMs = durationMs)
+    }
+
+    /** Hide the local video overlay when handing off playback to Chromecast while keeping activeItem & videoQueue intact. */
+    fun hideLocalVideoForCast() {
+        showVideoOverlay = false
+        isVideoMinimized = false
+    }
+
+    /** Advance to the next queued video (e.g., next scheduled program on a Live Guide channel). */
+    fun playNextVideo(): Boolean {
+        val finished = activeItem
+        if (finished != null && finished.isLiveGuide && finished.itemType == "movie") {
+            scope.launch {
+                api.markWatched(itemType = "movie", itemId = finished.itemId)
+            }
+        }
+        var remaining = videoQueue.drop(1)
+        // Refill the Live Guide channel schedule dynamically so 24/7 channels NEVER stop!
+        if (remaining.isEmpty() && finished != null && finished.isLiveGuide && !finished.channelId.isNullOrBlank()) {
+            val refilled = liveChannelRefiller?.invoke(finished.channelId!!)
+                ?.map { resolveOffline(it).copy(isVideo = true) }
+                .orEmpty()
+            if (refilled.isNotEmpty()) {
+                remaining = refilled
+            }
+        }
+        if (remaining.isEmpty()) return false
+        val next = remaining.first().copy(resumePositionMs = 0L)
+        // Keep queue topped up when running low on a Live Guide channel
+        if (remaining.size <= 3 && next.isLiveGuide && !next.channelId.isNullOrBlank()) {
+            val extra = liveChannelRefiller?.invoke(next.channelId!!)
+                ?.map { resolveOffline(it).copy(isVideo = true) }
+                ?.filter { cand -> remaining.none { it.itemType == cand.itemType && it.itemId == cand.itemId } }
+                .orEmpty()
+            if (extra.isNotEmpty()) {
+                remaining = remaining + extra
+            }
+        }
+        videoQueue = remaining
+        activeItem = next
+        positionMs = 0L
+        durationMs = next.durationMs.coerceAtLeast(0L)
+        isPlaying = true
+        val caster = castHandler
+        if (caster != null) {
+            scope.launch {
+                val handledByCast = caster(next, remaining.drop(1))
+                if (handledByCast) {
+                    showVideoOverlay = false
+                }
+                reportPresence(next, paused = false, overridePositionMs = 0L, overrideDurationMs = durationMs)
+            }
+        } else {
+            reportPresence(next, paused = false, overridePositionMs = 0L, overrideDurationMs = durationMs)
+        }
         return true
     }
 

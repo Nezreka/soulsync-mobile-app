@@ -301,7 +301,7 @@ fun VideoPlayerOverlay(
                 if (!usingTranscode && exoPlayer.duration > 0L) {
                     durationMs = exoPlayer.duration
                 }
-                if (playbackState == Player.STATE_ENDED && item.isLiveGuide && nextVideoTitle != null) {
+                if (playbackState == Player.STATE_ENDED && item.isLiveGuide) {
                     onVideoEnded?.invoke()
                 }
             }

@@ -223,16 +223,28 @@ fun PlayerShell(
             api = api,
             scope = scope,
             controllerProvider = { latestMediaController },
-            castHandler = { item ->
+            castHandler = { item, upcoming ->
                 if (castController.isConnected) {
-                    val ok = castController.castItem(api, latestBaseUrl, item, item.resumePositionMs)
-                    if (ok) showCastSheet = true
+                    val ok = castController.castItem(api, latestBaseUrl, item, item.resumePositionMs, upcoming)
+                    if (ok && !castController.isCastingMedia) showCastSheet = true
                     ok
                 } else {
                     false
                 }
             },
         )
+    }
+
+    // Keep Chromecast Live Guide & queued playback advancing continuously even when the Cast sheet is closed
+    LaunchedEffect(castController, coordinator) {
+        castController.onMediaFinished = { coordinator.playNextVideo() }
+        castController.onQueueItemChanged = { title -> coordinator.syncCastAdvancedTo(title) }
+    }
+    LaunchedEffect(castController.isConnected) {
+        while (castController.isConnected) {
+            castController.refreshRemoteState()
+            delay(1_500L)
+        }
     }
 
     var backStack by remember { mutableStateOf<List<PlayerDestination>>(listOf(PlayerDestination.Home)) }
@@ -494,9 +506,10 @@ fun PlayerShell(
                     baseUrl = activeBaseUrl,
                     activeItem = coordinator.activeItem,
                     currentPositionMs = coordinator.positionMs,
+                    upcoming = coordinator.videoQueue.drop(1),
                     onCastStarted = {
-                        if (coordinator.showVideoOverlay) {
-                            coordinator.closeVideo(coordinator.positionMs, coordinator.durationMs)
+                        if (coordinator.showVideoOverlay || coordinator.isVideoMinimized) {
+                            coordinator.hideLocalVideoForCast()
                         } else if (coordinator.isPlaying) {
                             coordinator.togglePlayPause()
                         }

@@ -78,7 +78,9 @@ import coil.compose.AsyncImage
 import com.google.android.gms.cast.CastMediaControlIntent
 import com.google.android.gms.cast.MediaInfo
 import com.google.android.gms.cast.MediaLoadRequestData
+import com.google.android.gms.cast.MediaQueueItem
 import com.google.android.gms.cast.MediaSeekOptions
+import com.google.android.gms.cast.MediaStatus
 import kotlinx.coroutines.delay
 import com.google.android.gms.cast.MediaMetadata
 import com.google.android.gms.cast.framework.CastContext
@@ -87,6 +89,7 @@ import com.google.android.gms.cast.framework.CastSession
 import com.google.android.gms.cast.framework.OptionsProvider
 import com.google.android.gms.cast.framework.SessionManagerListener
 import com.google.android.gms.cast.framework.SessionProvider
+import com.google.android.gms.cast.framework.media.RemoteMediaClient
 import com.google.android.gms.common.images.WebImage
 import kotlinx.coroutines.launch
 import net.ssync.pairing.theme.SoulSyncColors
@@ -146,15 +149,87 @@ class SoulSyncCastController(private val appContext: Context) {
     val isConnected: Boolean
         get() = connectedDeviceName != null
 
+    /** Invoked when Chromecast finishes playing the current media/queue (IDLE_REASON_FINISHED). */
+    var onMediaFinished: (() -> Unit)? = null
+
+    /** Invoked when Chromecast natively advances to the next queued item on the TV. */
+    var onQueueItemChanged: ((title: String?) -> Unit)? = null
+
     private var castContext: CastContext? = null
     private var mediaRouter: MediaRouter? = null
     private var selector: MediaRouteSelector? = null
     private var activeSession: CastSession? = null
+    private var attachedRemote: RemoteMediaClient? = null
     private var isTranscodedCast: Boolean = false
     private var castStartOffsetMs: Long = 0L
     private var lastCastBaseStreamUrl: String? = null
     private var lastCastContentType: String = "video/mp4"
     private var lastCastMetadata: MediaMetadata? = null
+    private var lastQueueItemId: Int = MediaQueueItem.INVALID_ITEM_ID
+    private var finishedFiredForSession: Boolean = false
+
+    private val remoteCallback = object : RemoteMediaClient.Callback() {
+        override fun onStatusUpdated() {
+            handleRemoteStatusUpdate()
+        }
+    }
+
+    private fun attachRemoteCallback(session: CastSession?) {
+        val remote = session?.remoteMediaClient
+        if (remote === attachedRemote) return
+        runCatching { attachedRemote?.unregisterCallback(remoteCallback) }
+        attachedRemote = remote
+        runCatching { remote?.registerCallback(remoteCallback) }
+    }
+
+    private fun detachRemoteCallback() {
+        runCatching { attachedRemote?.unregisterCallback(remoteCallback) }
+        attachedRemote = null
+    }
+
+    private fun handleRemoteStatusUpdate() {
+        val remote = activeSession?.remoteMediaClient ?: return
+        val status = remote.mediaStatus ?: return
+
+        // Detect Chromecast native queue advancing to the next program on the TV
+        val curItemId = status.currentItemId
+        if (curItemId != MediaQueueItem.INVALID_ITEM_ID && curItemId != lastQueueItemId) {
+            val wasValid = lastQueueItemId != MediaQueueItem.INVALID_ITEM_ID
+            lastQueueItemId = curItemId
+            if (wasValid) {
+                // Native queue advanced to the next item (which always starts at 0ms)
+                castStartOffsetMs = 0L
+                finishedFiredForSession = false
+                val meta = status.mediaInfo?.metadata
+                val nextTitle = meta?.getString(MediaMetadata.KEY_TITLE)
+                val nextSub = meta?.getString(MediaMetadata.KEY_SUBTITLE)
+                if (!nextTitle.isNullOrBlank()) {
+                    castingTitle = nextTitle
+                    castingSubtitle = nextSub
+                    statusMessage = "Casting \"$nextTitle\" to ${connectedDeviceName ?: "TV"}"
+                }
+                val nextDur = status.mediaInfo?.streamDuration ?: 0L
+                if (nextDur > 0L) remoteDurationMs = nextDur
+                onQueueItemChanged?.invoke(nextTitle)
+            }
+        }
+
+        // Detect end of media/queue so Live Guide channels continuously advance & refill
+        if (
+            status.playerState == MediaStatus.PLAYER_STATE_IDLE &&
+            status.idleReason == MediaStatus.IDLE_REASON_FINISHED &&
+            !finishedFiredForSession
+        ) {
+            finishedFiredForSession = true
+            remoteIsPlaying = false
+            onMediaFinished?.invoke()
+        } else if (
+            status.playerState == MediaStatus.PLAYER_STATE_PLAYING ||
+            status.playerState == MediaStatus.PLAYER_STATE_BUFFERING
+        ) {
+            finishedFiredForSession = false
+        }
+    }
 
     private val routeCallback = object : MediaRouter.Callback() {
         override fun onRouteAdded(router: MediaRouter, route: MediaRouter.RouteInfo) = refreshRoutes()
@@ -171,12 +246,14 @@ class SoulSyncCastController(private val appContext: Context) {
 
         override fun onSessionStarted(session: CastSession, sessionId: String) {
             activeSession = session
+            attachRemoteCallback(session)
             connectedDeviceName = session.castDevice?.friendlyName ?: "Chromecast"
             statusMessage = "Connected to ${connectedDeviceName}"
             refreshRoutes()
         }
 
         override fun onSessionStartFailed(session: CastSession, error: Int) {
+            detachRemoteCallback()
             activeSession = null
             connectedDeviceName = null
             isCastingMedia = false
@@ -187,6 +264,7 @@ class SoulSyncCastController(private val appContext: Context) {
         override fun onSessionEnding(session: CastSession) {}
 
         override fun onSessionEnded(session: CastSession, error: Int) {
+            detachRemoteCallback()
             activeSession = null
             connectedDeviceName = null
             isCastingMedia = false
@@ -199,6 +277,7 @@ class SoulSyncCastController(private val appContext: Context) {
 
         override fun onSessionResumed(session: CastSession, wasSuspended: Boolean) {
             activeSession = session
+            attachRemoteCallback(session)
             connectedDeviceName = session.castDevice?.friendlyName ?: "Chromecast"
             refreshRoutes()
         }
@@ -274,32 +353,25 @@ class SoulSyncCastController(private val appContext: Context) {
         refreshRoutes()
     }
 
-    suspend fun castItem(
+    private data class PreparedCastMedia(
+        val mediaInfo: MediaInfo,
+        val metadata: MediaMetadata,
+        val baseStreamUrl: String,
+        val contentType: String,
+        val transcoded: Boolean,
+        val durationMs: Long,
+        val startOffsetMs: Long,
+    )
+
+    private suspend fun prepareCastMedia(
         api: PlayerApiClient,
         baseUrl: String,
         item: ActivePlayable,
-        positionMs: Long = 0L,
-    ): Boolean {
-        val session = activeSession ?: castContext?.sessionManager?.currentCastSession
-        val remote = session?.remoteMediaClient
-        if (remote == null) {
-            statusMessage = "Select a Chromecast first."
-            return false
-        }
-        statusMessage = "Preparing stream for ${connectedDeviceName ?: "TV"}…"
+        positionMs: Long,
+    ): PreparedCastMedia? {
         val tokenRes = api.createCastToken(item.itemType, item.itemId)
-        val castInfo = when (tokenRes) {
-            is MusicApiResult.Success -> tokenRes.data
-            else -> {
-                statusMessage = "Couldn't authorize stream for Cast."
-                return false
-            }
-        }
+        val castInfo = (tokenRes as? MusicApiResult.Success)?.data ?: return null
         val trimmedBase = baseUrl.trimEnd('/')
-        // If connected via a real Let's Encrypt hostname (e.g. *.connect.ssync.net),
-        // ALWAYS prefer HTTPS so Chromecast's HTTPS Styled Media Receiver never hits
-        // Mixed Content blocks (works on BOTH home Wi-Fi and remote neighbor Wi-Fi!).
-        // Only fall back to plain LAN HTTP if baseUrl is a raw IP with self-signed TLS.
         val isRawLocalIp = Regex("^https?://(192\\.168\\.|10\\.|172\\.(1[6-9]|2\\d|3[01])\\.|localhost|127\\.0\\.0\\.1)")
             .containsMatchIn(trimmedBase)
         val fullUrl = if (isRawLocalIp && !castInfo.streamUrl.isNullOrBlank()) {
@@ -326,12 +398,6 @@ class SoulSyncCastController(private val appContext: Context) {
             }
         }
         val initialStartMs = positionMs.coerceAtLeast(0L)
-        isTranscodedCast = castInfo.transcoded
-        castStartOffsetMs = if (castInfo.transcoded) initialStartMs else 0L
-        lastCastBaseStreamUrl = fullUrl
-        lastCastContentType = castInfo.contentType
-        lastCastMetadata = meta
-
         val loadUrl = if (castInfo.transcoded && initialStartMs > 0L) {
             val sep = if (fullUrl.contains('?')) '&' else '?'
             "$fullUrl${sep}t=${initialStartMs / 1000L}"
@@ -345,31 +411,104 @@ class SoulSyncCastController(private val appContext: Context) {
         if (castInfo.durationMs > 0L) {
             mediaInfoBuilder.setStreamDuration(castInfo.durationMs)
         }
-        val mediaInfo = mediaInfoBuilder.build()
-        val loadReq = MediaLoadRequestData.Builder()
-            .setMediaInfo(mediaInfo)
-            .setAutoplay(true)
-            .setCurrentTime(if (castInfo.transcoded) 0L else initialStartMs)
-            .build()
-        remote.load(loadReq)
+        return PreparedCastMedia(
+            mediaInfo = mediaInfoBuilder.build(),
+            metadata = meta,
+            baseStreamUrl = fullUrl,
+            contentType = castInfo.contentType,
+            transcoded = castInfo.transcoded,
+            durationMs = castInfo.durationMs,
+            startOffsetMs = if (castInfo.transcoded) initialStartMs else 0L,
+        )
+    }
+
+    suspend fun castItem(
+        api: PlayerApiClient,
+        baseUrl: String,
+        item: ActivePlayable,
+        positionMs: Long = 0L,
+        upcoming: List<ActivePlayable> = emptyList(),
+    ): Boolean {
+        val session = activeSession ?: castContext?.sessionManager?.currentCastSession
+        val remote = session?.remoteMediaClient
+        if (remote == null) {
+            statusMessage = "Select a Chromecast first."
+            return false
+        }
+        activeSession = session
+        attachRemoteCallback(session)
+        statusMessage = "Preparing stream for ${connectedDeviceName ?: "TV"}…"
+        val primary = prepareCastMedia(api, baseUrl, item, positionMs)
+        if (primary == null) {
+            statusMessage = "Couldn't authorize stream for Cast."
+            return false
+        }
+
+        val initialStartMs = positionMs.coerceAtLeast(0L)
+        isTranscodedCast = primary.transcoded
+        castStartOffsetMs = primary.startOffsetMs
+        lastCastBaseStreamUrl = primary.baseStreamUrl
+        lastCastContentType = primary.contentType
+        lastCastMetadata = primary.metadata
+        lastQueueItemId = MediaQueueItem.INVALID_ITEM_ID
+        finishedFiredForSession = false
+
+        // When casting a Live Guide channel or queued video list, preload the next 3
+        // scheduled items directly into Chromecast's native queue so the TV plays
+        // continuously even if the phone screen sleeps!
+        val queuedExtras = if (upcoming.isNotEmpty()) {
+            upcoming.take(3).mapNotNull { next ->
+                prepareCastMedia(api, baseUrl, next, 0L)?.mediaInfo
+            }
+        } else {
+            emptyList()
+        }
+
+        if (queuedExtras.isNotEmpty()) {
+            val queueItems = (listOf(primary.mediaInfo) + queuedExtras).map { info ->
+                MediaQueueItem.Builder(info)
+                    .setAutoplay(true)
+                    .setPreloadTime(15.0)
+                    .build()
+            }.toTypedArray()
+            val startPos = if (primary.transcoded) 0L else initialStartMs
+            remote.queueLoad(
+                queueItems,
+                0,
+                MediaStatus.REPEAT_MODE_REPEAT_OFF,
+                startPos,
+                null,
+            )
+        } else {
+            val loadReq = MediaLoadRequestData.Builder()
+                .setMediaInfo(primary.mediaInfo)
+                .setAutoplay(true)
+                .setCurrentTime(if (primary.transcoded) 0L else initialStartMs)
+                .build()
+            remote.load(loadReq)
+        }
+
         isCastingMedia = true
         remoteIsPlaying = true
         castingTitle = item.title
         castingSubtitle = item.subtitle.takeIf { it.isNotBlank() }
         castingArtworkUrl = item.artworkUrl
         remotePositionMs = initialStartMs
-        remoteDurationMs = castInfo.durationMs
+        remoteDurationMs = primary.durationMs
         statusMessage = "Casting \"${item.title}\" to ${connectedDeviceName ?: "TV"}"
         return true
     }
 
     fun refreshRemoteState() {
         val session = activeSession ?: castContext?.sessionManager?.currentCastSession ?: return
+        activeSession = session
+        attachRemoteCallback(session)
         runCatching {
             remoteVolume = session.volume.toFloat().coerceIn(0f, 1f)
             remoteMuted = session.isMute
         }
         val remote = session.remoteMediaClient ?: return
+        handleRemoteStatusUpdate()
         val hasMedia = remote.hasMediaSession()
         if (hasMedia) {
             isCastingMedia = true
@@ -591,6 +730,7 @@ fun CastDeviceSheet(
     baseUrl: String,
     activeItem: ActivePlayable?,
     currentPositionMs: Long,
+    upcoming: List<ActivePlayable> = emptyList(),
     onCastStarted: () -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -641,7 +781,7 @@ fun CastDeviceSheet(
                             if (sending) return@Button
                             sending = true
                             scope.launch {
-                                val ok = castController.castItem(api, baseUrl, activeItem, currentPositionMs)
+                                val ok = castController.castItem(api, baseUrl, activeItem, currentPositionMs, upcoming)
                                 sending = false
                                 if (ok) onCastStarted()
                             }

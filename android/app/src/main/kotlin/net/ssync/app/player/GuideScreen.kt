@@ -1178,6 +1178,41 @@ internal fun buildHomeLiveGuideHighlights(
                 tuneEpg(ordered[nextIdx], coordinator)
             }
         }
+        coordinator.liveChannelRefiller = { chId ->
+            val now = System.currentTimeMillis() / 1000L
+            val fresh = buildDesktopParityChannels(
+                catalog = catalog,
+                musicPoolSongs = emptyList(),
+                playlists = emptyList(),
+                musicChannels = emptyList(),
+                savedChannels = emptyList(),
+                lineup = emptyList(),
+                studioCollections = studioCollections,
+                api = api,
+                windowStartSec = now,
+                windowEndSec = now + 8L * 3600L,
+            ).firstOrNull { it.id == chId }
+            fresh?.programs.orEmpty()
+                .filter { it.endEpochSec > now + 5L }
+                .take(12)
+                .map { p ->
+                    ActivePlayable(
+                        itemType = p.itemType,
+                        itemId = p.itemId,
+                        title = p.title,
+                        subtitle = "CH ${fresh!!.number} · ${fresh.name}",
+                        artworkUrl = p.artworkUrl,
+                        streamUrl = api.streamUrl(p.itemType, p.itemId),
+                        isVideo = true,
+                        resumePositionMs = 0L,
+                        durationMs = ((p.endEpochSec - p.startEpochSec).coerceAtLeast(0L)) * 1000L,
+                        isLiveGuide = true,
+                        channelId = fresh.id,
+                        channelName = fresh.name,
+                        channelNumber = fresh.number,
+                    )
+                }
+        }
         coordinator.playVideo(
             ActivePlayable(
                 itemType = active.itemType,
@@ -1420,6 +1455,41 @@ fun GuideScreen(
                     tuneInChannel(videoChannels[nextIdx])
                 }
             }
+        }
+        coordinator.liveChannelRefiller = { chId ->
+            val now = System.currentTimeMillis() / 1000L
+            val fresh = buildDesktopParityChannels(
+                catalog = catalog,
+                musicPoolSongs = musicPoolSongs,
+                playlists = playlistDetails,
+                musicChannels = musicChannels,
+                savedChannels = savedChannels,
+                lineup = lineup,
+                studioCollections = studioCollections,
+                api = api,
+                windowStartSec = now,
+                windowEndSec = now + 8L * 3600L,
+            ).firstOrNull { it.id == chId && !it.isMusic }
+            fresh?.programs.orEmpty()
+                .filter { it.endEpochSec > now + 5L }
+                .take(12)
+                .map { p ->
+                    ActivePlayable(
+                        itemType = p.itemType,
+                        itemId = p.itemId,
+                        title = p.title,
+                        subtitle = "CH ${fresh!!.number} · ${fresh.name}",
+                        artworkUrl = p.artworkUrl,
+                        streamUrl = api.streamUrl(p.itemType, p.itemId),
+                        isVideo = true,
+                        resumePositionMs = 0L,
+                        durationMs = ((p.endEpochSec - p.startEpochSec).coerceAtLeast(0L)) * 1000L,
+                        isLiveGuide = true,
+                        channelId = fresh.id,
+                        channelName = fresh.name,
+                        channelNumber = fresh.number,
+                    )
+                }
         }
         val active = prog ?: ch.programs.firstOrNull { nowSec in it.startEpochSec until it.endEpochSec }
             ?: ch.programs.firstOrNull() ?: return
