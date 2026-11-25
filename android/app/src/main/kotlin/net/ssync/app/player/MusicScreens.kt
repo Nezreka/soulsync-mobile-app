@@ -255,6 +255,42 @@ fun MusicScreen(
                                 recentStatsTracks = rAll.data.recent
                                 HomeWarmCache.musicRecentTracks = rAll.data.recent
                             }
+                            // Fallback More-by & Albums-Like from all-time top artists if 30d had none
+                            if (moreByArtistRails.isEmpty() && rAll.data.topArtists.isNotEmpty()) {
+                                val topArtistsForMore = rAll.data.topArtists.filter { it.id != null }.take(4)
+                                val builtMore = mutableListOf<Pair<String, List<LibAlbum>>>()
+                                var firstDetail: net.ssync.player.LibArtistDetail? = null
+                                for (ta in topArtistsForMore) {
+                                    val aid = ta.id ?: continue
+                                    val det = (api.fetchArtistDetail(aid) as? MusicApiResult.Success)?.data ?: continue
+                                    if (firstDetail == null) firstDetail = det
+                                    val owned = det.albums.filter { it.tracksPresent > 0 || it.trackCount > 0 }.take(16)
+                                    if (owned.size >= 2 && builtMore.size < 2) builtMore += det.name to owned
+                                    if (builtMore.size >= 2 && firstDetail != null) break
+                                }
+                                if (builtMore.isNotEmpty()) {
+                                    moreByArtistRails = builtMore
+                                    HomeWarmCache.musicMoreByArtistRails = builtMore
+                                }
+                                if (similarAlbumsRail == null && firstDetail != null) {
+                                    val seed = firstDetail!!
+                                    val seedGenre = (seed.genres + seed.about?.tags.orEmpty())
+                                        .map { it.trim() }
+                                        .firstOrNull { it.isNotBlank() }
+                                    if (seedGenre != null) {
+                                        val simAlbums = (api.fetchAlbums(limit = 28, page = 1, genre = seedGenre) as? MusicApiResult.Success)
+                                            ?.data.orEmpty()
+                                            .filter { it.artistId != seed.id && !it.artistName.equals(seed.name, ignoreCase = true) }
+                                            .distinctBy { it.id }
+                                            .take(18)
+                                        if (simAlbums.size >= 3) {
+                                            val pair = seed.name to simAlbums
+                                            similarAlbumsRail = pair
+                                            HomeWarmCache.musicSimilarAlbums = pair
+                                        }
+                                    }
+                                }
+                            }
                             // Fallback genre rails from all-time listening if 30d genres were empty
                             if (genreRails.isEmpty() && rAll.data.genres.isNotEmpty()) {
                                 val topGenres = rAll.data.genres.map { it.genre.trim() }.filter { it.isNotBlank() }.distinctBy { it.lowercase() }.take(2)

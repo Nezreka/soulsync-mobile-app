@@ -1519,7 +1519,82 @@ class PlayerApiClient(
                 genres = parseGenres(root["genres"]),
             )
         }
-        return res
+        val cached = (res as? MusicApiResult.Success)?.data
+        if (cached != null && (cached.topAlbums.isNotEmpty() || cached.topTracks.isNotEmpty() || cached.topArtists.isNotEmpty())) {
+            return MusicApiResult.Success(cached)
+        }
+        // Cache miss or empty range -> fall back to live /api/stats/* endpoints!
+        val liveArtists = (getJson("$base/api/stats/top-artists?range=${encodeSeg(range)}&limit=14") { body ->
+            val root = json.parseToJsonElement(body).jsonObject
+            (root["artists"] as? JsonArray)?.mapNotNull { el ->
+                val o = el as? JsonObject ?: return@mapNotNull null
+                val name = o["name"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                StatsTopArtist(
+                    id = o["id"]?.jsonPrimitive?.intOrNull,
+                    name = name,
+                    playCount = o["play_count"]?.jsonPrimitive?.intOrNull ?: o["plays"]?.jsonPrimitive?.intOrNull ?: 0,
+                    imageUrl = o["image_url"]?.jsonPrimitive?.contentOrNull,
+                )
+            }.orEmpty()
+        } as? MusicApiResult.Success)?.data.orEmpty()
+
+        val liveAlbums = (getJson("$base/api/stats/top-albums?range=${encodeSeg(range)}&limit=20") { body ->
+            val root = json.parseToJsonElement(body).jsonObject
+            (root["albums"] as? JsonArray)?.mapNotNull { el ->
+                val o = el as? JsonObject ?: return@mapNotNull null
+                val name = (o["name"] ?: o["album"] ?: o["title"])?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+                    ?: return@mapNotNull null
+                StatsTopAlbum(
+                    id = o["id"]?.jsonPrimitive?.intOrNull,
+                    name = name,
+                    artist = o["artist"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+                    artistId = o["artist_id"]?.jsonPrimitive?.intOrNull,
+                    playCount = o["play_count"]?.jsonPrimitive?.intOrNull ?: o["plays"]?.jsonPrimitive?.intOrNull ?: 0,
+                    imageUrl = o["image_url"]?.jsonPrimitive?.contentOrNull,
+                )
+            }.orEmpty()
+        } as? MusicApiResult.Success)?.data.orEmpty()
+
+        val liveTracks = (getJson("$base/api/stats/top-tracks?range=${encodeSeg(range)}&limit=20") { body ->
+            val root = json.parseToJsonElement(body).jsonObject
+            (root["tracks"] as? JsonArray)?.mapNotNull { el ->
+                val o = el as? JsonObject ?: return@mapNotNull null
+                val name = (o["name"] ?: o["title"])?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+                    ?: return@mapNotNull null
+                StatsTopTrack(
+                    id = o["id"]?.jsonPrimitive?.intOrNull,
+                    name = name,
+                    artist = o["artist"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+                    album = o["album"]?.jsonPrimitive?.contentOrNull,
+                    artistId = o["artist_id"]?.jsonPrimitive?.intOrNull,
+                    playCount = o["play_count"]?.jsonPrimitive?.intOrNull ?: o["plays"]?.jsonPrimitive?.intOrNull ?: 0,
+                    imageUrl = o["image_url"]?.jsonPrimitive?.contentOrNull,
+                )
+            }.orEmpty()
+        } as? MusicApiResult.Success)?.data.orEmpty()
+
+        val liveGenres = (getJson("$base/api/stats/genres?range=${encodeSeg(range)}") { body ->
+            val root = json.parseToJsonElement(body).jsonObject
+            (root["genres"] as? JsonArray)?.mapNotNull { el ->
+                val o = el as? JsonObject ?: return@mapNotNull null
+                val g = (o["genre"] ?: o["name"])?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+                    ?: return@mapNotNull null
+                StatsGenreCount(
+                    genre = g,
+                    count = o["count"]?.jsonPrimitive?.intOrNull ?: o["play_count"]?.jsonPrimitive?.intOrNull ?: o["plays"]?.jsonPrimitive?.intOrNull ?: 0,
+                )
+            }.orEmpty()
+        } as? MusicApiResult.Success)?.data.orEmpty()
+
+        return MusicApiResult.Success(
+            ListeningStatsSnapshot(
+                topArtists = liveArtists.ifEmpty { cached?.topArtists.orEmpty() },
+                topAlbums = liveAlbums.ifEmpty { cached?.topAlbums.orEmpty() },
+                topTracks = liveTracks.ifEmpty { cached?.topTracks.orEmpty() },
+                recent = cached?.recent.orEmpty(),
+                genres = liveGenres.ifEmpty { cached?.genres.orEmpty() },
+            ),
+        )
     }
 
     suspend fun fetchRecentStatsTracks(limit: Int = 24): MusicApiResult<List<StatsRecentTrack>> =
