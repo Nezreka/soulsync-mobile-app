@@ -50,6 +50,8 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent {
             val isTv = remember { isAndroidTv() }
+            // a TV draws artwork large: ask for sizes to match (PlayerArtwork.largeScreen)
+            remember(isTv) { net.ssync.player.PlayerArtwork.largeScreen = isTv; isTv }
             val baseDensity = LocalDensity.current
             val effectiveDensity = remember(baseDensity, isTv) {
                 if (isTv) {

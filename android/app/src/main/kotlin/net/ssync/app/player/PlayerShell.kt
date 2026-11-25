@@ -100,6 +100,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.foundation.focusGroup
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
@@ -459,6 +462,7 @@ fun PlayerShell(
                     current is PlayerDestination.Calendar ||
                     current is PlayerDestination.Movies ||
                     current is PlayerDestination.Tv ||
+                    current is PlayerDestination.Library ||
                     current is PlayerDestination.MovieDetail ||
                     current is PlayerDestination.ShowDetail ||
                     current is PlayerDestination.CollectionDetail ||
@@ -588,8 +592,37 @@ fun PlayerShell(
                                                 onHasHeroChanged = { homeHasHero = it },
                                                 onDeviceRevoked = onDeviceRevoked,
                                                 onUnpair = onUnpair,
-                                                onSettingsChanged = { playerSettings = it },
+                                                onSettingsChanged = {
+                                                    playerSettings = it
+                                                    PlayerNavPrefs.order.value = it.sidebarOrder
+                                                    PlayerNavPrefs.hidden.value = it.sidebarHidden.toSet()
+                                                },
                                             )
+                                        }
+                                    }
+                                    // the full-screen tv pages have no shell header. home, calendar, the
+                                    // movies / tv hubs and the title pages draw the mini player in their
+                                    // own top bar; every other one (music, an album, playlists, youtube,
+                                    // podcasts, audiobooks, watchlist, settings...) drew none, so music
+                                    // started from them played with nothing on screen to show or stop it.
+                                    val tvAudio = coordinator.activeItem?.takeIf { !it.isVideo }
+                                    val drawsItsOwn = current is PlayerDestination.Home ||
+                                        current is PlayerDestination.Calendar ||
+                                        current is PlayerDestination.Movies ||
+                                        current is PlayerDestination.Tv ||
+                                        current is PlayerDestination.Library ||
+                                        current is PlayerDestination.MovieDetail ||
+                                        current is PlayerDestination.ShowDetail
+                                    if (isTv && tvIsSpotlightHome && !drawsItsOwn && tvAudio != null &&
+                                        !castController.isCastingMedia
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .align(Alignment.TopEnd)
+                                                .padding(top = 16.dp, end = 24.dp)
+                                                .zIndex(4f),
+                                        ) {
+                                            TvTopRightMiniPlayer(coordinator = coordinator, item = tvAudio)
                                         }
                                     }
                                 }
@@ -2165,132 +2198,128 @@ private fun PlayerContent(
     }
 }
 
+/** "3:07" */
+private fun clock(ms: Long): String {
+    val total = (ms / 1000).coerceAtLeast(0)
+    return "%d:%02d".format(total / 60, total % 60)
+}
+
+/**
+ * What is playing, in the corner of a TV page: the cover, the title and
+ * artist, how far in it is, and play / next / stop. One card of a fixed
+ * width. (It used to size itself around a progress strip that asked for a
+ * fraction of all the room there was, so it grew a little wider every
+ * second the song played.)
+ */
 @Composable
 internal fun TvTopRightMiniPlayer(
     coordinator: PlaybackCoordinator,
     item: ActivePlayable,
 ) {
     val isPlaying = coordinator.isPlaying
-    val frac = if (coordinator.durationMs > 0L) {
-        (coordinator.positionMs.toFloat() / coordinator.durationMs.toFloat()).coerceIn(0f, 1f)
-    } else {
-        0f
-    }
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    val duration = coordinator.durationMs
+    val position = coordinator.positionMs
+    val frac = if (duration > 0L) (position.toFloat() / duration.toFloat()).coerceIn(0f, 1f) else 0f
+    val accent = SoulSyncColors.AccentLight
+    val shape = RoundedCornerShape(14.dp)
+
+    Surface(
+        shape = shape,
+        color = Color(0xF2121420),
+        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.10f)),
+        shadowElevation = 10.dp,
+        modifier = Modifier.width(396.dp).height(52.dp),
     ) {
-        // Clickable Now Playing pill (album art + title + live progress strip)
-        Surface(
-            shape = RoundedCornerShape(999.dp),
-            color = Color(0xEE181A28),
-            border = BorderStroke(
-                1.dp,
-                if (isPlaying) SoulSyncColors.AccentLight.copy(alpha = 0.55f) else Color.White.copy(alpha = 0.14f),
-            ),
+        Box(
             modifier = Modifier
-                .height(38.dp)
-                .dpadFocusable(RoundedCornerShape(999.dp))
-                .clickable { coordinator.showAudioSheet = true },
+                .fillMaxSize()
+                // the progress line is drawn on the card, along its foot: it takes no room
+                .drawBehind {
+                    val h = 2.dp.toPx()
+                    drawRect(Color.White.copy(alpha = 0.08f), Offset(0f, size.height - h), Size(size.width, h))
+                    drawRect(accent, Offset(0f, size.height - h), Size(size.width * frac, h))
+                },
         ) {
-            Box {
+            Row(
+                modifier = Modifier.fillMaxSize().padding(start = 7.dp, end = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                // the cover and the words open the full player
                 Row(
                     modifier = Modifier
+                        .weight(1f)
                         .fillMaxHeight()
-                        .padding(start = 6.dp, end = 12.dp),
+                        .padding(vertical = 4.dp)
+                        .dpadFocusable(RoundedCornerShape(10.dp))
+                        .clip(RoundedCornerShape(10.dp))
+                        .clickable { coordinator.showAudioSheet = true },
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     SoulSyncArtwork(
                         url = item.artworkUrl,
                         contentDescription = item.title,
                         fallbackIcon = Icons.Default.MusicNote,
-                        maxPx = 128,
-                        modifier = Modifier
-                            .size(26.dp)
-                            .clip(CircleShape),
+                        maxPx = 192,
+                        modifier = Modifier.size(38.dp).clip(RoundedCornerShape(8.dp)),
                     )
-                    Column(
-                        modifier = Modifier.width(156.dp),
-                        verticalArrangement = Arrangement.Center,
-                    ) {
+                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.Center) {
                         Text(
                             text = item.title,
                             color = Color.White,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
-                        if (item.subtitle.isNotBlank()) {
-                            Text(
-                                text = item.subtitle,
-                                color = SoulSyncColors.TextSecondary,
-                                fontSize = 10.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
+                        Text(
+                            text = listOf(
+                                item.subtitle.takeIf { it.isNotBlank() },
+                                if (duration > 0L) "${clock(position)} / ${clock(duration)}" else null,
+                            ).filterNotNull().joinToString("  ·  "),
+                            color = SoulSyncColors.TextSecondary,
+                            fontSize = 10.5.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
                     }
                 }
-                if (frac > 0f) {
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.BottomStart)
-                            .fillMaxWidth(frac)
-                            .height(2.dp)
-                            .background(SoulSyncColors.AccentLight),
-                    )
-                }
+                Spacer(modifier = Modifier.width(4.dp))
+                TvMiniButton(
+                    icon = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                    label = if (isPlaying) "Pause" else "Play",
+                    strong = true,
+                ) { coordinator.togglePlayPause() }
+                TvMiniButton(Icons.Default.SkipNext, "Next") { coordinator.skipNext() }
+                TvMiniButton(Icons.Default.Close, "Stop music", quiet = true) { coordinator.stopPlayback() }
             }
         }
+    }
+}
 
-        // Compact TV transport buttons right next to the pill
-        IconButton(
-            onClick = { coordinator.togglePlayPause() },
-            modifier = Modifier
-                .size(34.dp)
-                .clip(CircleShape)
-                .background(Color.White.copy(alpha = 0.12f))
-                .dpadFocusable(CircleShape),
-        ) {
-            Icon(
-                imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                contentDescription = if (isPlaying) "Pause" else "Play",
-                tint = Color.White,
-                modifier = Modifier.size(18.dp),
-            )
-        }
-        IconButton(
-            onClick = { coordinator.skipNext() },
-            modifier = Modifier
-                .size(34.dp)
-                .clip(CircleShape)
-                .background(Color.White.copy(alpha = 0.10f))
-                .dpadFocusable(CircleShape),
-        ) {
-            Icon(
-                imageVector = Icons.Default.SkipNext,
-                contentDescription = "Next",
-                tint = Color.White,
-                modifier = Modifier.size(18.dp),
-            )
-        }
-        IconButton(
-            onClick = { coordinator.stopPlayback() },
-            modifier = Modifier
-                .size(34.dp)
-                .clip(CircleShape)
-                .background(Color.White.copy(alpha = 0.08f))
-                .dpadFocusable(CircleShape),
-        ) {
-            Icon(
-                imageVector = Icons.Default.Close,
-                contentDescription = "Stop music",
-                tint = SoulSyncColors.TextSoft,
-                modifier = Modifier.size(16.dp),
-            )
-        }
+@Composable
+private fun TvMiniButton(
+    icon: ImageVector,
+    label: String,
+    strong: Boolean = false,
+    quiet: Boolean = false,
+    onClick: () -> Unit,
+) {
+    IconButton(
+        onClick = onClick,
+        modifier = Modifier
+            .padding(horizontal = 2.dp)
+            .size(36.dp)
+            .clip(CircleShape)
+            .background(if (strong) Color.White.copy(alpha = 0.14f) else Color.Transparent)
+            .dpadFocusable(CircleShape),
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = label,
+            tint = if (quiet) SoulSyncColors.TextSoft else Color.White,
+            modifier = Modifier.size(if (strong) 20.dp else 18.dp),
+        )
     }
 }
 
