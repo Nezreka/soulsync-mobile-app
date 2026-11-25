@@ -199,8 +199,21 @@ fun WatchingNowScreen(
         return
     }
 
+    val isTv = net.ssync.pairing.ui.LocalIsTv.current
     LazyColumn(
-        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 74.dp, bottom = 36.dp),
+        modifier = Modifier
+            .fillMaxSize()
+            .then(
+                if (isTv) Modifier.background(
+                    Brush.radialGradient(listOf(SoulSyncColors.Accent.copy(alpha = 0.12f), Color(0xFF0A0C16))),
+                ) else Modifier,
+            ),
+        contentPadding = PaddingValues(
+            start = if (isTv) 78.dp else 16.dp,
+            end = if (isTv) 32.dp else 16.dp,
+            top = if (isTv) 22.dp else 16.dp,
+            bottom = 36.dp,
+        ),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         // Header + Start Watch Party CTA

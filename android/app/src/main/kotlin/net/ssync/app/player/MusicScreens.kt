@@ -3,6 +3,7 @@ package net.ssync.app.player
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import net.ssync.pairing.ui.LocalIsTv
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -130,7 +131,9 @@ fun MusicScreen(
     var tab by remember(startOnPlaylists) {
         mutableStateOf(if (startOnPlaylists) MusicSubTab.PLAYLISTS else MusicSubTab.FOR_YOU)
     }
-    var isLoading by remember { mutableStateOf(true) }
+    val warmHit = HomeWarmCache.baseUrl == api.baseUrl &&
+        (HomeWarmCache.albums.isNotEmpty() || HomeWarmCache.musicArtists.isNotEmpty() || HomeWarmCache.discoverPlaylists.isNotEmpty())
+    var isLoading by remember(api.baseUrl) { mutableStateOf(!warmHit) }
     var loadingMore by remember { mutableStateOf(false) }
     var albumsPage by remember { mutableStateOf(1) }
     var artistsPage by remember { mutableStateOf(1) }
@@ -139,53 +142,79 @@ fun MusicScreen(
     var hasMoreArtists by remember { mutableStateOf(true) }
     var hasMoreSongs by remember { mutableStateOf(true) }
     var gridView by remember { mutableStateOf(true) }
-    var albums by remember { mutableStateOf<List<LibAlbum>>(emptyList()) }
-    var artists by remember { mutableStateOf<List<LibArtist>>(emptyList()) }
-    var songs by remember { mutableStateOf<List<LibSong>>(emptyList()) }
-    var recentMusic by remember { mutableStateOf<List<net.ssync.player.ProgressRow>>(emptyList()) }
-    var playlists by remember { mutableStateOf<List<MusicPlaylist>>(emptyList()) }
-    var discoverPlaylists by remember { mutableStateOf<List<DiscoverPlaylistSummary>>(emptyList()) }
-    var musicStations by remember { mutableStateOf<List<MusicChannel>>(emptyList()) }
+    var albums by remember(api.baseUrl) { mutableStateOf(if (warmHit) HomeWarmCache.albums else emptyList()) }
+    var artists by remember(api.baseUrl) { mutableStateOf(if (warmHit) HomeWarmCache.musicArtists else emptyList()) }
+    var songs by remember(api.baseUrl) { mutableStateOf(if (warmHit) HomeWarmCache.musicSongs else emptyList()) }
+    var recentMusic by remember(api.baseUrl) {
+        mutableStateOf(if (warmHit) HomeWarmCache.continueItems.filter { it.itemType == "track" } else emptyList())
+    }
+    var playlists by remember(api.baseUrl) { mutableStateOf(if (warmHit) HomeWarmCache.musicPlaylists else emptyList()) }
+    var discoverPlaylists by remember(api.baseUrl) { mutableStateOf(if (warmHit) HomeWarmCache.discoverPlaylists else emptyList()) }
+    var musicStations by remember(api.baseUrl) { mutableStateOf(if (warmHit) HomeWarmCache.musicStations else emptyList()) }
     var playlistPickerSong by remember { mutableStateOf<SongRefPayload?>(null) }
     val likedState = rememberLikedTracksState(api)
 
     val activeTrackId = coordinator.activeItem?.takeIf { it.itemType == "track" }?.itemId
 
     LaunchedEffect(tab, api) {
-        isLoading = true
         when (tab) {
             MusicSubTab.FOR_YOU -> {
+                if (albums.isEmpty() && artists.isEmpty() && discoverPlaylists.isEmpty()) isLoading = true
+                // Stream every music shelf independently in parallel so UI paints immediately!
                 coroutineScope {
-                    val alDef = if (albums.isEmpty()) async { api.fetchAlbums(limit = 40, page = 1) } else null
-                    val arDef = if (artists.isEmpty()) async { api.fetchArtists(limit = 40, page = 1) } else null
-                    val plDef = if (playlists.isEmpty()) async { api.fetchPlaylists() } else null
-                    val dDef = if (discoverPlaylists.isEmpty()) async { api.fetchDiscoverPlaylists() } else null
-                    val sDef = if (songs.isEmpty()) async { api.fetchSongs(limit = 100, page = 1) } else null
-                    val rDef = if (recentMusic.isEmpty()) async { api.fetchContinue() } else null
-
-                    alDef?.await()?.let { r ->
-                        if (r is MusicApiResult.DeviceRevoked) { onDeviceRevoked(); return@coroutineScope }
-                        (r as? MusicApiResult.Success)?.let { albums = it.data; hasMoreAlbums = it.data.size >= 40 }
+                    launch {
+                        when (val r = api.fetchAlbums(limit = 40, page = 1)) {
+                            is MusicApiResult.DeviceRevoked -> onDeviceRevoked()
+                            is MusicApiResult.Success -> {
+                                albums = r.data
+                                HomeWarmCache.albums = r.data
+                                hasMoreAlbums = r.data.size >= 40
+                                isLoading = false
+                            }
+                            is MusicApiResult.Error -> Unit
+                        }
                     }
-                    arDef?.await()?.let { r ->
-                        (r as? MusicApiResult.Success)?.let { artists = it.data; hasMoreArtists = it.data.size >= 40 }
+                    launch {
+                        (api.fetchArtists(limit = 40, page = 1) as? MusicApiResult.Success)?.let {
+                            artists = it.data
+                            HomeWarmCache.musicArtists = it.data
+                            hasMoreArtists = it.data.size >= 40
+                            isLoading = false
+                        }
                     }
-                    plDef?.await()?.let { r -> (r as? MusicApiResult.Success)?.let { playlists = it.data } }
-                    dDef?.await()?.let { r -> (r as? MusicApiResult.Success)?.let { discoverPlaylists = it.data } }
-                    sDef?.await()?.let { r -> (r as? MusicApiResult.Success)?.let { songs = it.data; hasMoreSongs = it.data.size >= 100 } }
-                    rDef?.await()?.let { r ->
-                        (r as? MusicApiResult.Success)?.let { list ->
+                    launch {
+                        (api.fetchPlaylists() as? MusicApiResult.Success)?.let {
+                            playlists = it.data
+                            HomeWarmCache.musicPlaylists = it.data
+                        }
+                    }
+                    launch {
+                        (api.fetchDiscoverPlaylists() as? MusicApiResult.Success)?.let {
+                            discoverPlaylists = it.data
+                            HomeWarmCache.discoverPlaylists = it.data
+                            isLoading = false
+                        }
+                    }
+                    launch {
+                        (api.fetchSongs(limit = 100, page = 1) as? MusicApiResult.Success)?.let {
+                            songs = it.data
+                            HomeWarmCache.musicSongs = it.data
+                            hasMoreSongs = it.data.size >= 100
+                        }
+                    }
+                    launch {
+                        (api.fetchContinue() as? MusicApiResult.Success)?.let { list ->
                             recentMusic = list.data.filter { it.itemType == "track" }
+                        }
+                    }
+                    launch {
+                        (api.fetchMusicChannels() as? MusicApiResult.Success)?.let {
+                            musicStations = it.data
+                            HomeWarmCache.musicStations = it.data
                         }
                     }
                 }
                 isLoading = false
-                // Stream in genre/mood radio stations progressively without blocking
-                if (musicStations.isEmpty()) {
-                    launch {
-                        (api.fetchMusicChannels() as? MusicApiResult.Success)?.let { musicStations = it.data }
-                    }
-                }
                 return@LaunchedEffect
             }
             MusicSubTab.ALBUMS -> if (albums.isEmpty()) {
@@ -239,7 +268,16 @@ fun MusicScreen(
         isLoading = false
     }
 
-    Column(modifier = Modifier.fillMaxSize()) {
+    val isTv = LocalIsTv.current
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .then(
+                if (isTv) Modifier.background(
+                    Brush.radialGradient(listOf(SoulSyncColors.Accent.copy(alpha = 0.14f), Color(0xFF0A0C16))),
+                ) else Modifier,
+            ),
+    ) {
         BrowseHeaderAndTabs(
             title = if (tab == MusicSubTab.PLAYLISTS && startOnPlaylists) "Playlists" else "Music",
             tabs = MusicSubTab.entries.map { it to it.label },
@@ -251,6 +289,8 @@ fun MusicScreen(
             LoadingBox()
             return
         }
+
+        Column(modifier = Modifier.fillMaxSize().padding(start = if (isTv) 62.dp else 0.dp)) {
 
         // Compact utility bar (count + Grid/List toggle or Play/Shuffle pills)
         val countLabel = when (tab) {
@@ -890,6 +930,7 @@ fun MusicScreen(
                 api = api,
                 onDismiss = { playlistPickerSong = null },
             )
+        }
         }
     }
 }

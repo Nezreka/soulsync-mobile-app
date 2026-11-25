@@ -91,26 +91,40 @@ fun WatchlistScreen(
     onNavigate: (PlayerDestination) -> Unit,
     onDeviceRevoked: () -> Unit,
 ) {
+    val isTv = LocalIsTv.current
     val scope = rememberCoroutineScope()
-    var items by remember { mutableStateOf<List<WatchlistItem>>(emptyList()) }
-    var catalog by remember { mutableStateOf(net.ssync.player.VideoCatalog()) }
-    var isLoading by remember { mutableStateOf(true) }
+    val warmHit = HomeWarmCache.baseUrl == api.baseUrl && HomeWarmCache.watchlist.isNotEmpty()
+    var items by remember(api.baseUrl) { mutableStateOf(if (warmHit) HomeWarmCache.watchlist else emptyList()) }
+    var catalog by remember(api.baseUrl) { mutableStateOf(if (HomeWarmCache.baseUrl == api.baseUrl) HomeWarmCache.catalog else net.ssync.player.VideoCatalog()) }
+    var isLoading by remember(api.baseUrl) { mutableStateOf(!warmHit) }
     var kindFilter by remember { mutableStateOf("all") }
     var sortByTitle by remember { mutableStateOf(false) }
     var gridView by remember { mutableStateOf(true) }
 
     LaunchedEffect(api) {
-        isLoading = true
-        when (val r = api.fetchWatchlist()) {
-            is MusicApiResult.Success -> items = r.data
-            MusicApiResult.DeviceRevoked -> onDeviceRevoked()
-            is MusicApiResult.Error -> Unit
+        if (!warmHit) isLoading = true
+        coroutineScope {
+            launch {
+                when (val r = api.fetchWatchlist()) {
+                    is MusicApiResult.Success -> {
+                        items = r.data
+                        HomeWarmCache.watchlist = r.data
+                    }
+                    MusicApiResult.DeviceRevoked -> onDeviceRevoked()
+                    is MusicApiResult.Error -> Unit
+                }
+                isLoading = false
+            }
+            launch {
+                if (catalog.movies.isEmpty() && catalog.shows.isEmpty()) {
+                    (api.fetchVideoCatalog() as? MusicApiResult.Success)?.let { catalog = it.data }
+                }
+            }
         }
-        (api.fetchVideoCatalog() as? MusicApiResult.Success)?.let { catalog = it.data }
         isLoading = false
     }
 
-    if (isLoading) {
+    if (isLoading && items.isEmpty()) {
         LoadingBox()
         return
     }
@@ -148,7 +162,17 @@ fun WatchlistScreen(
         if (sortByTitle) base.sortedBy { titleOf(it).lowercase().removePrefix("the ") } else base
     }
 
-    Column(modifier = Modifier.fillMaxSize()) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .then(
+                if (isTv) Modifier.background(
+                    androidx.compose.ui.graphics.Brush.radialGradient(
+                        listOf(SoulSyncColors.Accent.copy(alpha = 0.12f), Color(0xFF0A0C16)),
+                    ),
+                ) else Modifier,
+            ),
+    ) {
         BrowseHeaderAndTabs(
             title = "Watchlist",
             tabs = tabs,
@@ -158,7 +182,7 @@ fun WatchlistScreen(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 4.dp),
+                .padding(start = if (isTv) 78.dp else 16.dp, end = if (isTv) 32.dp else 16.dp, top = 4.dp, bottom = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
@@ -191,8 +215,8 @@ fun WatchlistScreen(
 
         if (gridView) {
             LazyVerticalGrid(
-                columns = GridCells.Adaptive(minSize = if (LocalIsTv.current) 148.dp else 116.dp),
-                contentPadding = PaddingValues(16.dp),
+                columns = GridCells.Adaptive(minSize = if (isTv) 148.dp else 116.dp),
+                contentPadding = PaddingValues(start = if (isTv) 78.dp else 16.dp, end = if (isTv) 32.dp else 16.dp, top = 12.dp, bottom = 36.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
                 modifier = Modifier.fillMaxSize(),
@@ -212,7 +236,7 @@ fun WatchlistScreen(
             }
         } else {
             LazyColumn(
-                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
+                contentPadding = PaddingValues(start = if (isTv) 78.dp else 16.dp, end = if (isTv) 32.dp else 16.dp, top = 10.dp, bottom = 36.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
                 modifier = Modifier.fillMaxSize(),
             ) {

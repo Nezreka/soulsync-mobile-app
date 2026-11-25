@@ -127,6 +127,13 @@ internal object HomeWarmCache {
     val showDetails: MutableMap<Int, net.ssync.player.ShowDetail> = java.util.Collections.synchronizedMap(LinkedHashMap(32, 0.75f, true))
     val titleExtras: MutableMap<String, net.ssync.player.TitleExtras> = java.util.Collections.synchronizedMap(LinkedHashMap(48, 0.75f, true))
     val resolvedLogos: MutableMap<String, String> = java.util.Collections.synchronizedMap(HashMap())
+    var musicArtists: List<net.ssync.player.LibArtist> = emptyList()
+    var musicSongs: List<net.ssync.player.LibSong> = emptyList()
+    var musicPlaylists: List<net.ssync.player.MusicPlaylist> = emptyList()
+    var musicStations: List<net.ssync.player.MusicChannel> = emptyList()
+    var ytChannels: List<net.ssync.player.YtChannel> = emptyList()
+    var ytDownloads: List<net.ssync.player.YtVideo> = emptyList()
+    var ytLatest: List<net.ssync.player.YtVideo> = emptyList()
 
     fun isCatalogFresh(url: String, maxAgeMs: Long = 90_000L): Boolean =
         baseUrl == url &&

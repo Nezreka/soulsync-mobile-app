@@ -248,13 +248,28 @@ internal fun TvCinemaMoviesHub(
                 out += TvBrowseShelf("epics", "Epic Cinema", "2h 15m+", epics.map { toCard("epic", it) })
             }
 
-            gList.take(6).forEach { (g, _) ->
-                val list = movies.filter { it.genres.any { mg -> mg.equals(g, ignoreCase = true) } }
-                    .sortedByDescending { it.rating ?: 0.0 }
-                    .take(18)
-                if (list.size >= 4) {
-                    out += TvBrowseShelf("genre-$g", g, items = list.map { toCard("g-$g", it) })
-                }
+            // Curated Editorial Rails (replacing raw genre spam — Genres have their own tab above!)
+            val edgeOfSeat = movies.filter { m ->
+                m.genres.any { it.equals("Thriller", true) || it.equals("Action", true) || it.equals("Sci-Fi", true) || it.equals("Science Fiction", true) } &&
+                    (m.rating ?: 0.0) >= 6.8
+            }.sortedByDescending { it.rating ?: 0.0 }.take(18)
+            if (edgeOfSeat.size >= 4) {
+                out += TvBrowseShelf("edge", "Edge of Your Seat", "Action, Thriller & Sci-Fi", edgeOfSeat.map { toCard("edge", it) })
+            }
+
+            val feelGood = movies.filter { m ->
+                m.genres.any { it.equals("Comedy", true) || it.equals("Romance", true) || it.equals("Family", true) || it.equals("Animation", true) } &&
+                    (m.rating ?: 0.0) >= 7.0
+            }.sortedByDescending { it.rating ?: 0.0 }.take(18)
+            if (feelGood.size >= 4) {
+                out += TvBrowseShelf("feelgood", "Feel-Good & Date Night", "Comedy, Romance & Family", feelGood.map { toCard("fg", it) })
+            }
+
+            val hiddenGems = movies.filter { m ->
+                (m.rating ?: 0.0) >= 7.5 && (m.year ?: 9999) in 2005..(currentYear - 3)
+            }.sortedByDescending { it.rating ?: 0.0 }.drop(6).take(18)
+            if (hiddenGems.size >= 4) {
+                out += TvBrowseShelf("gems", "Hidden Gems", "Modern favorites ★ 7.5+", hiddenGems.map { toCard("gem", it) })
             }
 
             val classics = movies.filter { (it.year ?: 9999) in 1970..2004 }.sortedByDescending { it.rating ?: 0.0 }.take(18)
@@ -457,14 +472,28 @@ internal fun TvCinemaTvHub(
             }
         }
 
-        // 8. Top Genres
-        genres.take(5).forEach { (g, _) ->
-            val list = shows.filter { it.genres.any { sg -> sg.equals(g, ignoreCase = true) } }
-                .sortedByDescending { it.rating ?: 0.0 }
-                .take(18)
-            if (list.size >= 4) {
-                out += TvBrowseShelf("genre-$g", g, items = list.map { toCard("g-$g", it) })
-            }
+        // 8. Curated Editorial TV Rails (replacing raw genre spam — Genres have their own tab above!)
+        val acclaimedTv = shows.filter { (it.rating ?: 0.0) >= 8.0 }
+            .sortedByDescending { it.rating ?: 0.0 }
+            .drop(4)
+            .take(18)
+        if (acclaimedTv.size >= 4) {
+            out += TvBrowseShelf("acclaimed-tv", "Critically Acclaimed Series", "★ 8.0+", acclaimedTv.map { toCard("acctv", it) })
+        }
+
+        val comfortComedy = shows.filter { s ->
+            s.genres.any { it.equals("Comedy", true) || it.equals("Animation", true) } && (s.rating ?: 0.0) >= 7.2
+        }.sortedByDescending { it.rating ?: 0.0 }.take(18)
+        if (comfortComedy.size >= 4) {
+            out += TvBrowseShelf("comfort-tv", "Comfort & Comedy Binges", "Easy-watching laughs", comfortComedy.map { toCard("comf", it) })
+        }
+
+        val mindBending = shows.filter { s ->
+            s.genres.any { it.contains("Sci-Fi", true) || it.equals("Mystery", true) || it.equals("Crime", true) || it.equals("Drama", true) } &&
+                (s.rating ?: 0.0) >= 7.6
+        }.sortedByDescending { it.rating ?: 0.0 }.take(18)
+        if (mindBending.size >= 4) {
+            out += TvBrowseShelf("prestige-tv", "Prestige Drama & Sci-Fi", "Gripping storytelling", mindBending.map { toCard("prest", it) })
         }
 
         out

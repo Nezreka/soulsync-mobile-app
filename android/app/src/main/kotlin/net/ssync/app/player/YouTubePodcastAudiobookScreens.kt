@@ -1,6 +1,7 @@
 package net.ssync.app.player
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -41,8 +42,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import net.ssync.pairing.theme.SoulSyncColors
 import net.ssync.pairing.ui.LocalIsTv
 import net.ssync.pairing.ui.dpadFocusable
@@ -68,19 +73,24 @@ fun YouTubeScreen(
     onChannelClick: (String, String) -> Unit,
     onDeviceRevoked: () -> Unit,
 ) {
-    var channels by remember { mutableStateOf<List<YtChannel>>(emptyList()) }
-    var downloads by remember { mutableStateOf<List<YtVideo>>(emptyList()) }
-    var latest by remember { mutableStateOf<List<YtVideo>>(emptyList()) }
-    var isLoading by remember { mutableStateOf(true) }
+    val warmHit = HomeWarmCache.baseUrl == api.baseUrl &&
+        (HomeWarmCache.ytChannels.isNotEmpty() || HomeWarmCache.ytDownloads.isNotEmpty() || HomeWarmCache.ytLatest.isNotEmpty())
+    var channels by remember(api.baseUrl) { mutableStateOf(if (warmHit) HomeWarmCache.ytChannels else emptyList()) }
+    var downloads by remember(api.baseUrl) { mutableStateOf(if (warmHit) HomeWarmCache.ytDownloads else emptyList()) }
+    var latest by remember(api.baseUrl) { mutableStateOf(if (warmHit) HomeWarmCache.ytLatest else emptyList()) }
+    var isLoading by remember(api.baseUrl) { mutableStateOf(!warmHit) }
     var tab by remember { mutableStateOf(YtTab.FOR_YOU) }
 
     LaunchedEffect(api) {
-        isLoading = true
+        if (!warmHit) isLoading = true
         when (val r = api.fetchYoutubeOverview()) {
             is MusicApiResult.Success -> {
                 channels = r.data.channels
                 downloads = r.data.downloadedVideos
                 latest = r.data.latest
+                HomeWarmCache.ytChannels = r.data.channels
+                HomeWarmCache.ytDownloads = r.data.downloadedVideos
+                HomeWarmCache.ytLatest = r.data.latest
             }
             MusicApiResult.DeviceRevoked -> onDeviceRevoked()
             is MusicApiResult.Error -> Unit
@@ -117,7 +127,16 @@ fun YouTubeScreen(
         )
     }
 
-    Column(modifier = Modifier.fillMaxSize()) {
+    val isTv = LocalIsTv.current
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .then(
+                if (isTv) Modifier.background(
+                    Brush.radialGradient(listOf(SoulSyncColors.Accent.copy(alpha = 0.12f), Color(0xFF0A0C16))),
+                ) else Modifier,
+            ),
+    ) {
         BrowseHeaderAndTabs(
             title = "YouTube",
             tabs = YtTab.entries.map { it to it.label },
@@ -125,6 +144,7 @@ fun YouTubeScreen(
             onSelect = { tab = it },
         )
 
+        Box(modifier = Modifier.fillMaxSize().padding(start = if (isTv) 62.dp else 0.dp)) {
         when (tab) {
             YtTab.FOR_YOU -> {
                 val lead = downloads.firstOrNull() ?: latest.firstOrNull()
@@ -348,6 +368,7 @@ fun YouTubeScreen(
                 }
             }
         }
+        }
     }
 }
 
@@ -411,20 +432,25 @@ fun PodcastsScreen(
     onPodcastClick: (PodcastSub) -> Unit,
     onDeviceRevoked: () -> Unit,
 ) {
-    var subs by remember { mutableStateOf<List<PodcastSub>>(emptyList()) }
-    var isLoading by remember { mutableStateOf(true) }
+    val isTv = LocalIsTv.current
+    val warmHit = HomeWarmCache.baseUrl == api.baseUrl && HomeWarmCache.podcasts.isNotEmpty()
+    var subs by remember(api.baseUrl) { mutableStateOf(if (warmHit) HomeWarmCache.podcasts else emptyList()) }
+    var isLoading by remember(api.baseUrl) { mutableStateOf(!warmHit) }
 
     LaunchedEffect(api) {
-        isLoading = true
+        if (!warmHit) isLoading = true
         when (val r = api.fetchPodcastSubs()) {
-            is MusicApiResult.Success -> subs = r.data
+            is MusicApiResult.Success -> {
+                subs = r.data
+                HomeWarmCache.podcasts = r.data
+            }
             MusicApiResult.DeviceRevoked -> onDeviceRevoked()
             is MusicApiResult.Error -> Unit
         }
         isLoading = false
     }
 
-    if (isLoading) {
+    if (isLoading && subs.isEmpty()) {
         LoadingBox()
         return
     }
@@ -433,20 +459,41 @@ fun PodcastsScreen(
         return
     }
 
-    LazyVerticalGrid(
-        columns = GridCells.Adaptive(minSize = if (LocalIsTv.current) 176.dp else 140.dp),
-        contentPadding = PaddingValues(16.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .then(
+                if (isTv) Modifier.background(
+                    Brush.radialGradient(listOf(SoulSyncColors.Accent.copy(alpha = 0.12f), Color(0xFF0A0C16))),
+                ) else Modifier,
+            ),
     ) {
-        items(subs, key = { it.id }) { sub ->
-            SquareMediaCard(
-                title = sub.title,
-                subtitle = sub.author,
-                artworkUrl = api.artwork.resolve(sub.artworkUrl),
-                fallbackIcon = Icons.Default.Podcasts,
-                onClick = { onPodcastClick(sub) },
-            )
+        if (isTv) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.padding(start = 78.dp, end = 32.dp, top = 20.dp, bottom = 8.dp),
+            ) {
+                Text("Podcasts", color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.ExtraBold)
+                Text("${subs.size} shows", color = Color.White.copy(alpha = 0.56f), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+            }
+        }
+        LazyVerticalGrid(
+            columns = GridCells.Adaptive(minSize = if (isTv) 168.dp else 140.dp),
+            contentPadding = PaddingValues(start = if (isTv) 78.dp else 16.dp, end = if (isTv) 32.dp else 16.dp, top = 12.dp, bottom = 36.dp),
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+            modifier = Modifier.fillMaxSize(),
+        ) {
+            items(subs, key = { it.id }) { sub ->
+                SquareMediaCard(
+                    title = sub.title,
+                    subtitle = sub.author,
+                    artworkUrl = api.artwork.resolve(sub.artworkUrl),
+                    fallbackIcon = Icons.Default.Podcasts,
+                    onClick = { onPodcastClick(sub) },
+                )
+            }
         }
     }
 }
@@ -551,20 +598,25 @@ fun AudiobooksScreen(
     onBookClick: (OwnedBook) -> Unit,
     onDeviceRevoked: () -> Unit,
 ) {
-    var books by remember { mutableStateOf<List<OwnedBook>>(emptyList()) }
-    var isLoading by remember { mutableStateOf(true) }
+    val isTv = LocalIsTv.current
+    val warmHit = HomeWarmCache.baseUrl == api.baseUrl && HomeWarmCache.books.isNotEmpty()
+    var books by remember(api.baseUrl) { mutableStateOf(if (warmHit) HomeWarmCache.books else emptyList()) }
+    var isLoading by remember(api.baseUrl) { mutableStateOf(!warmHit) }
 
     LaunchedEffect(api) {
-        isLoading = true
+        if (!warmHit) isLoading = true
         when (val r = api.fetchAudiobooks()) {
-            is MusicApiResult.Success -> books = r.data
+            is MusicApiResult.Success -> {
+                books = r.data
+                HomeWarmCache.books = r.data
+            }
             MusicApiResult.DeviceRevoked -> onDeviceRevoked()
             is MusicApiResult.Error -> Unit
         }
         isLoading = false
     }
 
-    if (isLoading) {
+    if (isLoading && books.isEmpty()) {
         LoadingBox()
         return
     }
@@ -573,12 +625,32 @@ fun AudiobooksScreen(
         return
     }
 
-    LazyVerticalGrid(
-        columns = GridCells.Adaptive(minSize = if (LocalIsTv.current) 176.dp else 140.dp),
-        contentPadding = PaddingValues(16.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .then(
+                if (isTv) Modifier.background(
+                    Brush.radialGradient(listOf(SoulSyncColors.Accent.copy(alpha = 0.12f), Color(0xFF0A0C16))),
+                ) else Modifier,
+            ),
     ) {
+        if (isTv) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.padding(start = 78.dp, end = 32.dp, top = 20.dp, bottom = 8.dp),
+            ) {
+                Text("Audiobooks", color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.ExtraBold)
+                Text("${books.size} titles", color = Color.White.copy(alpha = 0.56f), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+            }
+        }
+        LazyVerticalGrid(
+            columns = GridCells.Adaptive(minSize = if (isTv) 168.dp else 140.dp),
+            contentPadding = PaddingValues(start = if (isTv) 78.dp else 16.dp, end = if (isTv) 32.dp else 16.dp, top = 12.dp, bottom = 36.dp),
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+            modifier = Modifier.fillMaxSize(),
+        ) {
         items(books, key = { it.asin }) { book ->
             SquareMediaCard(
                 title = book.title,
@@ -587,6 +659,7 @@ fun AudiobooksScreen(
                 fallbackIcon = Icons.Default.Headphones,
                 onClick = { onBookClick(book) },
             )
+        }
         }
     }
 }

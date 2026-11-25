@@ -445,6 +445,14 @@ fun PlayerShell(
                     current is PlayerDestination.Tv ||
                     current is PlayerDestination.MovieDetail ||
                     current is PlayerDestination.ShowDetail ||
+                    current is PlayerDestination.CollectionDetail ||
+                    current is PlayerDestination.Music ||
+                    current is PlayerDestination.Playlists ||
+                    current is PlayerDestination.YouTube ||
+                    current is PlayerDestination.Podcasts ||
+                    current is PlayerDestination.Audiobooks ||
+                    current is PlayerDestination.Watchlist ||
+                    current is PlayerDestination.WatchingNow ||
                     current is PlayerDestination.Settings ||
                     current is PlayerDestination.Downloads ||
                     current is PlayerDestination.AdminUsers

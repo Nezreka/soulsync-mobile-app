@@ -717,6 +717,35 @@ internal fun <T> BrowseHeaderAndTabs(
     selected: T,
     onSelect: (T) -> Unit,
 ) {
+    val isTv = LocalIsTv.current
+    if (isTv) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 78.dp, end = 32.dp, top = 18.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text(
+                text = title,
+                color = Color.White,
+                fontSize = 24.sp,
+                fontWeight = FontWeight.ExtraBold,
+                letterSpacing = (-0.4).sp,
+            )
+            Spacer(modifier = Modifier.width(4.dp))
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(tabs, key = { it.second }) { (value, label) ->
+                    TvCinemaPillTab(
+                        label = label,
+                        selected = value == selected,
+                        onClick = { onSelect(value) },
+                    )
+                }
+            }
+        }
+        return
+    }
     Column(
         modifier = Modifier
             .fillMaxWidth()
