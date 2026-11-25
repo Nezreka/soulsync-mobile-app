@@ -1554,8 +1554,10 @@ private fun SoulSyncAnimatedBrandMark(
     // open (366 frames in six idle seconds on a Shield, each costing the GPU
     // 12 ms of its 16), so there was nothing left over when you pressed a key.
     if (LocalIsTv.current) {
+        // its own picture, made at about twice the size it is drawn at: the 512 px mark squeezed
+        // into 56 px on screen came out jagged
         Image(
-            bitmap = androidx.compose.ui.graphics.ImageBitmap.imageResource(id = R.drawable.soulsync_mark),
+            bitmap = androidx.compose.ui.graphics.ImageBitmap.imageResource(id = R.drawable.soulsync_mark_tv),
             contentDescription = "SoulSync",
             filterQuality = androidx.compose.ui.graphics.FilterQuality.High,
             modifier = Modifier.padding(4.dp).size(size),
