@@ -447,6 +447,8 @@ fun PlayerShell(
                     current is PlayerDestination.ShowDetail ||
                     current is PlayerDestination.CollectionDetail ||
                     current is PlayerDestination.Music ||
+                    current is PlayerDestination.ArtistDetail ||
+                    current is PlayerDestination.AlbumDetail ||
                     current is PlayerDestination.Playlists ||
                     current is PlayerDestination.YouTube ||
                     current is PlayerDestination.Podcasts ||
@@ -1871,13 +1873,19 @@ private fun PlayerContent(
         is PlayerDestination.PersonDetail -> PersonDetailScreen(current.tmdbId, current.name, api, onNavigate, onDeviceRevoked)
         PlayerDestination.Music -> MusicScreen(api, coordinator, onNavigate, onDeviceRevoked)
         PlayerDestination.Playlists -> MusicScreen(api, coordinator, onNavigate, onDeviceRevoked, startOnPlaylists = true)
-        is PlayerDestination.ArtistDetail -> ArtistDetailScreen(current.artistId, api, { onNavigate(PlayerDestination.AlbumDetail(it)) }, onDeviceRevoked)
-        is PlayerDestination.AlbumDetail -> AlbumDetailScreen(
+        is PlayerDestination.ArtistDetail -> CinemaArtistDetailScreen(
+            artistId = current.artistId,
+            api = api,
+            coordinator = coordinator,
+            onNavigate = onNavigate,
+            onDeviceRevoked = onDeviceRevoked,
+        )
+        is PlayerDestination.AlbumDetail -> CinemaAlbumDetailScreen(
             albumId = current.albumId,
             api = api,
             coordinator = coordinator,
             onDeviceRevoked = onDeviceRevoked,
-            onArtistClick = { onNavigate(PlayerDestination.ArtistDetail(it)) },
+            onNavigate = onNavigate,
             highlightTrackId = current.highlightTrackId,
         )
         is PlayerDestination.PlaylistDetail -> PlaylistDetailScreen(current.playlistId, api, coordinator, onDeviceRevoked)

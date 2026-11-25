@@ -125,6 +125,8 @@ internal object HomeWarmCache {
     var hasLoadedOnce: Boolean = false
     val movieDetails: MutableMap<Int, net.ssync.player.MovieDetail> = java.util.Collections.synchronizedMap(LinkedHashMap(32, 0.75f, true))
     val showDetails: MutableMap<Int, net.ssync.player.ShowDetail> = java.util.Collections.synchronizedMap(LinkedHashMap(32, 0.75f, true))
+    val artistDetails: MutableMap<Int, net.ssync.player.LibArtistDetail> = java.util.Collections.synchronizedMap(LinkedHashMap(32, 0.75f, true))
+    val albumDetails: MutableMap<Int, net.ssync.player.LibAlbumDetail> = java.util.Collections.synchronizedMap(LinkedHashMap(32, 0.75f, true))
     val titleExtras: MutableMap<String, net.ssync.player.TitleExtras> = java.util.Collections.synchronizedMap(LinkedHashMap(48, 0.75f, true))
     val resolvedLogos: MutableMap<String, String> = java.util.Collections.synchronizedMap(HashMap())
     var musicArtists: List<net.ssync.player.LibArtist> = emptyList()

@@ -363,9 +363,16 @@ data class LibArtistDetail(
     val summary: String? = null,
     val about: LibArtistAbout? = null,
     val genres: List<String> = emptyList(),
+    val style: String? = null,
+    val mood: String? = null,
+    val label: String? = null,
+    @SerialName("total_size_bytes")
+    val totalSizeBytes: Long = 0L,
     val albums: List<LibAlbum> = emptyList(),
     val eps: List<LibAlbum> = emptyList(),
     val singles: List<LibAlbum> = emptyList(),
+    @SerialName("appears_on")
+    val appearsOn: List<LibAlbum> = emptyList(),
 )
 
 @Serializable
@@ -416,13 +423,76 @@ data class LibArtistRef(
 data class LibAlbumDetail(
     val id: Int,
     val title: String = "",
+    @SerialName("album_type")
+    val albumType: String? = null,
     val year: Int? = null,
+    @SerialName("release_date")
+    val releaseDate: String? = null,
     @SerialName("image_url")
     val imageUrl: String? = null,
     val genres: List<String> = emptyList(),
+    val label: String? = null,
+    val style: String? = null,
+    val mood: String? = null,
+    @SerialName("total_size_bytes")
+    val totalSizeBytes: Long = 0L,
     @SerialName("primary_artist")
     val primaryArtist: LibArtistRef? = null,
     val tracks: List<LibTrack> = emptyList(),
+)
+
+@Serializable
+data class ArtistTopTrack(
+    val id: Int,
+    val title: String = "",
+    val artist: String = "",
+    val album: String? = null,
+    @SerialName("album_id")
+    val albumId: Int? = null,
+    @SerialName("duration_ms")
+    val durationMs: Long? = null,
+    @SerialName("play_count")
+    val playCount: Int = 0,
+    @SerialName("image_url")
+    val imageUrl: String? = null,
+)
+
+@Serializable
+data class ArtistListeningMonth(
+    val month: String = "",
+    val plays: Int = 0,
+)
+
+@Serializable
+data class ArtistListeningTopTrack(
+    val title: String = "",
+    val album: String = "",
+    @SerialName("play_count")
+    val playCount: Int = 0,
+    @SerialName("track_id")
+    val trackId: Int? = null,
+    @SerialName("album_id")
+    val albumId: Int? = null,
+    @SerialName("thumb_url")
+    val thumbUrl: String? = null,
+)
+
+@Serializable
+data class ArtistListeningStats(
+    @SerialName("play_count")
+    val playCount: Int = 0,
+    @SerialName("plays_30d")
+    val plays30d: Int = 0,
+    val rank: Int? = null,
+    @SerialName("artists_played")
+    val artistsPlayed: Int? = null,
+    @SerialName("first_played")
+    val firstPlayed: String? = null,
+    @SerialName("last_played")
+    val lastPlayed: String? = null,
+    val months: List<ArtistListeningMonth> = emptyList(),
+    @SerialName("top_tracks")
+    val topTracks: List<ArtistListeningTopTrack> = emptyList(),
 )
 
 @Serializable

@@ -1641,6 +1641,60 @@ class PlayerApiClient(
             }
         }
 
+    suspend fun fetchArtistTopTracks(artistId: Int, limit: Int = 10): MusicApiResult<List<ArtistTopTrack>> =
+        getJson("$base/api/player/music/artist/$artistId/top?limit=$limit") { body ->
+            val root = json.parseToJsonElement(body).jsonObject
+            (root["tracks"] as? JsonArray)?.mapNotNull { el ->
+                val o = el as? JsonObject ?: return@mapNotNull null
+                val id = (o["track_id"] ?: o["id"])?.jsonPrimitive?.intOrNull ?: return@mapNotNull null
+                val title = (o["title"] ?: o["name"])?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                ArtistTopTrack(
+                    id = id,
+                    title = title,
+                    artist = o["artist"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+                    album = o["album"]?.jsonPrimitive?.contentOrNull,
+                    albumId = o["album_id"]?.jsonPrimitive?.intOrNull,
+                    durationMs = (o["duration_ms"] ?: o["duration"])?.jsonPrimitive?.contentOrNull?.toLongOrNull(),
+                    playCount = (o["play_count"] ?: o["plays"])?.jsonPrimitive?.intOrNull ?: 0,
+                    imageUrl = (o["image_url"] ?: o["artwork"] ?: o["thumb_url"])?.jsonPrimitive?.contentOrNull,
+                )
+            }.orEmpty()
+        }
+
+    suspend fun fetchArtistYourPlays(artistId: Int): MusicApiResult<ArtistListeningStats?> =
+        getJson("$base/api/library/v2/artists/$artistId/your-plays") { body ->
+            val root = json.parseToJsonElement(body).jsonObject
+            val lObj = root["listening"] as? JsonObject ?: return@getJson null
+            val months = (lObj["months"] as? JsonArray)?.mapNotNull { mEl ->
+                val mo = mEl as? JsonObject ?: return@mapNotNull null
+                ArtistListeningMonth(
+                    month = mo["month"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+                    plays = mo["plays"]?.jsonPrimitive?.intOrNull ?: 0,
+                )
+            }.orEmpty()
+            val topTracks = (lObj["top_tracks"] as? JsonArray)?.mapNotNull { tEl ->
+                val to = tEl as? JsonObject ?: return@mapNotNull null
+                ArtistListeningTopTrack(
+                    title = to["title"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+                    album = to["album"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+                    playCount = to["play_count"]?.jsonPrimitive?.intOrNull ?: 0,
+                    trackId = to["track_id"]?.jsonPrimitive?.intOrNull,
+                    albumId = to["album_id"]?.jsonPrimitive?.intOrNull,
+                    thumbUrl = to["thumb_url"]?.jsonPrimitive?.contentOrNull,
+                )
+            }.orEmpty()
+            ArtistListeningStats(
+                playCount = lObj["play_count"]?.jsonPrimitive?.intOrNull ?: 0,
+                plays30d = lObj["plays_30d"]?.jsonPrimitive?.intOrNull ?: 0,
+                rank = lObj["rank"]?.jsonPrimitive?.intOrNull,
+                artistsPlayed = lObj["artists_played"]?.jsonPrimitive?.intOrNull,
+                firstPlayed = lObj["first_played"]?.jsonPrimitive?.contentOrNull,
+                lastPlayed = lObj["last_played"]?.jsonPrimitive?.contentOrNull,
+                months = months,
+                topTracks = topTracks,
+            )
+        }
+
     private suspend fun <T> getJson(url: String, parser: (String) -> T): MusicApiResult<T> =
         withContext(Dispatchers.IO) {
             execute(Request.Builder().url(url).get().build(), parser)
