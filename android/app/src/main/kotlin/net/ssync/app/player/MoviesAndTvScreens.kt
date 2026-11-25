@@ -233,6 +233,7 @@ fun MovieDetailScreen(
         item {
             HeroSpotlight(
                 title = movie.title,
+                logoUrl = api.artwork.resolve(movie.logo),
                 subtitle = listOfNotNull(
                     movie.year?.toString(),
                     movie.contentRating,
@@ -1451,6 +1452,7 @@ fun ShowDetailScreen(
             } ?: "TV Series"
             HeroSpotlight(
                 title = show.title,
+                logoUrl = api.artwork.resolve(show.logo),
                 subtitle = heroMeta,
                 backdropUrl = api.artwork.showBackdrop(show.id),
                 eyebrow = upNextLabel,

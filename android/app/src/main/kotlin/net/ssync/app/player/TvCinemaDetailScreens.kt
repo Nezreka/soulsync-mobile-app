@@ -123,7 +123,9 @@ internal fun TvCinemaMovieDetail(
     val posterUrl = api.artwork.moviePoster(movie.id, width = 600)
     val backdropUrl = if (movie.hasBackdrop) api.artwork.movieBackdrop(movie.id, width = 1920) else posterUrl
 
-    var logoUrl by remember(movie.id) { mutableStateOf<String?>(null) }
+    // the logo the library already has for this film comes with its page; the lookup below is only
+    // for a title that has none stored
+    var logoUrl by remember(movie.id) { mutableStateOf(api.artwork.resolve(movie.logo)) }
     var targetAmbient by remember(movie.id) { mutableStateOf(Color(0xFF151326)) }
 
     LaunchedEffect(movie.id, backdropUrl) {
@@ -145,7 +147,9 @@ internal fun TvCinemaMovieDetail(
         if (tmdbId != null) {
             val lk = "movie:$tmdbId"
             val cached = HomeWarmCache.resolvedLogos[lk]
-            if (cached != null) {
+            if (!logoUrl.isNullOrBlank()) {
+                // the page's own logo stands
+            } else if (cached != null) {
                 logoUrl = cached
             } else {
                 (api.fetchLogos(listOf(lk)) as? MusicApiResult.Success)?.data?.get(lk)?.let { raw ->
@@ -608,7 +612,7 @@ internal fun TvCinemaShowDetail(
     val posterUrl = api.artwork.showPoster(show.id, width = 600)
     val backdropUrl = if (show.hasBackdrop) api.artwork.showBackdrop(show.id, width = 1920) else posterUrl
 
-    var logoUrl by remember(show.id) { mutableStateOf<String?>(null) }
+    var logoUrl by remember(show.id) { mutableStateOf(api.artwork.resolve(show.logo)) }
     var targetAmbient by remember(show.id) { mutableStateOf(Color(0xFF151326)) }
 
     val orderedSeasons = remember(show.seasons) {
@@ -650,7 +654,9 @@ internal fun TvCinemaShowDetail(
         if (tmdbId != null) {
             val lk = "show:$tmdbId"
             val cached = HomeWarmCache.resolvedLogos[lk]
-            if (cached != null) {
+            if (!logoUrl.isNullOrBlank()) {
+                // the page's own logo stands
+            } else if (cached != null) {
                 logoUrl = cached
             } else {
                 (api.fetchLogos(listOf(lk)) as? MusicApiResult.Success)?.data?.get(lk)?.let { raw ->

@@ -296,6 +296,8 @@ data class CrewMember(
 data class MovieDetail(
     val id: Int,
     val title: String,
+    /** the title's wordmark art, when the library has one: drawn in place of the title text */
+    val logo: String? = null,
     val year: Int? = null,
     val overview: String? = null,
     val tagline: String? = null,
@@ -355,6 +357,8 @@ data class DetailSeason(
 data class ShowDetail(
     val id: Int,
     val title: String,
+    /** the title's wordmark art, when the library has one: drawn in place of the title text */
+    val logo: String? = null,
     val year: Int? = null,
     val overview: String? = null,
     val tagline: String? = null,
