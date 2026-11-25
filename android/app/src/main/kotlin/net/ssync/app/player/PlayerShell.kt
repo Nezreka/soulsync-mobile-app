@@ -444,7 +444,10 @@ fun PlayerShell(
                     current is PlayerDestination.Movies ||
                     current is PlayerDestination.Tv ||
                     current is PlayerDestination.MovieDetail ||
-                    current is PlayerDestination.ShowDetail
+                    current is PlayerDestination.ShowDetail ||
+                    current is PlayerDestination.Settings ||
+                    current is PlayerDestination.Downloads ||
+                    current is PlayerDestination.AdminUsers
                 )
             val tvSidebarExpanded = isTv && (sidebarHasFocus || tvSidebarForcedOpen)
             val tvShowSidebarRail = isTv && (!tvSidebarHidden || tvSidebarExpanded)

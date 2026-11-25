@@ -55,6 +55,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -76,6 +77,120 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 
 private val ASK_AFTER_OPTIONS = listOf(0, 2, 3, 4, 5, 8)
+
+private enum class SettingsCategory(
+    val label: String,
+    val subtitle: String,
+    val icon: ImageVector,
+) {
+    PLAYBACK("Playback & Profile", "Accent theme, auto-play, and video quality", Icons.Default.PlayArrow),
+    DISPLAY("Music & Home", "Audio engine, visualizers, home & poster badges", Icons.Default.MusicNote),
+    SUBTITLES("Subtitles", "Live cinema preview, size, and style", Icons.Default.Subtitles),
+    LIVETV("Live TV & Issues", "Retro broadcast commercials & issue queue", Icons.Default.Tv),
+    SERVER("Server & Device", "Direct HTTPS pairing & security", Icons.Default.Lock),
+}
+
+@Composable
+private fun CinemaSettingsCategoryPill(
+    category: SettingsCategory,
+    selected: Boolean,
+    isTv: Boolean,
+    onClick: () -> Unit,
+) {
+    var focused by remember { mutableStateOf(false) }
+    val bg = when {
+        isTv && focused -> Color.White
+        selected -> SoulSyncColors.Accent.copy(alpha = 0.28f)
+        else -> Color.White.copy(alpha = 0.04f)
+    }
+    val fg = when {
+        isTv && focused -> Color(0xFF0B0D14)
+        selected -> Color.White
+        else -> SoulSyncColors.TextSoft
+    }
+    val subFg = when {
+        isTv && focused -> Color(0xFF475569)
+        else -> SoulSyncColors.TextSecondary
+    }
+    val borderColor = when {
+        isTv && focused -> Color.White
+        selected -> SoulSyncColors.AccentLight.copy(alpha = 0.72f)
+        else -> Color.White.copy(alpha = 0.08f)
+    }
+
+    if (isTv) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(14.dp))
+                .background(bg)
+                .border(1.dp, borderColor, RoundedCornerShape(14.dp))
+                .onFocusChanged { focused = it.isFocused || it.hasFocus }
+                .clickable(onClick = onClick)
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(34.dp)
+                    .clip(CircleShape)
+                    .background(
+                        if (focused) Color(0xFF0B0D14).copy(alpha = 0.10f)
+                        else if (selected) SoulSyncColors.Accent.copy(alpha = 0.35f)
+                        else Color.White.copy(alpha = 0.07f),
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = category.icon,
+                    contentDescription = null,
+                    tint = if (focused) Color(0xFF0B0D14) else if (selected) SoulSyncColors.AccentLight else Color.White.copy(alpha = 0.78f),
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    text = category.label,
+                    color = fg,
+                    fontSize = 14.sp,
+                    fontWeight = if (selected || focused) FontWeight.Bold else FontWeight.SemiBold,
+                    maxLines = 1,
+                )
+                Text(
+                    text = category.subtitle,
+                    color = subFg,
+                    fontSize = 11.sp,
+                    maxLines = 1,
+                )
+            }
+        }
+    } else {
+        Row(
+            modifier = Modifier
+                .clip(CircleShape)
+                .background(bg)
+                .border(1.dp, borderColor, CircleShape)
+                .clickable(onClick = onClick)
+                .padding(horizontal = 13.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Icon(
+                imageVector = category.icon,
+                contentDescription = null,
+                tint = if (selected) SoulSyncColors.AccentLight else SoulSyncColors.TextSoft,
+                modifier = Modifier.size(15.dp),
+            )
+            Text(
+                text = category.label,
+                color = fg,
+                fontSize = 12.5.sp,
+                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+            )
+        }
+    }
+}
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -146,12 +261,91 @@ fun SettingsScreen(
         flashSaved()
     }
 
+    val isTv = net.ssync.pairing.ui.LocalIsTv.current
+    var activeCategory by remember { mutableStateOf(SettingsCategory.PLAYBACK) }
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(if (isTv) Modifier.background(
+                Brush.radialGradient(
+                    colors = listOf(SoulSyncColors.Accent.copy(alpha = 0.14f), Color(0xFF0A0C16)),
+                ),
+            ) else Modifier),
+    ) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = if (isTv) 78.dp else 0.dp),
+    ) {
+        if (isTv) {
+            // Left Category Rail on TV (Apple TV+ / PS5 style)
+            Column(
+                modifier = Modifier
+                    .width(248.dp)
+                    .padding(top = 24.dp, bottom = 24.dp, end = 20.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                ) {
+                    Column {
+                        Text(
+                            text = "Settings",
+                            color = Color.White,
+                            fontSize = 26.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            letterSpacing = (-0.4).sp,
+                        )
+                        Text(
+                            text = record.profileName,
+                            color = SoulSyncColors.AccentLight,
+                            fontSize = 12.5.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                    AnimatedVisibility(visible = showSavedBadge, enter = fadeIn(), exit = fadeOut()) {
+                        Row(
+                            modifier = Modifier
+                                .clip(CircleShape)
+                                .background(SoulSyncColors.Accent.copy(alpha = 0.22f))
+                                .border(1.dp, SoulSyncColors.AccentLight.copy(alpha = 0.55f), CircleShape)
+                                .padding(horizontal = 10.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            Icon(Icons.Default.Check, contentDescription = null, tint = SoulSyncColors.AccentLight, modifier = Modifier.size(13.dp))
+                            Text("Saved", color = SoulSyncColors.AccentLight, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+                SettingsCategory.entries.forEach { cat ->
+                    CinemaSettingsCategoryPill(
+                        category = cat,
+                        selected = activeCategory == cat,
+                        isTv = true,
+                        onClick = { activeCategory = cat },
+                    )
+                }
+            }
+        }
+
     LazyColumn(
-        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 18.dp),
+        modifier = Modifier.weight(1f),
+        contentPadding = PaddingValues(
+            start = if (isTv) 8.dp else 16.dp,
+            end = if (isTv) 32.dp else 16.dp,
+            top = if (isTv) 24.dp else 16.dp,
+            bottom = 48.dp,
+        ),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        // Header + animated Saved pill
+        // Mobile Header + Horizontal Category Pill Bar
+        if (!isTv) {
         item {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -202,9 +396,27 @@ fun SettingsScreen(
                     }
                 }
             }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                SettingsCategory.entries.forEach { cat ->
+                    CinemaSettingsCategoryPill(
+                        category = cat,
+                        selected = activeCategory == cat,
+                        isTv = false,
+                        onClick = { activeCategory = cat },
+                    )
+                }
+            }
+            }
+        }
         }
 
         // 1b. Poster Cards (Synced across all screens)
+        if (activeCategory == SettingsCategory.DISPLAY) {
         item {
             SettingsCard(
                 icon = Icons.Default.Tv,
@@ -237,8 +449,10 @@ fun SettingsScreen(
                 )
             }
         }
+        }
 
         // 1c. Retro Commercial Breaks (Server-wide shared broadcast setting — 1:1 Desktop parity)
+        if (activeCategory == SettingsCategory.LIVETV) {
         item {
             var commConfig by remember { mutableStateOf<net.ssync.player.CommercialsConfig?>(null) }
             var commStatus by remember { mutableStateOf<net.ssync.player.CommercialsStatus?>(null) }
@@ -580,6 +794,8 @@ fun SettingsScreen(
         }
 
         // 1. Playback & Profile (Synced across all screens)
+        }
+        if (activeCategory == SettingsCategory.PLAYBACK) {
         item {
             SettingsCard(
                 icon = Icons.Default.PlayArrow,
@@ -716,6 +932,8 @@ fun SettingsScreen(
         }
 
         // 2. Subtitles (This screen) with live cinema preview
+        }
+        if (activeCategory == SettingsCategory.SUBTITLES) {
         item {
             SettingsCard(
                 icon = Icons.Default.Subtitles,
@@ -791,6 +1009,8 @@ fun SettingsScreen(
         }
 
         // 3. Video & Display (This screen)
+        }
+        if (activeCategory == SettingsCategory.PLAYBACK) {
         item {
             SettingsCard(
                 icon = Icons.Default.Tv,
@@ -926,6 +1146,8 @@ fun SettingsScreen(
         }
 
         // 4. Music & Home (This screen)
+        }
+        if (activeCategory == SettingsCategory.DISPLAY) {
         item {
             SettingsCard(
                 icon = Icons.Default.MusicNote,
@@ -1167,6 +1389,8 @@ fun SettingsScreen(
         }
 
         // 5. Connected Server & Device Security
+        }
+        if (activeCategory == SettingsCategory.SERVER) {
         item {
             SettingsCard(
                 icon = Icons.Default.Lock,
@@ -1202,8 +1426,11 @@ fun SettingsScreen(
                 }
             }
         }
+        }
 
         item { Spacer(modifier = Modifier.height(24.dp)) }
+    }
+    }
     }
 
     if (confirmUnpair) {

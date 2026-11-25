@@ -215,36 +215,72 @@ fun DownloadsScreen(
     }
     val totalBytes = remember(items) { items.sumOf { it.sizeBytes } }
 
+    val isTv = net.ssync.pairing.ui.LocalIsTv.current
+    val sidePadStart = if (isTv) 78.dp else 16.dp
+    val sidePadEnd = if (isTv) 32.dp else 16.dp
+
     LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(bottom = 110.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        modifier = Modifier
+            .fillMaxSize()
+            .background(
+                androidx.compose.ui.graphics.Brush.radialGradient(
+                    colors = listOf(SoulSyncColors.Accent.copy(alpha = 0.12f), Color(0xFF0A0C16)),
+                ),
+            ),
+        contentPadding = PaddingValues(top = if (isTv) 20.dp else 8.dp, bottom = 110.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         item {
             Column(
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.padding(start = sidePadStart, end = sidePadEnd, top = 4.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
-                Text("Downloads", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.ExtraBold)
-                Text(
-                    text = "${items.size} saved offline · ${formatDownloadBytes(totalBytes)} on this device",
-                    color = SoulSyncColors.TextSecondary,
-                    fontSize = 12.sp,
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        Text("Downloads", color = Color.White, fontSize = if (isTv) 28.sp else 24.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-0.4).sp)
+                        Text(
+                            text = "Offline media saved directly on this device for zero-buffer playback.",
+                            color = SoulSyncColors.TextSecondary,
+                            fontSize = 12.5.sp,
+                        )
+                    }
+                }
+                // Storage & Offline Summary Bento Row
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    listOf(
+                        Triple("SAVED OFFLINE", "${items.size}", "items"),
+                        Triple("DEVICE STORAGE", formatDownloadBytes(totalBytes), "used"),
+                        Triple("ACTIVE TRANSFERS", "${activeMap.size}", if (activeMap.isEmpty()) "idle" else "downloading"),
+                    ).forEach { (k, v, sub) ->
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(Color.White.copy(alpha = 0.05f))
+                                .border(1.dp, Color.White.copy(alpha = 0.10f), RoundedCornerShape(16.dp))
+                                .padding(horizontal = 16.dp, vertical = 12.dp),
+                            verticalArrangement = Arrangement.spacedBy(2.dp),
+                        ) {
+                            Text(k, color = Color.White.copy(alpha = 0.52f), fontSize = 10.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 0.8.sp)
+                            Text(v, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
+                            Text(sub, color = SoulSyncColors.TextSecondary, fontSize = 11.sp)
+                        }
+                    }
+                }
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(filters) { (k, lbl) ->
-                        val on = filter == k
-                        Text(
-                            text = lbl,
-                            color = if (on) Color.White else SoulSyncColors.TextSoft,
-                            fontSize = 12.sp,
-                            fontWeight = if (on) FontWeight.Bold else FontWeight.Medium,
-                            modifier = Modifier
-                                .clip(CircleShape)
-                                .background(if (on) SoulSyncColors.Accent.copy(alpha = 0.28f) else Color.White.copy(alpha = 0.05f))
-                                .border(1.dp, if (on) SoulSyncColors.Accent else SoulSyncColors.Line, CircleShape)
-                                .clickable { filter = k }
-                                .padding(horizontal = 12.dp, vertical = 6.dp),
+                        val count = if (k == "all") items.size else items.count { it.itemType == k }
+                        TvCinemaPillTab(
+                            label = if (count > 0 && k != "all") "$lbl ($count)" else lbl,
+                            selected = filter == k,
+                            onClick = { filter = k },
                         )
                     }
                 }
@@ -428,36 +464,40 @@ fun AdminUsersScreen(
         loading = false
     }
 
-    Column(modifier = Modifier.fillMaxSize()) {
-        // Unified Admin Hub Segmented Switcher: Users & Devices | My Downloads
+    val isTv = net.ssync.pairing.ui.LocalIsTv.current
+    val sidePadStart = if (isTv) 78.dp else 16.dp
+    val sidePadEnd = if (isTv) 32.dp else 16.dp
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(
+                androidx.compose.ui.graphics.Brush.radialGradient(
+                    colors = listOf(SoulSyncColors.Accent.copy(alpha = 0.12f), Color(0xFF0A0C16)),
+                ),
+            ),
+    ) {
+        // Unified Cinema Hub Header + Pill Tabs: My Downloads | Users & Devices
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 10.dp)
-                .clip(CircleShape)
-                .background(Color(0xFF141620))
-                .border(1.dp, Color.White.copy(alpha = 0.1f), CircleShape)
-                .padding(3.dp),
+                .padding(start = sidePadStart, end = sidePadEnd, top = if (isTv) 20.dp else 12.dp, bottom = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            listOf("admin" to "Users & Devices", "mine" to "My Downloads").forEach { (id, label) ->
-                val on = activeTab == id
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clip(CircleShape)
-                        .background(if (on) SoulSyncColors.Accent.copy(alpha = 0.28f) else Color.Transparent)
-                        .clickable { activeTab = id }
-                        .padding(vertical = 8.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        text = label,
-                        color = if (on) Color.White else SoulSyncColors.TextSecondary,
-                        fontSize = 13.sp,
-                        fontWeight = if (on) FontWeight.Bold else FontWeight.Medium,
-                    )
-                }
-            }
+            Icon(Icons.Default.AdminPanelSettings, contentDescription = null, tint = SoulSyncColors.AccentLight, modifier = Modifier.size(22.dp))
+            Text("Users & Downloads", color = Color.White, fontSize = if (isTv) 24.sp else 20.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-0.3).sp)
+            Spacer(modifier = Modifier.width(6.dp))
+            TvCinemaPillTab(
+                label = "Users & Devices",
+                selected = activeTab == "admin",
+                onClick = { activeTab = "admin" },
+            )
+            TvCinemaPillTab(
+                label = "My Downloads",
+                selected = activeTab == "mine",
+                onClick = { activeTab = "mine" },
+            )
         }
 
         if (activeTab == "mine") {
@@ -467,24 +507,15 @@ fun AdminUsersScreen(
 
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(bottom = 110.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            contentPadding = PaddingValues(start = sidePadStart, end = sidePadEnd, top = 4.dp, bottom = 110.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
         item {
-            Column(
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Icon(Icons.Default.AdminPanelSettings, contentDescription = null, tint = SoulSyncColors.AccentLight)
-                    Text("Users & Downloads", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.ExtraBold)
-                }
-                Text(
-                    "Admin control center — manage download permissions and track device downloads & removals.",
-                    color = SoulSyncColors.TextSecondary,
-                    fontSize = 12.sp,
-                )
-            }
+            Text(
+                "Manage household download permissions and monitor offline storage across paired devices.",
+                color = SoulSyncColors.TextSecondary,
+                fontSize = 12.5.sp,
+            )
         }
 
         if (loading && overview == null) {
