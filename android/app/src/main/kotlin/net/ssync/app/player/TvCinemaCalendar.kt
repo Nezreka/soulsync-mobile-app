@@ -242,6 +242,8 @@ internal fun TvCinemaCalendar(
     }
 
     var focusedItem by remember { mutableStateOf<TvCalendarCardItem?>(null) }
+    // the spotlight follows the card focus rests on, not every card it passes (TvFocusSettle.kt)
+    val settleFocus = rememberSettledFocus<TvCalendarCardItem> { focusedItem = it }
     val activeItem = focusedItem?.takeIf { f -> visibleItems.any { it.key == f.key } }
         ?: visibleItems.firstOrNull()
         ?: allItems.firstOrNull()
@@ -700,7 +702,7 @@ internal fun TvCinemaCalendar(
                                         item = item,
                                         showDateOnCard = selectedDay == null,
                                         modifier = if (idx == 0) Modifier.focusRequester(firstCardFocus) else Modifier,
-                                        onFocused = { focusedItem = item },
+                                        onFocused = { settleFocus(item) },
                                     )
                                 }
                             }

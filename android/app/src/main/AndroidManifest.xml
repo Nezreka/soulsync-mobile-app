@@ -21,6 +21,8 @@
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.SoulSync">
+        <!-- lets a developer profile the release build over adb (simpleperf, perfetto); the app is not debuggable -->
+        <profileable android:shell="true" />
 
         <meta-data
             android:name="com.google.android.gms.cast.framework.OPTIONS_PROVIDER_CLASS_NAME"

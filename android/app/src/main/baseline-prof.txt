@@ -1,0 +1,15 @@
+# Precompile the app's own code and the interface libraries it draws with.
+# Without this, a sideloaded install runs interpreted until the JIT warms up,
+# and on an Android TV box that is most of every frame: a profile taken on a
+# Shield showed about 40% of CPU time in the interpreter and the JIT compiler
+# while moving around the home screen. (H hot, S startup, P post-startup.)
+HSPLnet/ssync/**;->**(**)**
+HSPLandroidx/compose/**;->**(**)**
+HSPLandroidx/activity/**;->**(**)**
+HSPLandroidx/lifecycle/**;->**(**)**
+HSPLkotlin/**;->**(**)**
+HSPLkotlinx/coroutines/**;->**(**)**
+HSPLkotlinx/serialization/**;->**(**)**
+HSPLcoil/**;->**(**)**
+HSPLokhttp3/**;->**(**)**
+HSPLokio/**;->**(**)**

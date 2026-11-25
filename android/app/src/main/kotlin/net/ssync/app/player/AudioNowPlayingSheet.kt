@@ -258,7 +258,7 @@ fun AudioNowPlayingSheet(
     ) {
         // Signature Plexamp atmospheric full-bleed blurred artwork backdrop (180px decode = 16x lighter blur!)
         SoulSyncArtwork(
-            url = item.artworkUrl,
+            url = net.ssync.player.PlayerArtwork.full(item.artworkUrl),
             contentDescription = null,
             maxPx = 180,
             modifier = Modifier
@@ -368,7 +368,7 @@ fun AudioNowPlayingSheet(
                                 } else {
                                     Box(modifier = Modifier.fillMaxSize()) {
                                         SoulSyncArtwork(
-                                            url = item.artworkUrl,
+                                            url = net.ssync.player.PlayerArtwork.full(item.artworkUrl),
                                             contentDescription = item.title,
                                             maxPx = 1080,
                                             modifier = Modifier.fillMaxSize(),
@@ -840,7 +840,7 @@ fun AudioNowPlayingSheet(
                                                 )
                                             } else {
                                                 SoulSyncArtwork(
-                                                    url = item.artworkUrl,
+                                                    url = net.ssync.player.PlayerArtwork.full(item.artworkUrl),
                                                     contentDescription = item.title,
                                                     maxPx = 1080,
                                                     modifier = Modifier.fillMaxSize(),

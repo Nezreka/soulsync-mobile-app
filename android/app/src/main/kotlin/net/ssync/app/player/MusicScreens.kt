@@ -2387,7 +2387,8 @@ fun AlbumDetailScreen(
     val reqState = remember(albumId) { mutableStateMapOf<String, String>() }
     var requestingAll by remember { mutableStateOf(false) }
 
-    val coverUrl = api.artwork.resolve(al.imageUrl) ?: api.artwork.albumArtwork(al.id)
+    // the album's own page draws its cover large: the full picture, not the row thumbnail
+    val coverUrl = net.ssync.player.PlayerArtwork.full(api.artwork.resolve(al.imageUrl) ?: api.artwork.albumArtwork(al.id))
     val activeTrackId = coordinator.activeItem?.takeIf { it.itemType == "track" }?.itemId
 
     val playableTracks = al.tracks.filter { it.isOwned }.map { t ->

@@ -9,15 +9,25 @@ class PlayerArtwork(baseUrl: String) {
 
     companion object {
         /**
-         * a TV draws the same artwork much larger than a phone does (a poster
-         * card is a third wider, an album cover fills half the screen), and it
-         * was asking for the phone's sizes: every album cover was the 256 px
-         * thumbnail whatever size it was drawn at, which is what looked
-         * pixelated on a 4K set. set once at start on a TV; the image loader
-         * still scales each picture down to the size it is shown at.
+         * a TV draws posters and stills larger than a phone does, and it was
+         * asking for the phone's sizes. set once at start on a TV; the image
+         * loader still scales each picture down to the size it is shown at.
+         * (album covers in rows stay thumbnails on every screen: a row of
+         * full-size covers costs more to fetch and decode than it shows. the
+         * big ones ask for [full].)
          */
         @Volatile
         var largeScreen: Boolean = false
+
+        /**
+         * the full-size picture behind a library thumbnail address: for the one
+         * cover that is drawn large (an album's page, now playing). the 256 px
+         * thumbnail drawn at half a TV screen is what looked pixelated.
+         */
+        fun full(url: String?): String? = url
+            ?.replace("?size=thumb&", "?")
+            ?.replace("?size=thumb", "")
+            ?.replace("&size=thumb", "")
     }
 
     /** the width to ask for: half as much again on a TV */
@@ -42,7 +52,7 @@ class PlayerArtwork(baseUrl: String) {
         "$base/api/video/backdrop/show/$id?w=${w(width)}"
 
     fun albumArtwork(albumId: Int?): String? =
-        albumId?.let { "$base/api/library/v2/artwork/album/$it" + if (largeScreen) "" else "?size=thumb" }
+        albumId?.let { "$base/api/library/v2/artwork/album/$it?size=thumb" }
 
     fun audiobookCover(asin: String): String =
         "$base/api/audiobooks/library/$asin/cover"
@@ -87,7 +97,7 @@ class PlayerArtwork(baseUrl: String) {
         ) {
             return "https://image.tmdb.org/t/p/${if (largeScreen) "w500" else "w342"}$normalized"
         }
-        return if (!largeScreen && normalized.startsWith("/api/library/v2/artwork/") && !normalized.contains("size=")) {
+        return if (normalized.startsWith("/api/library/v2/artwork/") && !normalized.contains("size=")) {
             val join = if (normalized.contains("?")) "&" else "?"
             "$base$normalized${join}size=thumb"
         } else {

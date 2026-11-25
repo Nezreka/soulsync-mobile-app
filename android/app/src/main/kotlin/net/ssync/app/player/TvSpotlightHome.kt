@@ -605,6 +605,8 @@ internal fun TvSpotlightHome(
 
     val defaultCard = shelves.firstOrNull()?.items?.firstOrNull()
     var focusedCard by remember { mutableStateOf<TvSpotlightCard?>(null) }
+    // the spotlight follows the card focus rests on, not every card it passes (TvFocusSettle.kt)
+    val settleFocus = rememberSettledFocus<TvSpotlightCard> { focusedCard = it }
     val activeCard = focusedCard ?: defaultCard
 
     // Lazy cached overview + cast + logo enrichment + upfront batch TMDB logo prefetch
@@ -1011,7 +1013,7 @@ internal fun TvSpotlightHome(
                                             } else {
                                                 Modifier
                                             },
-                                            onFocused = { focusedCard = card },
+                                            onFocused = { settleFocus(card) },
                                         )
                                     }
                                 }

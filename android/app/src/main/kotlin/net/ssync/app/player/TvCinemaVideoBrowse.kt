@@ -672,6 +672,8 @@ private fun TvCinemaBrowseScaffold(
 
     val defaultCard = discoverShelves.firstOrNull()?.items?.firstOrNull() ?: allItems.firstOrNull()?.card
     var focusedCard by remember { mutableStateOf<TvBrowseCard?>(null) }
+    // the spotlight follows the card focus rests on, not every card it passes (TvFocusSettle.kt)
+    val settleFocus = rememberSettledFocus<TvBrowseCard> { focusedCard = it }
     val activeCard = focusedCard ?: defaultCard
 
     val enrichmentCache = remember { mutableStateMapOf<String, TvBrowseEnrichment>() }
@@ -1090,7 +1092,7 @@ private fun TvCinemaBrowseScaffold(
                                             TvBrowsePosterTile(
                                                 card = card,
                                                 modifier = if (sIdx == 0 && cIdx == 0) Modifier.focusRequester(firstCardFocus) else Modifier,
-                                                onFocused = { focusedCard = card },
+                                                onFocused = { settleFocus(card) },
                                             )
                                         }
                                     }
@@ -1151,7 +1153,7 @@ private fun TvCinemaBrowseScaffold(
                         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             TvBrowsePosterTile(
                                 card = item.card,
-                                onFocused = { focusedCard = item.card },
+                                onFocused = { settleFocus(item.card) },
                             )
                             Text(
                                 text = item.title,

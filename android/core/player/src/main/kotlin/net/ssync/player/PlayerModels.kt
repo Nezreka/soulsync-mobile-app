@@ -87,7 +87,28 @@ data class CatalogMovie(
     /** the library its files sit in (a title in no library folder is in the main one) */
     @SerialName("library_id")
     val libraryId: Int? = null,
-)
+) {
+    /**
+     * Two rows are the same title in the same state. Written out, and without
+     * walking the genre list: the interface compares whole catalogs (a
+     * `remember` keyed on the movie list, a state being set) and the
+     * generated equals walked every field of every film including its genres,
+     * allocating an iterator for each. On a library of thousands of films
+     * that was about a third of all CPU time while moving around a TV page.
+     */
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (other !is CatalogMovie) return false
+        return id == other.id && year == other.year && runtimeSeconds == other.runtimeSeconds &&
+            hasPoster == other.hasPoster && hasBackdrop == other.hasBackdrop &&
+            tmdbId == other.tmdbId && collectionId == other.collectionId && libraryId == other.libraryId &&
+            rating == other.rating && genres.size == other.genres.size &&
+            title == other.title && addedAt == other.addedAt && contentRating == other.contentRating &&
+            studio == other.studio
+    }
+
+    override fun hashCode(): Int = id
+}
 
 @Serializable
 data class CatalogShow(
@@ -112,7 +133,21 @@ data class CatalogShow(
     val episodes: List<kotlinx.serialization.json.JsonArray> = emptyList(),
     @SerialName("library_id")
     val libraryId: Int? = null,
-)
+) {
+    /** the same title in the same state, without walking its genres or its episode sample (see CatalogMovie.equals) */
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (other !is CatalogShow) return false
+        return id == other.id && year == other.year && episodeCount == other.episodeCount &&
+            hasPoster == other.hasPoster && hasBackdrop == other.hasBackdrop &&
+            tmdbId == other.tmdbId && libraryId == other.libraryId && rating == other.rating &&
+            genres.size == other.genres.size && episodes.size == other.episodes.size &&
+            title == other.title && addedAt == other.addedAt && contentRating == other.contentRating &&
+            network == other.network
+    }
+
+    override fun hashCode(): Int = id
+}
 
 data class CatalogShowEpisode(
     val id: Int,

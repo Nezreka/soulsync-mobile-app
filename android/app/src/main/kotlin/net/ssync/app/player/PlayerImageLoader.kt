@@ -71,7 +71,7 @@ fun createPinnedImageLoader(
         }
         .diskCache {
             DiskCache.Builder()
-                .directory(File(context.cacheDir, "soulsync_img_cache"))
+                .directory(freshImageCacheDir(context))
                 .maxSizeBytes(256L * 1024L * 1024L)
                 .build()
         }
@@ -80,6 +80,27 @@ fun createPinnedImageLoader(
         .allowRgb565(false)
         .crossfade(160)
         .build()
+}
+
+private const val IMAGE_CACHE_PREFIX = "soulsync_img_cache"
+
+/**
+ * the artwork cache of THIS install of the app. pictures are kept by their
+ * address for as long as the cache lives (the server's cache headers are not
+ * consulted), so an update that changes how artwork is asked for, or art that
+ * was replaced on the server, kept showing the old pictures. every update of
+ * the app starts a new cache and removes the ones before it.
+ */
+private fun freshImageCacheDir(context: Context): File {
+    val stamp = runCatching {
+        context.packageManager.getPackageInfo(context.packageName, 0).lastUpdateTime
+    }.getOrDefault(0L)
+    val current = File(context.cacheDir, "${IMAGE_CACHE_PREFIX}_$stamp")
+    runCatching {
+        context.cacheDir.listFiles { f -> f.name.startsWith(IMAGE_CACHE_PREFIX) && f.name != current.name }
+            ?.forEach { it.deleteRecursively() }
+    }
+    return current
 }
 
 /**

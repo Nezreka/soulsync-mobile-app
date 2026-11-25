@@ -59,6 +59,10 @@ dependencies {
     implementation(project(":feature:pairing"))
 
     implementation(libs.androidx.core.ktx)
+    // installs the baseline profile (src/main/baseline-prof.txt, and the ones compose ships) so
+    // android precompiles the interface code instead of interpreting it: on a shield the app ran
+    // interpreted, which was most of why the tv felt laggy
+    implementation(libs.androidx.profileinstaller)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.runtime.compose)

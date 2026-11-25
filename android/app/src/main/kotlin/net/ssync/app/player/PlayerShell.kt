@@ -113,6 +113,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
@@ -644,7 +645,29 @@ fun PlayerShell(
                                 )
                             }
 
-                            if (tvShowSidebarRail) {
+                            if (tvShowSidebarRail) Box(
+                                // Right leaves the open sidebar for the page. focus search
+                                // alone found nothing to the right of it (the page sits under
+                                // the sidebar's dimmed overlay), so the only way out was to
+                                // pick a place again.
+                                modifier = Modifier.onPreviewKeyEvent { ev ->
+                                    if (tvSidebarExpanded &&
+                                        ev.type == androidx.compose.ui.input.key.KeyEventType.KeyDown &&
+                                        ev.key == androidx.compose.ui.input.key.Key.DirectionRight
+                                    ) {
+                                        tvSidebarForcedOpen = false
+                                        sidebarHasFocus = false
+                                        focusManager.clearFocus(force = true)
+                                        scope.launch {
+                                            delay(60L)
+                                            runCatching { contentFocusRequester.requestFocus() }
+                                        }
+                                        true
+                                    } else {
+                                        false
+                                    }
+                                },
+                            ) {
                                 PlayerSidebar(
                                     current = current,
                                     collapsed = !tvSidebarExpanded,
@@ -1526,6 +1549,19 @@ private fun ProfileSheetAction(icon: ImageVector, label: String, onClick: () -> 
 private fun SoulSyncAnimatedBrandMark(
     size: Dp,
 ) {
+    // on a TV the mark stands still. an animation that never ends makes the
+    // whole screen draw again sixty times a second for as long as the app is
+    // open (366 frames in six idle seconds on a Shield, each costing the GPU
+    // 12 ms of its 16), so there was nothing left over when you pressed a key.
+    if (LocalIsTv.current) {
+        Image(
+            bitmap = androidx.compose.ui.graphics.ImageBitmap.imageResource(id = R.drawable.soulsync_mark),
+            contentDescription = "SoulSync",
+            filterQuality = androidx.compose.ui.graphics.FilterQuality.High,
+            modifier = Modifier.padding(4.dp).size(size),
+        )
+        return
+    }
     val transition = androidx.compose.animation.core.rememberInfiniteTransition(label = "sidebarBrandAnim")
     val breathe by transition.animateFloat(
         initialValue = 0f,
