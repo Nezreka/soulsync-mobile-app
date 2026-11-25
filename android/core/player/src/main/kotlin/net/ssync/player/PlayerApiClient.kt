@@ -881,6 +881,61 @@ class PlayerApiClient(
             execute(req) { }
         }
 
+    // ── Page layouts: the rows of Movies, TV, Music and YouTube ──────────────
+    // the same contract as Home's, one per page (SoulSync core/player/page_layout.py).
+    // [page] is "movies", "tv", "music", "youtube", or one library's "<page>:lib:<id>".
+
+    suspend fun fetchPageLayout(page: String, device: String): MusicApiResult<HomeLayoutResponse> =
+        getJson("$base/api/player/page-layout/${encodeSeg(page)}?device=$device") { body ->
+            json.decodeFromString<HomeLayoutResponse>(body)
+        }
+
+    /** [shared]: for every screen of the profile (this screen's own rows go), else this screen only */
+    suspend fun savePageLayout(
+        page: String,
+        layout: HomeLayout,
+        device: String,
+        shared: Boolean,
+    ): MusicApiResult<HomeLayoutResponse> = withContext(Dispatchers.IO) {
+        val payload = if (shared) {
+            HomeLayoutPutRequest(layout = layout, device = "*", fromDevice = device)
+        } else {
+            HomeLayoutPutRequest(layout = layout, device = device)
+        }
+        val req = Request.Builder()
+            .url("$base/api/player/page-layout/${encodeSeg(page)}")
+            .put(json.encodeToString(HomeLayoutPutRequest.serializer(), payload).toRequestBody(JSON_MEDIA_TYPE))
+            .build()
+        execute(req) { body -> json.decodeFromString<HomeLayoutResponse>(body) }
+    }
+
+    /** [device]: that screen follows the shared rows again. null: the page's default, on every screen. */
+    suspend fun resetPageLayout(page: String, device: String?): MusicApiResult<Unit> =
+        withContext(Dispatchers.IO) {
+            val url = "$base/api/player/page-layout/${encodeSeg(page)}" + (device?.let { "?device=$it" } ?: "")
+            execute(Request.Builder().url(url).delete().build()) { }
+        }
+
+    // ── Discover: tmdb's picks, the rows the web player's Movies and TV pages draw ──
+
+    /** picked from what this profile watches: titles it has and titles it doesn't */
+    suspend fun fetchDiscoverForYou(): MusicApiResult<List<ExtraTitle>> =
+        getJson("$base/api/video/discover/foryou") { body ->
+            json.decodeFromString<ExtraItemsResponse>(body).items
+        }
+
+    /** "more like <a title you own>" rails */
+    suspend fun fetchDiscoverMoreLike(): MusicApiResult<List<ExtraRail>> =
+        getJson("$base/api/video/discover/morelike") { body ->
+            json.decodeFromString<ExtraRailsResponse>(body).rails
+        }
+
+    /** a curated tmdb list by key: popular_movies, now_playing, upcoming_movies, top_movies, popular_shows, airing_today, on_the_air, top_shows */
+    suspend fun fetchDiscoverList(key: String, pages: Int = 2): MusicApiResult<List<ExtraTitle>> =
+        getJson("$base/api/video/discover/list?key=${encodeSeg(key)}&pages=$pages") { body ->
+            json.decodeFromString<ExtraItemsResponse>(body).items
+        }
+
     // ── Extras, Person, Notes, Guide Favorites & Discover Playlists ──────────
 
     suspend fun fetchTitleExtras(kind: String, id: Int): MusicApiResult<TitleExtras> =

@@ -1057,7 +1057,7 @@ fun PersonDetailScreen(
     }
 }
 
-private data class UnownedTitleTarget(
+internal data class UnownedTitleTarget(
     val kind: String, // "movie" | "show"
     val tmdbId: Int,
     val title: String,
@@ -1068,7 +1068,7 @@ private data class UnownedTitleTarget(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun UnownedTitleRequestSheet(
+internal fun UnownedTitleRequestSheet(
     target: UnownedTitleTarget,
     api: PlayerApiClient,
     onDeviceRevoked: () -> Unit,

@@ -1531,6 +1531,19 @@ data class ExtraTitle(
         get() = year?.content?.takeIf { it.isNotBlank() && it != "null" }
 }
 
+/** "more like <a title you own>": one rail of tmdb's picks */
+@Serializable
+data class ExtraRail(
+    val title: String = "",
+    val items: List<ExtraTitle> = emptyList(),
+)
+
+@Serializable
+internal data class ExtraItemsResponse(val items: List<ExtraTitle> = emptyList())
+
+@Serializable
+internal data class ExtraRailsResponse(val rails: List<ExtraRail> = emptyList())
+
 @Serializable
 data class FranchiseCollection(
     val id: Int = 0,

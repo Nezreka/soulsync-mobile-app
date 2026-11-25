@@ -100,6 +100,7 @@ fun MoviesScreen(
     var selectedCollection by remember { mutableStateOf<String?>(null) }
     var selectedStudioIds by remember { mutableStateOf<Set<Int>?>(null) }
     var gridView by remember { mutableStateOf(true) }
+    var pendingRequest by remember { mutableStateOf<UnownedTitleTarget?>(null) }
 
     LaunchedEffect(api) {
         if (HomeWarmCache.isCatalogFresh(api.baseUrl) && HomeWarmCache.studioCollections.isNotEmpty()) {
@@ -186,6 +187,15 @@ fun MoviesScreen(
         }
     }
 
+    pendingRequest?.let { target ->
+        UnownedTitleRequestSheet(
+            target = target,
+            api = api,
+            onDeviceRevoked = onDeviceRevoked,
+            onDismiss = { pendingRequest = null },
+        )
+    }
+
     Column(modifier = Modifier.fillMaxSize()) {
         BrowseHeaderAndTabs(
             title = "Movies",
@@ -201,65 +211,37 @@ fun MoviesScreen(
 
         when (tab) {
             VideoBrowseTab.FOR_YOU -> {
-                val recent = remember(movies) { movies.sortedByDescending { it.addedAt.orEmpty() }.take(20) }
-                val topRated = remember(movies) { movies.sortedByDescending { it.rating ?: 0.0 }.take(10) }
-                val topGenres = remember(genres) { genres.take(4) }
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(bottom = 28.dp),
-                ) {
-                    item {
-                        MediaRail("Recently Added", actionLabel = "Library", onAction = { tab = VideoBrowseTab.LIBRARY }) {
-                            items(recent, key = { it.id }) { m ->
-                                PosterCard(
-                                    title = m.title,
-                                    subtitle = m.year?.toString(),
-                                    artworkUrl = api.artwork.moviePoster(m.id),
-                                    badge = m.rating?.let { "%.1f".format(it) },
-                                    onClick = { onMovieClick(m.id) },
-                                )
-                            }
-                        }
-                    }
-                    item {
-                        MediaRail("Top 10 Highest Rated") {
-                            items(topRated.withIndex().toList(), key = { "top-${it.value.id}" }) { (idx, m) ->
-                                RankedPosterCard(
-                                    rank = idx + 1,
-                                    title = m.title,
-                                    artworkUrl = api.artwork.moviePoster(m.id),
-                                    onClick = { onMovieClick(m.id) },
-                                )
-                            }
-                        }
-                    }
-                    topGenres.forEach { g ->
-                        val itemsForGenre = movies.filter { it.genres.contains(g) }.take(18)
-                        if (itemsForGenre.size >= 3) {
-                            item(key = "g-$g") {
-                                MediaRail(
-                                    title = g,
-                                    actionLabel = "All",
-                                    onAction = {
-                                        selectedGenre = g
-                                        selectedDecade = null
-                                        selectedCollection = null
-                                        tab = VideoBrowseTab.LIBRARY
-                                    },
-                                ) {
-                                    items(itemsForGenre, key = { it.id }) { m ->
-                                        PosterCard(
-                                            title = m.title,
-                                            subtitle = m.year?.toString(),
-                                            artworkUrl = api.artwork.moviePoster(m.id),
-                                            onClick = { onMovieClick(m.id) },
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+                // the rows this page's layout names (the same layout the web player's Movies page draws)
+                VideoForYouRows(
+                    kind = "movie",
+                    api = api,
+                    movies = movies,
+                    shows = emptyList(),
+                    recentEpisodes = emptyList(),
+                    onOpen = onMovieClick,
+                    onSeeAll = { genre, decade ->
+                        selectedGenre = genre
+                        selectedDecade = decade
+                        selectedCollection = null
+                        tab = VideoBrowseTab.LIBRARY
+                    },
+                    onRequest = { extra ->
+                        pendingRequest = UnownedTitleTarget(
+                            kind = "movie",
+                            tmdbId = extra.tmdbId,
+                            title = extra.title,
+                            year = extra.yearText,
+                            posterUrl = api.artwork.resolve(extra.poster),
+                        )
+                    },
+                    makers = collections.map { it.key to it.value.first().id },
+                    onPickMaker = { name ->
+                        selectedGenre = null
+                        selectedDecade = null
+                        selectedCollection = name
+                        tab = VideoBrowseTab.LIBRARY
+                    },
+                )
             }
 
             VideoBrowseTab.LIBRARY -> {
@@ -431,6 +413,7 @@ fun TvScreen(
     var selectedDecade by remember { mutableStateOf<String?>(null) }
     var selectedNetwork by remember { mutableStateOf<String?>(null) }
     var gridView by remember { mutableStateOf(true) }
+    var pendingRequest by remember { mutableStateOf<UnownedTitleTarget?>(null) }
 
     LaunchedEffect(api) {
         if (HomeWarmCache.isCatalogFresh(api.baseUrl) && HomeWarmCache.studioCollections.isNotEmpty()) {
@@ -510,6 +493,15 @@ fun TvScreen(
         }
     }
 
+    pendingRequest?.let { target ->
+        UnownedTitleRequestSheet(
+            target = target,
+            api = api,
+            onDeviceRevoked = onDeviceRevoked,
+            onDismiss = { pendingRequest = null },
+        )
+    }
+
     Column(modifier = Modifier.fillMaxSize()) {
         BrowseHeaderAndTabs(
             title = "TV Shows",
@@ -525,82 +517,37 @@ fun TvScreen(
 
         when (tab) {
             VideoBrowseTab.FOR_YOU -> {
-                val recent = remember(shows) { shows.sortedByDescending { it.addedAt.orEmpty() }.take(20) }
-                val topRated = remember(shows) { shows.sortedByDescending { it.rating ?: 0.0 }.take(10) }
-                val topGenres = remember(genres) { genres.take(4) }
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(bottom = 28.dp),
-                ) {
-                    if (recentEpisodes.isNotEmpty()) {
-                        item {
-                            MediaRail("New Episodes") {
-                                items(recentEpisodes.take(18), key = { it.id }) { ep ->
-                                    val art = if (ep.hasStill) api.artwork.episodeStill(ep.id)
-                                    else api.artwork.showBackdrop(ep.showId)
-                                    WideMediaCard(
-                                        title = ep.showTitle,
-                                        subtitle = "S${ep.seasonNumber} E${ep.episodeNumber}" +
-                                            (ep.title?.let { " · $it" } ?: ""),
-                                        artworkUrl = art,
-                                        onClick = { onShowClick(ep.showId) },
-                                    )
-                                }
-                            }
-                        }
-                    }
-                    item {
-                        MediaRail("Recently Added Shows", actionLabel = "Library", onAction = { tab = VideoBrowseTab.LIBRARY }) {
-                            items(recent, key = { it.id }) { s ->
-                                PosterCard(
-                                    title = s.title,
-                                    subtitle = "${s.episodeCount} episodes",
-                                    artworkUrl = api.artwork.showPoster(s.id),
-                                    badge = s.rating?.let { "%.1f".format(it) },
-                                    onClick = { onShowClick(s.id) },
-                                )
-                            }
-                        }
-                    }
-                    item {
-                        MediaRail("Top 10 Highest Rated") {
-                            items(topRated.withIndex().toList(), key = { "top-${it.value.id}" }) { (idx, s) ->
-                                RankedPosterCard(
-                                    rank = idx + 1,
-                                    title = s.title,
-                                    artworkUrl = api.artwork.showPoster(s.id),
-                                    onClick = { onShowClick(s.id) },
-                                )
-                            }
-                        }
-                    }
-                    topGenres.forEach { g ->
-                        val itemsForGenre = shows.filter { it.genres.contains(g) }.take(18)
-                        if (itemsForGenre.size >= 2) {
-                            item(key = "g-$g") {
-                                MediaRail(
-                                    title = g,
-                                    actionLabel = "All",
-                                    onAction = {
-                                        selectedGenre = g
-                                        selectedDecade = null
-                                        selectedNetwork = null
-                                        tab = VideoBrowseTab.LIBRARY
-                                    },
-                                ) {
-                                    items(itemsForGenre, key = { it.id }) { s ->
-                                        PosterCard(
-                                            title = s.title,
-                                            subtitle = "${s.episodeCount} episodes",
-                                            artworkUrl = api.artwork.showPoster(s.id),
-                                            onClick = { onShowClick(s.id) },
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+                // the rows this page's layout names (the same layout the web player's TV page draws)
+                VideoForYouRows(
+                    kind = "show",
+                    api = api,
+                    movies = emptyList(),
+                    shows = shows,
+                    recentEpisodes = recentEpisodes,
+                    onOpen = onShowClick,
+                    onSeeAll = { genre, decade ->
+                        selectedGenre = genre
+                        selectedDecade = decade
+                        selectedNetwork = null
+                        tab = VideoBrowseTab.LIBRARY
+                    },
+                    onRequest = { extra ->
+                        pendingRequest = UnownedTitleTarget(
+                            kind = "show",
+                            tmdbId = extra.tmdbId,
+                            title = extra.title,
+                            year = extra.yearText,
+                            posterUrl = api.artwork.resolve(extra.poster),
+                        )
+                    },
+                    makers = networks.filter { it.value.size >= 2 }.map { it.key to it.value.first().id },
+                    onPickMaker = { name ->
+                        selectedGenre = null
+                        selectedDecade = null
+                        selectedNetwork = name
+                        tab = VideoBrowseTab.LIBRARY
+                    },
+                )
             }
 
             VideoBrowseTab.LIBRARY -> {
