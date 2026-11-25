@@ -1239,6 +1239,25 @@ data class PlayerSettings(
     /** places left out of the sidebar */
     @SerialName("sidebar_hidden")
     val sidebarHidden: List<String> = emptyList(),
+    /** what the admin set for everyone in player setup; filled in from the response, never sent */
+    @kotlinx.serialization.Transient
+    val server: ServerPrefs = ServerPrefs(),
+) {
+    /** this profile's own order, else the server's */
+    val effectiveSidebarOrder: List<String> get() = sidebarOrder.ifEmpty { server.sidebarOrder }
+
+    /** what the server hides for everyone, plus what this profile hid */
+    val effectiveSidebarHidden: Set<String> get() = (server.sidebarHidden + sidebarHidden).toSet()
+}
+
+/** the server-wide choices of player setup (SoulSync core/player/setup.py) */
+@Serializable
+data class ServerPrefs(
+    val name: String = "",
+    @SerialName("sidebar_order")
+    val sidebarOrder: List<String> = emptyList(),
+    @SerialName("sidebar_hidden")
+    val sidebarHidden: List<String> = emptyList(),
 )
 
 @Serializable
@@ -1801,7 +1820,7 @@ internal data class GuideFavoritesEnvelope(val channels: List<String> = emptyLis
 internal data class MusicChannelsEnvelope(val channels: List<MusicChannel> = emptyList())
 
 @Serializable
-internal data class PlayerSettingsEnvelope(val settings: PlayerSettings = PlayerSettings())
+internal data class PlayerSettingsEnvelope(val server: ServerPrefs = ServerPrefs(), val settings: PlayerSettings = PlayerSettings())
 
 @Serializable
 internal data class PresenceHeartbeatRequest(

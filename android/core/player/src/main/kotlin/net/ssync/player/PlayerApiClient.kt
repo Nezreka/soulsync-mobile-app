@@ -672,7 +672,7 @@ class PlayerApiClient(
 
     suspend fun fetchSettings(): MusicApiResult<PlayerSettings> =
         getJson("$base/api/player/settings") { body ->
-            json.decodeFromString<PlayerSettingsEnvelope>(body).settings
+            json.decodeFromString<PlayerSettingsEnvelope>(body).let { it.settings.copy(server = it.server) }
         }
 
     suspend fun saveSettings(settings: PlayerSettings): MusicApiResult<PlayerSettings> =

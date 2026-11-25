@@ -437,8 +437,9 @@ fun PlayerShell(
         }
         (api.fetchSettings() as? MusicApiResult.Success)?.let { s ->
             playerSettings = s.data
-            PlayerNavPrefs.order.value = s.data.sidebarOrder
-            PlayerNavPrefs.hidden.value = s.data.sidebarHidden.toSet()
+            PlayerNavPrefs.order.value = s.data.effectiveSidebarOrder
+            PlayerNavPrefs.hidden.value = s.data.effectiveSidebarHidden
+            if (s.data.server.name.isNotBlank()) PlayerNavPrefs.serverName.value = s.data.server.name
         }
     }
 
@@ -595,8 +596,7 @@ fun PlayerShell(
                                                 onUnpair = onUnpair,
                                                 onSettingsChanged = {
                                                     playerSettings = it
-                                                    PlayerNavPrefs.order.value = it.sidebarOrder
-                                                    PlayerNavPrefs.hidden.value = it.sidebarHidden.toSet()
+                                                    PlayerNavPrefs.order.value = it.sidebarOrder.ifEmpty { PlayerNavPrefs.order.value }
                                                 },
                                             )
                                         }
@@ -1621,6 +1621,9 @@ private fun SoulSyncAnimatedBrandMark(
 internal object PlayerNavPrefs {
     val order = mutableStateOf<List<String>>(emptyList())
     val hidden = mutableStateOf<Set<String>>(emptySet())
+
+    /** what the admin named the server (player setup); "SoulSync" until one is set */
+    val serverName = mutableStateOf("SoulSync")
 }
 
 /** one place in a sidebar section, by the id the web player uses for it */
@@ -1828,7 +1831,7 @@ private fun PlayerSidebar(
                     Spacer(modifier = Modifier.width(8.dp))
                     Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                         Text(
-                            text = "SoulSync",
+                            text = PlayerNavPrefs.serverName.value,
                             color = Color.White,
                             fontWeight = FontWeight.ExtraBold,
                             fontSize = 18.sp,
