@@ -239,6 +239,7 @@ fun CalendarScreen(
     api: PlayerApiClient,
     onNavigate: (PlayerDestination) -> Unit,
     onDeviceRevoked: () -> Unit,
+    coordinator: PlaybackCoordinator? = null,
 ) {
     val onOpenShow: (Int) -> Unit = { id -> onNavigate(PlayerDestination.ShowDetail(id)) }
     val onOpenMovie: (Int) -> Unit = { id -> onNavigate(PlayerDestination.MovieDetail(id)) }
@@ -360,6 +361,31 @@ fun CalendarScreen(
     val countMissing = allEntries.count { it.acq == "missing" }
     val countUpcoming = allEntries.count { it.acq == "upcoming" }
 
+    val isTv = net.ssync.pairing.ui.LocalIsTv.current
+    if (isTv && coordinator != null) {
+        TvCinemaCalendar(
+            api = api,
+            coordinator = coordinator,
+            weekStart = weekStart,
+            todayIso = todayIso,
+            weekDays = weekDays,
+            selectedDay = selectedDay,
+            loading = loading,
+            episodes = episodes,
+            movies = movies,
+            onSelectDay = { selectedDay = it },
+            onShiftWeek = { delta ->
+                weekStart = addCalendarDays(weekStart, delta)
+                selectedDay = null
+            },
+            onJumpToday = {
+                weekStart = addCalendarDays(todayIso, -5)
+                selectedDay = todayIso
+            },
+            onOpenEpisodeModal = { modalEpisode = it },
+            onOpenMovieModal = { modalMovie = it },
+        )
+    } else {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(bottom = 110.dp),
@@ -799,6 +825,7 @@ fun CalendarScreen(
                 }
             }
         }
+    }
     }
 
     modalEpisode?.let { ep ->

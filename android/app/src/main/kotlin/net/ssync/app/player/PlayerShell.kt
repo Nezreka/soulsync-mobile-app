@@ -438,7 +438,7 @@ fun PlayerShell(
                 .background(SoulSyncColors.BgPrimary),
         ) {
             val usePermanentSidebar = maxWidth >= 700.dp
-            val tvIsSpotlightHome = isTv && current is PlayerDestination.Home
+            val tvIsSpotlightHome = isTv && (current is PlayerDestination.Home || current is PlayerDestination.Calendar)
             val tvSidebarExpanded = isTv && (sidebarHasFocus || tvSidebarForcedOpen)
             val tvShowSidebarRail = isTv && (!tvSidebarHidden || tvSidebarExpanded)
             val tvContentStartPadding by animateDpAsState(
@@ -1833,7 +1833,7 @@ private fun PlayerContent(
             onEditorConsumed = onConsumeHomeEditor,
         )
         PlayerDestination.Guide -> GuideScreen(api, coordinator, onDeviceRevoked, onNavigate)
-        PlayerDestination.Calendar -> CalendarScreen(api, onNavigate, onDeviceRevoked)
+        PlayerDestination.Calendar -> CalendarScreen(api, onNavigate, onDeviceRevoked, coordinator = coordinator)
         PlayerDestination.Downloads -> DownloadsScreen(api, coordinator)
         PlayerDestination.AdminUsers -> AdminUsersScreen(api, coordinator, onDeviceRevoked)
         PlayerDestination.Movies -> MoviesScreen(api, { onNavigate(PlayerDestination.MovieDetail(it)) }, onDeviceRevoked)

@@ -1176,7 +1176,7 @@ private fun TvCinemaPosterTile(
  * Extracts a rich, cinema-tuned deep ambient hue from artwork so the full-screen canvas
  * shifts smoothly like Plex TV while guaranteeing high-contrast legibility for white text.
  */
-private fun extractCinemaAmbientColor(bitmap: Bitmap): Color {
+internal fun extractCinemaAmbientColor(bitmap: Bitmap): Color {
     val w = bitmap.width
     val h = bitmap.height
     if (w <= 0 || h <= 0) return Color(0xFF161326)
