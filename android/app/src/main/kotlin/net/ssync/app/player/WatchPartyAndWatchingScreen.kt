@@ -319,6 +319,7 @@ fun WatchingNowScreen(
                                 contentColor = SoulSyncColors.OnAccent,
                             ),
                             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+    modifier = Modifier.dpadFocusable(androidx.compose.foundation.shape.RoundedCornerShape(999.dp)),
                         ) {
                             Text("🍿 Open a Theater Room", fontSize = 12.5.sp, fontWeight = FontWeight.Bold)
                         }
@@ -444,7 +445,7 @@ fun WatchingNowScreen(
                                             contentColor = Color.Black,
                                         ),
                                         contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
-                                        modifier = Modifier.height(34.dp),
+                                        modifier = Modifier.height(34.dp).dpadFocusable(androidx.compose.foundation.shape.RoundedCornerShape(999.dp)),
                                     ) {
                                         Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
                                         Spacer(Modifier.width(4.dp))
@@ -459,7 +460,7 @@ fun WatchingNowScreen(
                                         shape = CircleShape,
                                         border = BorderStroke(1.dp, Color.White.copy(alpha = 0.28f)),
                                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                                        modifier = Modifier.height(34.dp),
+                                        modifier = Modifier.height(34.dp).dpadFocusable(androidx.compose.foundation.shape.RoundedCornerShape(999.dp)),
                                     ) {
                                         Text("Lounge", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                                     }
@@ -472,7 +473,7 @@ fun WatchingNowScreen(
                                             contentColor = Color.Black,
                                         ),
                                         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
-                                        modifier = Modifier.height(34.dp),
+                                        modifier = Modifier.height(34.dp).dpadFocusable(androidx.compose.foundation.shape.RoundedCornerShape(999.dp)),
                                     ) {
                                         Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
                                         Spacer(Modifier.width(4.dp))
@@ -643,7 +644,7 @@ fun WatchingNowScreen(
                                                     contentColor = Color.Black,
                                                 ),
                                                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
-                                                modifier = Modifier.height(28.dp),
+                                                modifier = Modifier.height(28.dp).dpadFocusable(androidx.compose.foundation.shape.RoundedCornerShape(999.dp)),
                                             ) {
                                                 Text("Resume", fontSize = 11.sp, fontWeight = FontWeight.ExtraBold)
                                             }
@@ -664,7 +665,7 @@ fun WatchingNowScreen(
                                                 shape = CircleShape,
                                                 border = BorderStroke(1.dp, SoulSyncColors.Accent.copy(alpha = 0.55f)),
                                                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
-                                                modifier = Modifier.height(28.dp),
+                                                modifier = Modifier.height(28.dp).dpadFocusable(androidx.compose.foundation.shape.RoundedCornerShape(999.dp)),
                                             ) {
                                                 Text("🍿 Party", color = SoulSyncColors.AccentLight, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                                             }
@@ -860,7 +861,7 @@ private fun CinemaWatchingCard(
                         shape = CircleShape,
                         colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black),
                         contentPadding = PaddingValues(horizontal = 14.dp, vertical = 5.dp),
-                        modifier = Modifier.height(34.dp),
+                        modifier = Modifier.height(34.dp).dpadFocusable(androidx.compose.foundation.shape.RoundedCornerShape(999.dp)),
                     ) {
                         Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(3.dp))
@@ -879,7 +880,7 @@ private fun CinemaWatchingCard(
                         shape = CircleShape,
                         border = BorderStroke(1.dp, Color.White.copy(alpha = 0.25f)),
                         contentPadding = PaddingValues(horizontal = 14.dp, vertical = 5.dp),
-                        modifier = Modifier.height(34.dp),
+                        modifier = Modifier.height(34.dp).dpadFocusable(androidx.compose.foundation.shape.RoundedCornerShape(999.dp)),
                     ) {
                         Text("Details", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                     }
@@ -1020,7 +1021,7 @@ private fun WatchPartyCinemaCard(
                 shape = CircleShape,
                 colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black),
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
-                modifier = Modifier.height(34.dp),
+                modifier = Modifier.height(34.dp).dpadFocusable(androidx.compose.foundation.shape.RoundedCornerShape(999.dp)),
             ) {
                 Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(modifier = Modifier.width(4.dp))
@@ -1119,7 +1120,7 @@ private fun CreateWatchPartyDialog(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text("Start a Watch Party", color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.ExtraBold)
-                    IconButton(onClick = onDismiss) {
+                    IconButton(onClick = onDismiss, modifier = Modifier.dpadFocusable(androidx.compose.foundation.shape.CircleShape),) {
                         Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White)
                     }
                 }
@@ -1258,7 +1259,7 @@ private fun CreateWatchPartyDialog(
                     enabled = picked != null && !creating,
                     shape = CircleShape,
                     colors = ButtonDefaults.buttonColors(containerColor = SoulSyncColors.Accent, contentColor = SoulSyncColors.OnAccent),
-                    modifier = Modifier.fillMaxWidth().height(46.dp),
+                    modifier = Modifier.fillMaxWidth().height(46.dp).dpadFocusable(androidx.compose.foundation.shape.RoundedCornerShape(999.dp)),
                 ) {
                     Text(
                         text = if (creating) "Opening…" else if (scheduleOffsetMin != null) "Schedule Watch Party" else "Open Theater Lobby",
@@ -1492,7 +1493,7 @@ private fun WatchPartyRoomDialog(
                         )
                         IconButton(
                             onClick = onDismiss,
-                            modifier = Modifier.align(Alignment.TopEnd).padding(6.dp),
+                            modifier = Modifier.align(Alignment.TopEnd).padding(6.dp).dpadFocusable(androidx.compose.foundation.shape.CircleShape),
                         ) {
                             Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White)
                         }
@@ -1656,7 +1657,7 @@ private fun WatchPartyRoomDialog(
                                                     contentColor = Color(0xFF041B11),
                                                 ),
                                                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                                                modifier = Modifier.height(34.dp),
+                                                modifier = Modifier.height(34.dp).dpadFocusable(androidx.compose.foundation.shape.RoundedCornerShape(999.dp)),
                                             ) {
                                                 Text("I'm Back (5s)", fontSize = 11.5.sp, fontWeight = FontWeight.ExtraBold)
                                             }
@@ -1765,7 +1766,7 @@ private fun WatchPartyRoomDialog(
                                             shape = CircleShape,
                                             border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f)),
                                             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
-                                            modifier = Modifier.height(30.dp),
+                                            modifier = Modifier.height(30.dp).dpadFocusable(androidx.compose.foundation.shape.RoundedCornerShape(999.dp)),
                                         ) {
                                             Text(
                                                 text = if (lobbyMuted) "Unmute" else "Mute",
@@ -1782,7 +1783,7 @@ private fun WatchPartyRoomDialog(
                                                         refreshRoom()
                                                     }
                                                 },
-                                                modifier = Modifier.size(32.dp),
+                                                modifier = Modifier.size(32.dp).dpadFocusable(androidx.compose.foundation.shape.CircleShape),
                                             ) {
                                                 Icon(Icons.Default.Shuffle, contentDescription = "Shuffle lobby track", tint = Color.White, modifier = Modifier.size(18.dp))
                                             }
@@ -1830,7 +1831,7 @@ private fun WatchPartyRoomDialog(
                                                 disabledContentColor = Color.White.copy(alpha = 0.55f),
                                             ),
                                             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                                            modifier = Modifier.weight(1.25f).height(38.dp),
+                                            modifier = Modifier.weight(1.25f).height(38.dp).dpadFocusable(androidx.compose.foundation.shape.RoundedCornerShape(999.dp)),
                                         ) {
                                             Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
                                             Spacer(modifier = Modifier.width(5.dp))
@@ -1856,7 +1857,7 @@ private fun WatchPartyRoomDialog(
                                                 if (me?.ready == true) Color(0x9934D399) else Color.White.copy(alpha = 0.18f),
                                             ),
                                             contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
-                                            modifier = Modifier.weight(0.9f).height(38.dp),
+                                            modifier = Modifier.weight(0.9f).height(38.dp).dpadFocusable(androidx.compose.foundation.shape.RoundedCornerShape(999.dp)),
                                         ) {
                                             if (me?.ready == true) {
                                                 Icon(Icons.Default.Check, contentDescription = null, tint = Color(0xFF6EE7B7), modifier = Modifier.size(15.dp))
@@ -1880,7 +1881,7 @@ private fun WatchPartyRoomDialog(
                                                 contentColor = Color(0xFF090C14),
                                             ),
                                             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                                            modifier = Modifier.weight(1f).height(38.dp),
+                                            modifier = Modifier.weight(1f).height(38.dp).dpadFocusable(androidx.compose.foundation.shape.RoundedCornerShape(999.dp)),
                                         ) {
                                             Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
                                             Spacer(modifier = Modifier.width(5.dp))
@@ -1900,7 +1901,7 @@ private fun WatchPartyRoomDialog(
                                             enabled = peeBreak == null || isMyPeeBreak || p.isHost,
                                             shape = CircleShape,
                                             border = BorderStroke(1.dp, SoulSyncColors.Line),
-                                            modifier = Modifier.height(44.dp),
+                                            modifier = Modifier.height(44.dp).dpadFocusable(androidx.compose.foundation.shape.RoundedCornerShape(999.dp)),
                                         ) {
                                             Text(
                                                 text = if (p.status == "playing") "⏸ Pause All" else "▶ Resume (5s)",
@@ -1925,7 +1926,7 @@ private fun WatchPartyRoomDialog(
                                             enabled = p.peeCooldownRemaining <= 0 && peeBreak == null,
                                             shape = CircleShape,
                                             border = BorderStroke(1.dp, Color(0xFFFBBF24).copy(alpha = 0.45f)),
-                                            modifier = Modifier.height(44.dp),
+                                            modifier = Modifier.height(44.dp).dpadFocusable(androidx.compose.foundation.shape.RoundedCornerShape(999.dp)),
                                         ) {
                                             Text(
                                                 text = if (p.peeCooldownRemaining > 0) "🚽 ${cooldownMin}m" else "🚽 5m",
@@ -1948,7 +1949,7 @@ private fun WatchPartyRoomDialog(
                                             },
                                             shape = CircleShape,
                                             border = BorderStroke(1.dp, Color(0xFFF43F5E).copy(alpha = 0.45f)),
-                                            modifier = Modifier.weight(1f).height(36.dp),
+                                            modifier = Modifier.weight(1f).height(36.dp).dpadFocusable(androidx.compose.foundation.shape.RoundedCornerShape(999.dp)),
                                         ) {
                                             Text("Leave Watch Party", color = Color(0xFFFDA4AF), fontSize = 12.sp, fontWeight = FontWeight.Bold)
                                         }
@@ -1964,7 +1965,7 @@ private fun WatchPartyRoomDialog(
                                             },
                                             shape = CircleShape,
                                             border = BorderStroke(1.dp, SoulSyncColors.Line),
-                                            modifier = Modifier.weight(1f).height(36.dp),
+                                            modifier = Modifier.weight(1f).height(36.dp).dpadFocusable(androidx.compose.foundation.shape.RoundedCornerShape(999.dp)),
                                         ) {
                                             Text("End Watch Party", color = SoulSyncColors.TextSecondary, fontSize = 12.sp)
                                         }
@@ -2101,6 +2102,7 @@ private fun WatchPartyRoomDialog(
                                         refreshRoom()
                                     }
                                 },
+    modifier = Modifier.dpadFocusable(androidx.compose.foundation.shape.CircleShape),
                             ) {
                                 Icon(Icons.Default.Send, contentDescription = "Send", tint = SoulSyncColors.AccentLight)
                             }

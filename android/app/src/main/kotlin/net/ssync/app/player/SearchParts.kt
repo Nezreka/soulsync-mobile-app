@@ -30,20 +30,32 @@ import androidx.compose.material.icons.filled.Podcasts
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SmartDisplay
 import androidx.compose.material.icons.filled.Tv
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -51,6 +63,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import net.ssync.pairing.theme.SoulSyncColors
+import net.ssync.pairing.ui.LocalIsTv
 import net.ssync.pairing.ui.dpadFocusable
 import org.json.JSONArray
 
@@ -113,6 +126,130 @@ fun SearchField(
     autoFocus: Boolean = true,
 ) {
     val focus = remember { FocusRequester() }
+    val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val isTv = LocalIsTv.current
+
+    if (isTv) {
+        // On Android TV, never put a bare BasicTextField in the main vertical D-pad focus path
+        // (Gboard steals D-pad Down/Up/Left/Right and traps navigation). Instead, render a crisp
+        // focusable Search Bar pill that opens a dedicated keyboard dialog on OK/Enter, then drops
+        // focus straight into the search results on Search/Done.
+        var showTvInput by remember { mutableStateOf(false) }
+        var draft by remember(value) { mutableStateOf(value) }
+        val tvBarFocus = remember { FocusRequester() }
+
+        LaunchedEffect(Unit) {
+            kotlinx.coroutines.delay(60L)
+            runCatching { tvBarFocus.requestFocus() }
+        }
+
+        Row(
+            modifier = modifier,
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .heightIn(min = 50.dp)
+                    .clip(CircleShape)
+                    .background(SoulSyncColors.PanelSolid)
+                    .border(1.dp, SoulSyncColors.LineStrong, CircleShape)
+                    .focusRequester(tvBarFocus)
+                    .dpadFocusable(CircleShape)
+                    .clickable {
+                        draft = value
+                        showTvInput = true
+                    }
+                    .padding(horizontal = 18.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(Icons.Default.Search, contentDescription = null, tint = SoulSyncColors.AccentLight, modifier = Modifier.size(20.dp))
+                Spacer(Modifier.width(12.dp))
+                Text(
+                    text = if (value.isBlank()) "Press OK to search everything…" else value,
+                    color = if (value.isBlank()) SoulSyncColors.TextSecondary else Color.White,
+                    fontSize = 16.sp,
+                    fontWeight = if (value.isBlank()) FontWeight.Normal else FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            if (value.isNotEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .size(46.dp)
+                        .clip(CircleShape)
+                        .background(SoulSyncColors.PanelSolid)
+                        .border(1.dp, SoulSyncColors.LineStrong, CircleShape)
+                        .dpadFocusable(CircleShape)
+                        .clickable { onValueChange("") },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(Icons.Default.Close, contentDescription = "Clear search", tint = Color.White, modifier = Modifier.size(20.dp))
+                }
+            }
+        }
+
+        if (showTvInput) {
+            val dialogInputFocus = remember { FocusRequester() }
+            LaunchedEffect(Unit) {
+                kotlinx.coroutines.delay(80L)
+                runCatching { dialogInputFocus.requestFocus() }
+            }
+            AlertDialog(
+                onDismissRequest = { showTvInput = false },
+                containerColor = SoulSyncColors.Surface,
+                title = { Text("Search SoulSync", color = Color.White, fontWeight = FontWeight.Bold) },
+                text = {
+                    OutlinedTextField(
+                        value = draft,
+                        onValueChange = {
+                            draft = it
+                            onValueChange(it)
+                        },
+                        singleLine = true,
+                        placeholder = { Text("Movies, shows, artists, albums, songs…") },
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                        keyboardActions = KeyboardActions(
+                            onSearch = {
+                                onValueChange(draft)
+                                onSubmit()
+                                keyboardController?.hide()
+                                showTvInput = false
+                            },
+                        ),
+                        modifier = Modifier.fillMaxWidth().focusRequester(dialogInputFocus),
+                    )
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            onValueChange(draft)
+                            onSubmit()
+                            keyboardController?.hide()
+                            showTvInput = false
+                        },
+                        modifier = Modifier.dpadFocusable(CircleShape),
+                    ) {
+                        Text("Search", color = SoulSyncColors.AccentLight, fontWeight = FontWeight.Bold)
+                    }
+                },
+                dismissButton = {
+                    TextButton(
+                        onClick = { showTvInput = false },
+                        modifier = Modifier.dpadFocusable(CircleShape),
+                    ) {
+                        Text("Cancel", color = SoulSyncColors.TextSecondary)
+                    }
+                },
+            )
+        }
+        return
+    }
+
     LaunchedEffect(Unit) {
         if (autoFocus) runCatching { focus.requestFocus() }
     }
@@ -122,6 +259,7 @@ fun SearchField(
             .clip(CircleShape)
             .background(SoulSyncColors.PanelSolid)
             .border(1.dp, SoulSyncColors.LineStrong, CircleShape)
+            .dpadFocusable(CircleShape)
             .padding(start = 16.dp, end = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -138,8 +276,48 @@ fun SearchField(
                 textStyle = TextStyle(color = SoulSyncColors.TextPrimary, fontSize = 16.sp),
                 cursorBrush = SolidColor(SoulSyncColors.Accent),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                keyboardActions = KeyboardActions(onSearch = { onSubmit() }),
-                modifier = Modifier.fillMaxWidth().focusRequester(focus),
+                keyboardActions = KeyboardActions(
+                    onSearch = {
+                        onSubmit()
+                        if (isTv) {
+                            keyboardController?.hide()
+                            if (!focusManager.moveFocus(FocusDirection.Down)) {
+                                focusManager.moveFocus(FocusDirection.Next)
+                            }
+                        }
+                    },
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .focusRequester(focus)
+                    .onPreviewKeyEvent { ev ->
+                        if (!isTv || ev.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                        when (ev.nativeKeyEvent.keyCode) {
+                            android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
+                                keyboardController?.hide()
+                                if (!focusManager.moveFocus(FocusDirection.Down)) {
+                                    focusManager.moveFocus(FocusDirection.Next)
+                                }
+                                true
+                            }
+                            android.view.KeyEvent.KEYCODE_DPAD_UP -> {
+                                keyboardController?.hide()
+                                focusManager.moveFocus(FocusDirection.Up)
+                                true
+                            }
+                            android.view.KeyEvent.KEYCODE_DPAD_LEFT -> {
+                                // Only escape left into sidebar when field is empty
+                                if (value.isEmpty()) {
+                                    keyboardController?.hide()
+                                    focusManager.moveFocus(FocusDirection.Left)
+                                    true
+                                } else {
+                                    false
+                                }
+                            }
+                            else -> false
+                        }
+                    },
             )
         }
         if (value.isNotEmpty()) {
@@ -147,6 +325,7 @@ fun SearchField(
                 modifier = Modifier
                     .size(38.dp)
                     .clip(CircleShape)
+                    .dpadFocusable(CircleShape)
                     .clickable { onValueChange("") },
                 contentAlignment = Alignment.Center,
             ) {
@@ -178,7 +357,7 @@ fun SearchStart(
                     "Clear",
                     color = SoulSyncColors.TextSoft,
                     fontSize = 13.sp,
-                    modifier = Modifier.clip(CircleShape).clickable { onClearRecent() }.padding(horizontal = 10.dp, vertical = 6.dp),
+                    modifier = Modifier.clip(CircleShape).dpadFocusable(CircleShape).clickable { onClearRecent() }.padding(horizontal = 10.dp, vertical = 6.dp),
                 )
             }
             recent.forEach { r ->
@@ -200,10 +379,11 @@ fun SearchStart(
         }
         if (browse.isNotEmpty()) {
             SearchGroupLabel("Browse")
-            browse.chunked(2).forEach { pair ->
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-                    pair.forEach { t -> BrowseTile(t, Modifier.weight(1f)) { onBrowse(t.destination) } }
-                    if (pair.size == 1) Spacer(Modifier.weight(1f))
+            val cols = if (LocalIsTv.current) 4 else 2
+            browse.chunked(cols).forEach { row ->
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+                    row.forEach { t -> BrowseTile(t, Modifier.weight(1f)) { onBrowse(t.destination) } }
+                    repeat(cols - row.size) { Spacer(Modifier.weight(1f)) }
                 }
             }
         }

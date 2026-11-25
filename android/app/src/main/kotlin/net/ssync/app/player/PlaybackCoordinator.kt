@@ -64,6 +64,10 @@ class PlaybackCoordinator(
     var durationMs by mutableLongStateOf(0L)
     var playbackSpeed by mutableFloatStateOf(1.0f)
         private set
+    var shuffleEnabled by mutableStateOf(false)
+        private set
+    var repeatMode by mutableStateOf(androidx.media3.common.Player.REPEAT_MODE_OFF)
+        private set
     var showAudioSheet by mutableStateOf(false)
     var showVideoOverlay by mutableStateOf(false)
     var isVideoMinimized by mutableStateOf(false)
@@ -108,11 +112,11 @@ class PlaybackCoordinator(
                     reportPresence(item, paused = false)
                     return@launch
                 }
-                startLocalAudio(item)
+                startLocalAudio(resolvedItem)
             }
             return
         }
-        startLocalAudio(item)
+        startLocalAudio(resolvedItem)
     }
 
     /** Append a track to the active playback queue (or start playing if nothing is active). */
@@ -437,6 +441,93 @@ class PlaybackCoordinator(
         controllerProvider()?.setPlaybackSpeed(next)
     }
 
+    fun toggleShuffle() {
+        val next = !shuffleEnabled
+        shuffleEnabled = next
+        controllerProvider()?.shuffleModeEnabled = next
+    }
+
+    fun cycleRepeatMode() {
+        val next = when (repeatMode) {
+            androidx.media3.common.Player.REPEAT_MODE_OFF -> androidx.media3.common.Player.REPEAT_MODE_ALL
+            androidx.media3.common.Player.REPEAT_MODE_ALL -> androidx.media3.common.Player.REPEAT_MODE_ONE
+            else -> androidx.media3.common.Player.REPEAT_MODE_OFF
+        }
+        repeatMode = next
+        controllerProvider()?.repeatMode = next
+    }
+
+    private fun fromMediaItem(mediaItem: MediaItem): ActivePlayable {
+        val meta = mediaItem.mediaMetadata
+        val extras = meta.extras
+        val itemType = extras?.getString("itemType")?.takeIf { it.isNotBlank() } ?: "track"
+        val parentId = extras?.getString("parentId")?.takeIf { it.isNotBlank() }
+        val artUrl = extras?.getString("artworkUrl")?.takeIf { it.isNotBlank() }
+            ?: meta.artworkUri?.toString()?.takeIf { it.isNotBlank() }
+        val stream = mediaItem.localConfiguration?.uri?.toString().orEmpty()
+        return ActivePlayable(
+            itemType = itemType,
+            itemId = mediaItem.mediaId,
+            title = meta.title?.toString()?.takeIf { it.isNotBlank() } ?: "Track",
+            subtitle = meta.artist?.toString().orEmpty(),
+            artworkUrl = artUrl,
+            streamUrl = stream,
+            isVideo = false,
+            parentId = parentId,
+        )
+    }
+
+    /**
+     * Rehydrates [activeItem], [queue], position, duration, and transport state directly from
+     * Media3's live [MediaController]. Called when the Activity resumes (e.g. unlocking the phone
+     * in the car over Bluetooth), when MediaController connects, or on any Player.Listener event.
+     */
+    fun rehydrateFromController() {
+        if (audioOnCast) return
+        val controller = controllerProvider() ?: return
+        val cur = activeItem
+        if (cur != null && cur.isVideo) return
+
+        val currentMedia = controller.currentMediaItem ?: return
+        val playingOrReady = controller.isPlaying ||
+            controller.playbackState == androidx.media3.common.Player.STATE_READY ||
+            controller.playbackState == androidx.media3.common.Player.STATE_BUFFERING
+
+        if (cur == null && !playingOrReady) return
+
+        // Rebuild queue if empty or out of sync with MediaController's live playlist
+        val count = controller.mediaItemCount
+        if (count > 0 && (queue.isEmpty() || queue.none { it.itemId == currentMedia.mediaId })) {
+            val rebuilt = buildList(count) {
+                for (i in 0 until count) {
+                    val mi = controller.getMediaItemAt(i)
+                    val existing = queue.firstOrNull { it.itemId == mi.mediaId }
+                    add(existing ?: fromMediaItem(mi))
+                }
+            }
+            if (rebuilt.isNotEmpty()) queue = rebuilt
+        }
+
+        val resolved = queue.firstOrNull { it.itemId == currentMedia.mediaId } ?: fromMediaItem(currentMedia)
+        if (activeItem?.itemId != resolved.itemId) {
+            activeItem = resolved
+            lyricsText = null
+            if (resolved.itemType == "track") {
+                scope.launch {
+                    val res = api.fetchTrackLyrics(resolved.itemId)
+                    if (res is MusicApiResult.Success && activeItem?.itemId == resolved.itemId) {
+                        lyricsText = res.data
+                    }
+                }
+            }
+        }
+        positionMs = controller.currentPosition.coerceAtLeast(0L)
+        durationMs = controller.duration.coerceAtLeast(0L)
+        isPlaying = controller.isPlaying
+        shuffleEnabled = controller.shuffleModeEnabled
+        repeatMode = controller.repeatMode
+    }
+
     private var lastAudioPresenceBeatMs = 0L
 
     /** the audio is on a cast device: the local controller holds a paused old item */
@@ -445,16 +536,25 @@ class PlaybackCoordinator(
     private var wasPlayingAudio = false
 
     fun syncAudioProgress() {
-        var item = activeItem ?: return
-        if (item.isVideo) return
         // the tv is playing it: the paused local player says nothing true about it
         if (audioOnCast) return
         val controller = controllerProvider() ?: return
-        // the queue moved on (skip, auto-advance, crossfade): what's playing is
-        // the controller's item, not the one this started with
-        val playingId = controller.currentMediaItem?.mediaId
+        var item = activeItem
+        if (item == null) {
+            rehydrateFromController()
+            item = activeItem ?: return
+        }
+        if (item.isVideo) return
+
+        // the queue moved on (skip, auto-advance, Bluetooth AVRCP, crossfade):
+        // ALWAYS sync to controller.currentMediaItem even if queue was recreated!
+        val currentMedia = controller.currentMediaItem
+        val playingId = currentMedia?.mediaId
         if (playingId != null && playingId != item.itemId) {
-            val next = queue.firstOrNull { it.itemId == playingId } ?: return
+            val next = queue.firstOrNull { it.itemId == playingId } ?: fromMediaItem(currentMedia)
+            if (queue.none { it.itemId == playingId }) {
+                rehydrateFromController()
+            }
             activeItem = next
             item = next
             lyricsText = null
@@ -464,10 +564,13 @@ class PlaybackCoordinator(
                     if (res is MusicApiResult.Success && activeItem?.itemId == next.itemId) lyricsText = res.data
                 }
             }
+            reportPresence(next, paused = !controller.isPlaying, overridePositionMs = 0L, overrideDurationMs = controller.duration.coerceAtLeast(0L))
         }
         positionMs = controller.currentPosition.coerceAtLeast(0L)
         durationMs = controller.duration.coerceAtLeast(0L)
         isPlaying = controller.isPlaying
+        shuffleEnabled = controller.shuffleModeEnabled
+        repeatMode = controller.repeatMode
 
         val now = System.currentTimeMillis()
         if (now - lastAudioPresenceBeatMs >= 10_000L) {
@@ -534,18 +637,20 @@ class PlaybackCoordinator(
         val extras = android.os.Bundle().apply {
             putString("itemType", item.itemType)
             if (!item.parentId.isNullOrBlank()) putString("parentId", item.parentId)
+            if (!item.artworkUrl.isNullOrBlank()) putString("artworkUrl", item.artworkUrl)
+        }
+        val metaBuilder = MediaMetadata.Builder()
+            .setTitle(item.title)
+            .setArtist(item.subtitle)
+            .setExtras(extras)
+        if (!item.artworkUrl.isNullOrBlank()) {
+            runCatching { metaBuilder.setArtworkUri(android.net.Uri.parse(item.artworkUrl)) }
         }
         return MediaItem.Builder()
             .setMediaId(item.itemId)
             .setUri(item.streamUrl)
             .setCustomCacheKey("${item.itemType}:${item.itemId}")
-            .setMediaMetadata(
-                MediaMetadata.Builder()
-                    .setTitle(item.title)
-                    .setArtist(item.subtitle)
-                    .setExtras(extras)
-                    .build(),
-            )
+            .setMediaMetadata(metaBuilder.build())
             .build()
     }
 }

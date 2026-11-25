@@ -1,5 +1,7 @@
 package net.ssync.app.player
 
+import net.ssync.pairing.ui.dpadFocusable
+
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -122,7 +124,7 @@ internal fun TrackRowActionIcons(
     ) {
         IconButton(
             onClick = { scope.launch { likedState.toggle(song) } },
-            modifier = Modifier.size(34.dp),
+            modifier = Modifier.size(34.dp).dpadFocusable(androidx.compose.foundation.shape.CircleShape),
         ) {
             Icon(
                 imageVector = if (liked) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
@@ -141,7 +143,7 @@ internal fun TrackRowActionIcons(
                         justQueued = false
                     }
                 },
-                modifier = Modifier.size(34.dp),
+                modifier = Modifier.size(34.dp).dpadFocusable(androidx.compose.foundation.shape.CircleShape),
             ) {
                 Icon(
                     imageVector = if (justQueued) Icons.Default.Check else Icons.Default.QueueMusic,
@@ -153,7 +155,7 @@ internal fun TrackRowActionIcons(
         }
         IconButton(
             onClick = { onAddToPlaylist(song) },
-            modifier = Modifier.size(34.dp),
+            modifier = Modifier.size(34.dp).dpadFocusable(androidx.compose.foundation.shape.CircleShape),
         ) {
             Icon(
                 imageVector = Icons.AutoMirrored.Filled.PlaylistAdd,
@@ -178,7 +180,7 @@ internal fun TrackRowActionIcons(
             )
             IconButton(
                 onClick = { showReport = true },
-                modifier = Modifier.size(32.dp),
+                modifier = Modifier.size(32.dp).dpadFocusable(androidx.compose.foundation.shape.CircleShape),
             ) {
                 Icon(
                     imageVector = Icons.Default.Flag,
@@ -221,7 +223,7 @@ internal fun AddToPlaylistSheet(
         loading = false
     }
 
-    ModalBottomSheet(
+    AdaptiveTvSheet(
         onDismissRequest = onDismiss,
         containerColor = SoulSyncColors.Surface,
         contentColor = SoulSyncColors.TextPrimary,

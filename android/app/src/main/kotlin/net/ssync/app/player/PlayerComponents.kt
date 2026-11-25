@@ -43,25 +43,39 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import net.ssync.pairing.theme.SoulSyncColors
+import net.ssync.pairing.ui.LocalIsTv
+import net.ssync.pairing.ui.dpadCardFocusable
 import net.ssync.pairing.ui.dpadFocusable
 
 @Composable
@@ -70,17 +84,18 @@ fun SectionHeader(
     actionLabel: String? = null,
     onAction: (() -> Unit)? = null,
 ) {
+    val isTv = LocalIsTv.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 18.dp, vertical = 6.dp),
+            .padding(horizontal = if (isTv) 24.dp else 18.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
             text = title,
             color = SoulSyncColors.TextPrimary,
             fontWeight = FontWeight.Bold,
-            fontSize = 18.sp,
+            fontSize = if (isTv) 17.sp else 18.sp,
             letterSpacing = (-0.2).sp,
             modifier = Modifier.weight(1f),
         )
@@ -104,11 +119,15 @@ fun MediaRail(
     onAction: (() -> Unit)? = null,
     content: LazyListScope.() -> Unit,
 ) {
-    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+    val isTv = LocalIsTv.current
+    Column(modifier = Modifier.fillMaxWidth().padding(vertical = if (isTv) 10.dp else 8.dp)) {
         SectionHeader(title = title, actionLabel = actionLabel, onAction = onAction)
         LazyRow(
-            contentPadding = PaddingValues(horizontal = 18.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            contentPadding = PaddingValues(
+                horizontal = if (isTv) 24.dp else 18.dp,
+                vertical = if (isTv) 10.dp else 0.dp,
+            ),
+            horizontalArrangement = Arrangement.spacedBy(if (isTv) 16.dp else 12.dp),
             content = content,
         )
     }
@@ -131,19 +150,22 @@ fun HeroSpotlight(
     onDetails: (() -> Unit)? = null,
     onToggleWatchlist: (() -> Unit)? = null,
     backgroundVideo: (@Composable () -> Unit)? = null,
+    playButtonModifier: Modifier = Modifier,
 ) {
+    val isTv = LocalIsTv.current
     val chips = subtitle.split("•").map { it.trim() }.filter { it.isNotEmpty() }
     val imageLoader = LocalSoulSyncImageLoader.current
     val context = LocalContext.current
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(430.dp)
+            .height(if (isTv) 272.dp else 430.dp)
             .background(SoulSyncColors.BgPrimary),
     ) {
         SoulSyncArtwork(
             url = backdropUrl,
             contentDescription = title,
+            maxPx = 1920,
             modifier = Modifier.fillMaxSize(),
         )
         backgroundVideo?.invoke()
@@ -165,7 +187,12 @@ fun HeroSpotlight(
             modifier = Modifier
                 .align(Alignment.BottomStart)
                 .fillMaxWidth()
-                .padding(horizontal = 18.dp, vertical = 20.dp),
+                .padding(
+                    start = if (isTv) 24.dp else 18.dp,
+                    end = if (isTv) 24.dp else 18.dp,
+                    top = if (isTv) 14.dp else 20.dp,
+                    bottom = if (isTv) 16.dp else 20.dp,
+                ),
         ) {
             if (!eyebrow.isNullOrBlank()) {
                 Box(
@@ -185,10 +212,12 @@ fun HeroSpotlight(
                 Spacer(modifier = Modifier.height(10.dp))
             }
 
-            if (!logoUrl.isNullOrBlank() && imageLoader != null) {
+            if (!logoUrl.isNullOrBlank()) {
                 SubcomposeAsyncImage(
                     model = ImageRequest.Builder(context)
                         .data(logoUrl)
+                        .size(1080)
+                        .precision(coil.size.Precision.INEXACT)
                         .crossfade(true)
                         .build(),
                     imageLoader = imageLoader,
@@ -245,62 +274,147 @@ fun HeroSpotlight(
             }
             Spacer(modifier = Modifier.height(16.dp))
             Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Button(
-                    onClick = onPlay,
-                    shape = RoundedCornerShape(999.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Color.White,
-                        contentColor = Color.Black,
-                    ),
-                    contentPadding = PaddingValues(horizontal = 18.dp, vertical = 9.dp),
-                    modifier = Modifier.height(38.dp).dpadFocusable(RoundedCornerShape(999.dp)),
+                var playFocused by remember { mutableStateOf(false) }
+                val playScale by androidx.compose.animation.core.animateFloatAsState(
+                    targetValue = if (playFocused) 1.05f else 1f,
+                    animationSpec = androidx.compose.animation.core.tween(180),
+                    label = "heroPlayScale",
+                )
+                val playBg by androidx.compose.animation.animateColorAsState(
+                    targetValue = if (playFocused) SoulSyncColors.Accent else Color.White,
+                    animationSpec = androidx.compose.animation.core.tween(160),
+                    label = "heroPlayBg",
+                )
+                val playFg by androidx.compose.animation.animateColorAsState(
+                    targetValue = if (playFocused) Color.White else Color.Black,
+                    animationSpec = androidx.compose.animation.core.tween(160),
+                    label = "heroPlayFg",
+                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center,
+                    modifier = playButtonModifier
+                        .height(40.dp)
+                        .graphicsLayer {
+                            scaleX = playScale
+                            scaleY = playScale
+                        }
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(playBg)
+                        .onFocusChanged { playFocused = it.isFocused }
+                        .clickable(onClick = onPlay)
+                        .padding(horizontal = 20.dp),
                 ) {
-                    Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Icon(
+                        Icons.Default.PlayArrow,
+                        contentDescription = null,
+                        tint = playFg,
+                        modifier = Modifier.size(18.dp),
+                    )
                     Spacer(modifier = Modifier.width(5.dp))
-                    Text("Play", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    Text("Play", color = playFg, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                 }
                 if (onDetails != null) {
-                    OutlinedButton(
-                        onClick = onDetails,
-                        shape = RoundedCornerShape(999.dp),
-                        colors = ButtonDefaults.outlinedButtonColors(
-                            containerColor = SoulSyncColors.PanelGlass,
-                            contentColor = SoulSyncColors.TextPrimary,
-                        ),
-                        border = BorderStroke(1.dp, SoulSyncColors.LineStrong),
-                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 9.dp),
-                        modifier = Modifier.height(38.dp).dpadFocusable(RoundedCornerShape(999.dp)),
+                    var detailsFocused by remember { mutableStateOf(false) }
+                    val detailsScale by androidx.compose.animation.core.animateFloatAsState(
+                        targetValue = if (detailsFocused) 1.05f else 1f,
+                        animationSpec = androidx.compose.animation.core.tween(180),
+                        label = "heroDetailsScale",
+                    )
+                    val detailsBg by androidx.compose.animation.animateColorAsState(
+                        targetValue = if (detailsFocused) Color.White else SoulSyncColors.PanelGlass,
+                        animationSpec = androidx.compose.animation.core.tween(160),
+                        label = "heroDetailsBg",
+                    )
+                    val detailsFg by androidx.compose.animation.animateColorAsState(
+                        targetValue = if (detailsFocused) Color.Black else SoulSyncColors.TextPrimary,
+                        animationSpec = androidx.compose.animation.core.tween(160),
+                        label = "heroDetailsFg",
+                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center,
+                        modifier = Modifier
+                            .height(40.dp)
+                            .graphicsLayer {
+                                scaleX = detailsScale
+                                scaleY = detailsScale
+                            }
+                            .clip(RoundedCornerShape(999.dp))
+                            .background(detailsBg)
+                            .then(
+                                if (detailsFocused) Modifier
+                                else Modifier.border(1.dp, SoulSyncColors.LineStrong, RoundedCornerShape(999.dp)),
+                            )
+                            .onFocusChanged { detailsFocused = it.isFocused }
+                            .clickable(onClick = onDetails)
+                            .padding(horizontal = 16.dp),
                     ) {
-                        Icon(Icons.Default.Info, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Icon(
+                            Icons.Default.Info,
+                            contentDescription = null,
+                            tint = detailsFg,
+                            modifier = Modifier.size(16.dp),
+                        )
                         Spacer(modifier = Modifier.width(5.dp))
-                        Text("Details", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                        Text("Details", color = detailsFg, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
                     }
                 }
                 if (onToggleWatchlist != null) {
+                    var watchlistFocused by remember { mutableStateOf(false) }
+                    val watchlistScale by androidx.compose.animation.core.animateFloatAsState(
+                        targetValue = if (watchlistFocused) 1.07f else 1f,
+                        animationSpec = androidx.compose.animation.core.tween(180),
+                        label = "heroWatchlistScale",
+                    )
+                    val watchlistBg by androidx.compose.animation.animateColorAsState(
+                        targetValue = when {
+                            watchlistFocused && inWatchlist -> SoulSyncColors.Accent
+                            watchlistFocused -> Color.White
+                            inWatchlist -> SoulSyncColors.Accent.copy(alpha = 0.22f)
+                            else -> SoulSyncColors.PanelGlass
+                        },
+                        animationSpec = androidx.compose.animation.core.tween(160),
+                        label = "heroWatchlistBg",
+                    )
+                    val watchlistFg by androidx.compose.animation.animateColorAsState(
+                        targetValue = when {
+                            watchlistFocused && inWatchlist -> Color.White
+                            watchlistFocused -> Color.Black
+                            inWatchlist -> SoulSyncColors.AccentLight
+                            else -> Color.White
+                        },
+                        animationSpec = androidx.compose.animation.core.tween(160),
+                        label = "heroWatchlistFg",
+                    )
                     Box(
                         modifier = Modifier
-                            .size(38.dp)
+                            .size(40.dp)
+                            .graphicsLayer {
+                                scaleX = watchlistScale
+                                scaleY = watchlistScale
+                            }
                             .clip(CircleShape)
-                            .background(
-                                if (inWatchlist) SoulSyncColors.Accent.copy(alpha = 0.22f)
-                                else SoulSyncColors.PanelGlass,
+                            .background(watchlistBg)
+                            .then(
+                                if (watchlistFocused) Modifier
+                                else Modifier.border(
+                                    1.dp,
+                                    if (inWatchlist) SoulSyncColors.AccentLight else SoulSyncColors.LineStrong,
+                                    CircleShape,
+                                ),
                             )
-                            .border(
-                                1.dp,
-                                if (inWatchlist) SoulSyncColors.AccentLight else SoulSyncColors.LineStrong,
-                                CircleShape,
-                            )
-                            .dpadFocusable(CircleShape)
+                            .onFocusChanged { watchlistFocused = it.isFocused }
                             .clickable(onClick = onToggleWatchlist),
                         contentAlignment = Alignment.Center,
                     ) {
                         Icon(
                             imageVector = if (inWatchlist) Icons.Default.BookmarkAdded else Icons.Default.BookmarkAdd,
                             contentDescription = if (inWatchlist) "In Watchlist" else "Add to Watchlist",
-                            tint = if (inWatchlist) SoulSyncColors.AccentLight else Color.White,
+                            tint = watchlistFg,
                             modifier = Modifier.size(18.dp),
                         )
                     }
@@ -352,7 +466,7 @@ fun PosterCard(
     Column(
         modifier = Modifier
             .width(width)
-            .dpadFocusable(RoundedCornerShape(10.dp))
+            .dpadCardFocusable(RoundedCornerShape(10.dp))
             .combinedClickable(
                 onClick = onClick,
                 onLongClick = contextItem?.let { ci ->
@@ -452,7 +566,7 @@ fun SquareMediaCard(
     Column(
         modifier = Modifier
             .width(width)
-            .dpadFocusable(RoundedCornerShape(10.dp))
+            .dpadCardFocusable(RoundedCornerShape(10.dp))
             .combinedClickable(
                 onClick = onClick,
                 onLongClick = contextItem?.let { ci ->
@@ -503,6 +617,8 @@ fun WideMediaCard(
     title: String,
     subtitle: String? = null,
     artworkUrl: String?,
+    fallbackArtworkUrl: String? = null,
+    secondaryFallbackArtworkUrl: String? = null,
     progress: Float? = null,
     width: Dp = 228.dp,
     contextItem: MediaContextItem? = null,
@@ -513,7 +629,7 @@ fun WideMediaCard(
     Column(
         modifier = Modifier
             .width(width)
-            .dpadFocusable(RoundedCornerShape(10.dp))
+            .dpadCardFocusable(RoundedCornerShape(10.dp))
             .combinedClickable(
                 onClick = onClick,
                 onLongClick = contextItem?.let { ci ->
@@ -533,6 +649,8 @@ fun WideMediaCard(
             Box(Modifier.fillMaxSize()) {
                 SoulSyncArtwork(
                     url = artworkUrl,
+                    fallbackUrl = fallbackArtworkUrl,
+                    secondaryFallbackUrl = secondaryFallbackArtworkUrl,
                     contentDescription = title,
                     modifier = Modifier.fillMaxSize(),
                 )
@@ -608,9 +726,6 @@ fun RankedPosterCard(
     onClick: () -> Unit,
 ) {
     Row(
-        modifier = Modifier
-            .dpadFocusable(RoundedCornerShape(10.dp))
-            .clickable(onClick = onClick),
         verticalAlignment = Alignment.Bottom,
     ) {
         Text(
@@ -642,5 +757,82 @@ fun LoadingBox() {
 fun EmptyBox(message: String) {
     Box(Modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
         Text(text = message, style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
+/**
+ * Adaptive modal surface:
+ * - On Android TV (`LocalIsTv.current == true`): renders an Apple TV / Plex-style right-docked
+ *   frosted-glass cinema side panel that glides in smoothly with Back dismissal (never a stretched
+ *   mobile bottom sheet with a touch drag handle).
+ * - On Phone / Tablet: renders the standard Material3 `ModalBottomSheet`.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun AdaptiveTvSheet(
+    onDismissRequest: () -> Unit,
+    containerColor: Color = SoulSyncColors.Surface,
+    contentColor: Color = Color.White,
+    panelWidth: Dp = 440.dp,
+    content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit,
+) {
+    val isTv = LocalIsTv.current
+    if (isTv) {
+        var visible by remember { mutableStateOf(false) }
+        LaunchedEffect(Unit) { visible = true }
+        Dialog(
+            onDismissRequest = onDismissRequest,
+            properties = DialogProperties(usePlatformDefaultWidth = false),
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.56f)),
+                contentAlignment = Alignment.CenterEnd,
+            ) {
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = visible,
+                    enter = androidx.compose.animation.fadeIn(
+                        androidx.compose.animation.core.tween(200),
+                    ) + androidx.compose.animation.slideInHorizontally(
+                        animationSpec = androidx.compose.animation.core.tween(240),
+                        initialOffsetX = { it / 2 },
+                    ),
+                    exit = androidx.compose.animation.fadeOut(
+                        androidx.compose.animation.core.tween(160),
+                    ),
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .width(panelWidth)
+                            .fillMaxSize()
+                            .clip(RoundedCornerShape(topStart = 24.dp, bottomStart = 24.dp))
+                            .background(
+                                Brush.verticalGradient(
+                                    listOf(
+                                        containerColor.copy(alpha = 0.97f),
+                                        Color(0xFA0B0F1A),
+                                    ),
+                                ),
+                            )
+                            .border(
+                                1.dp,
+                                Color.White.copy(alpha = 0.14f),
+                                RoundedCornerShape(topStart = 24.dp, bottomStart = 24.dp),
+                            )
+                            .padding(vertical = 22.dp, horizontal = 8.dp),
+                        content = content,
+                    )
+                }
+            }
+        }
+    } else {
+        ModalBottomSheet(
+            onDismissRequest = onDismissRequest,
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+            containerColor = containerColor,
+            contentColor = contentColor,
+            content = content,
+        )
     }
 }

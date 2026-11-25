@@ -72,7 +72,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import net.ssync.pairing.theme.SoulSyncColors
+import net.ssync.pairing.ui.LocalIsTv
 import net.ssync.pairing.ui.dpadFocusable
 import net.ssync.player.CatalogMovie
 import net.ssync.player.CatalogShow
@@ -1986,6 +1989,24 @@ fun GuideScreen(
 
     val hScroll = rememberScrollState()
     val timeFmt = remember { SimpleDateFormat("h:mm a", Locale.getDefault()) }
+    val isTv = LocalIsTv.current
+    var showTvFilterDialog by remember { mutableStateOf(false) }
+    val firstChannelFocus = remember { FocusRequester() }
+    val tuneInFocus = remember { FocusRequester() }
+    val firstChannelId = groupedSections.firstOrNull()?.channels?.firstOrNull()?.id
+
+    LaunchedEffect(isTv, firstChannelId) {
+        if (isTv && firstChannelId != null && picked == null) {
+            delay(120L)
+            runCatching { firstChannelFocus.requestFocus() }
+        }
+    }
+    LaunchedEffect(picked, isTv) {
+        if (isTv && picked != null) {
+            delay(80L)
+            runCatching { tuneInFocus.requestFocus() }
+        }
+    }
 
     Column(modifier = Modifier.fillMaxSize()) {
         // Header + Grid / On now switcher + Desktop-parity filter pills
@@ -2008,11 +2029,30 @@ fun GuideScreen(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
+                    if (isTv) {
+                        Box(
+                            modifier = Modifier
+                                .clip(CircleShape)
+                                .background(if (channelQuery.isNotBlank()) SoulSyncColors.Accent.copy(alpha = 0.25f) else Color.White.copy(alpha = 0.08f))
+                                .border(1.dp, if (channelQuery.isNotBlank()) SoulSyncColors.AccentLight else SoulSyncColors.Line, CircleShape)
+                                .dpadFocusable(CircleShape)
+                                .clickable { showTvFilterDialog = true }
+                                .padding(horizontal = 11.dp, vertical = 6.dp),
+                        ) {
+                            Text(
+                                text = if (channelQuery.isNotBlank()) "Filter: $channelQuery" else "Filter",
+                                color = Color.White,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                            )
+                        }
+                    }
                     Box(
                         modifier = Modifier
                             .clip(CircleShape)
                             .background(SoulSyncColors.Accent.copy(alpha = 0.22f))
                             .border(1.dp, SoulSyncColors.AccentLight.copy(alpha = 0.65f), CircleShape)
+                            .dpadFocusable(CircleShape)
                             .clickable { showMakeChannelDialog = true }
                             .padding(horizontal = 11.dp, vertical = 6.dp),
                     ) {
@@ -2037,6 +2077,7 @@ fun GuideScreen(
                                 modifier = Modifier
                                     .clip(CircleShape)
                                     .background(if (on) SoulSyncColors.Accent.copy(alpha = 0.24f) else Color.Transparent)
+                                    .dpadFocusable(CircleShape)
                                     .clickable { viewMode = mode }
                                     .padding(horizontal = 10.dp, vertical = 5.dp),
                                 verticalAlignment = Alignment.CenterVertically,
@@ -2068,6 +2109,7 @@ fun GuideScreen(
                             .clip(CircleShape)
                             .background(if (on) SoulSyncColors.Accent.copy(alpha = 0.2f) else Color.White.copy(alpha = 0.05f))
                             .border(1.dp, if (on) SoulSyncColors.Accent.copy(alpha = 0.6f) else SoulSyncColors.Line, CircleShape)
+                            .dpadFocusable(CircleShape)
                             .clickable { filter = f }
                             .padding(horizontal = 12.dp, vertical = 6.dp),
                     ) {
@@ -2076,13 +2118,48 @@ fun GuideScreen(
                 }
             }
 
-            OutlinedTextField(
-                value = channelQuery,
-                onValueChange = { channelQuery = it },
-                placeholder = { Text("Filter ${allChannels.size} channels or shows…", fontSize = 13.sp) },
-                singleLine = true,
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.fillMaxWidth().height(50.dp),
+            // Never place a bare OutlinedTextField in the TV vertical D-pad path (auto-pops soft keyboard and traps navigation)
+            if (!isTv) {
+                OutlinedTextField(
+                    value = channelQuery,
+                    onValueChange = { channelQuery = it },
+                    placeholder = { Text("Filter ${allChannels.size} channels or shows…", fontSize = 13.sp) },
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth().height(50.dp),
+                )
+            }
+        }
+
+        if (showTvFilterDialog) {
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = { showTvFilterDialog = false },
+                containerColor = SoulSyncColors.BgSecondary,
+                title = { Text("Filter channels or shows", color = Color.White) },
+                text = {
+                    OutlinedTextField(
+                        value = channelQuery,
+                        onValueChange = { channelQuery = it },
+                        placeholder = { Text("Type channel or show name…") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                },
+                confirmButton = {
+                    Button(
+                        onClick = { showTvFilterDialog = false },
+                        modifier = Modifier.dpadFocusable(CircleShape),
+                    ) { Text("Done") }
+                },
+                dismissButton = {
+                    androidx.compose.material3.TextButton(
+                        onClick = {
+                            channelQuery = ""
+                            showTvFilterDialog = false
+                        },
+                        modifier = Modifier.dpadFocusable(CircleShape),
+                    ) { Text("Clear") }
+                },
             )
         }
 
@@ -2116,7 +2193,7 @@ fun GuideScreen(
                 )
                 IconButton(
                     onClick = { picked = null },
-                    modifier = Modifier.align(Alignment.TopEnd).padding(4.dp).size(30.dp),
+                    modifier = Modifier.align(Alignment.TopEnd).padding(4.dp).size(30.dp).clip(CircleShape).dpadFocusable(CircleShape),
                 ) {
                     Icon(Icons.Default.Close, contentDescription = "Close preview", tint = Color.White, modifier = Modifier.size(16.dp))
                 }
@@ -2156,7 +2233,10 @@ fun GuideScreen(
                             shape = CircleShape,
                             colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black),
                             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
-                            modifier = Modifier.height(34.dp),
+                            modifier = Modifier
+                                .height(34.dp)
+                                .focusRequester(tuneInFocus)
+                                .dpadFocusable(CircleShape, scaleOnFocus = true, onLightSurface = true),
                         ) {
                             Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(4.dp))
@@ -2174,7 +2254,7 @@ fun GuideScreen(
                                 shape = CircleShape,
                                 border = BorderStroke(1.dp, SoulSyncColors.LineStrong),
                                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                                modifier = Modifier.height(34.dp),
+                                modifier = Modifier.height(34.dp).dpadFocusable(CircleShape),
                             ) {
                                 Icon(Icons.Default.Info, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
                                 Spacer(modifier = Modifier.width(4.dp))
@@ -2208,6 +2288,7 @@ fun GuideScreen(
                         .clip(CircleShape)
                         .background(Color.White.copy(alpha = 0.06f))
                         .border(1.dp, SoulSyncColors.Line, CircleShape)
+                        .dpadFocusable(CircleShape)
                         .clickable(enabled = offsetHours > -24) { offsetHours = (offsetHours - 2).coerceAtLeast(-24) }
                         .padding(horizontal = 10.dp, vertical = 4.dp),
                 ) {
@@ -2218,6 +2299,7 @@ fun GuideScreen(
                         .clip(CircleShape)
                         .background(if (offsetHours == 0) SoulSyncColors.Accent.copy(alpha = 0.24f) else Color.White.copy(alpha = 0.06f))
                         .border(1.dp, if (offsetHours == 0) SoulSyncColors.Accent else SoulSyncColors.Line, CircleShape)
+                        .dpadFocusable(CircleShape)
                         .clickable { offsetHours = 0 }
                         .padding(horizontal = 11.dp, vertical = 4.dp),
                 ) {
@@ -2228,6 +2310,7 @@ fun GuideScreen(
                         .clip(CircleShape)
                         .background(Color.White.copy(alpha = 0.06f))
                         .border(1.dp, SoulSyncColors.Line, CircleShape)
+                        .dpadFocusable(CircleShape)
                         .clickable(enabled = offsetHours < 24) { offsetHours = (offsetHours + 2).coerceAtMost(24) }
                         .padding(horizontal = 10.dp, vertical = 4.dp),
                 ) {
@@ -2352,6 +2435,8 @@ fun GuideScreen(
                                     .width(CHANNEL_COL_WIDTH)
                                     .fillMaxHeight()
                                     .background(SoulSyncColors.PanelSolid)
+                                    .then(if (ch.id == firstChannelId) Modifier.focusRequester(firstChannelFocus) else Modifier)
+                                    .dpadFocusable(RoundedCornerShape(8.dp))
                                     .clickable { tuneInChannel(ch) }
                                     .padding(horizontal = 8.dp, vertical = 6.dp),
                                 verticalAlignment = Alignment.CenterVertically,
@@ -2429,6 +2514,8 @@ fun GuideScreen(
                                             val liveFrac = if (isNow) {
                                                 ((nowSec - visStart).toFloat() / visibleSpan).coerceIn(0f, 1f)
                                             } else 0f
+                                            val isCommercial = prog.itemType == "commercial"
+                                            val isSelectable = !isCommercial && blockW >= 26.dp
                                             val isPicked = picked?.second == prog && picked?.first?.id == ch.id
                                             Box(
                                                 modifier = Modifier
@@ -2439,6 +2526,7 @@ fun GuideScreen(
                                                     .clip(RoundedCornerShape(8.dp))
                                                     .background(
                                                         when {
+                                                            isCommercial -> Color.White.copy(alpha = 0.015f)
                                                             isPicked -> SoulSyncColors.Accent.copy(alpha = 0.28f)
                                                             isNow -> Color.White.copy(alpha = 0.08f)
                                                             else -> Color.White.copy(alpha = 0.03f)
@@ -2447,13 +2535,22 @@ fun GuideScreen(
                                                     .border(
                                                         1.dp,
                                                         when {
+                                                            isCommercial -> Color.White.copy(alpha = 0.04f)
                                                             isPicked -> SoulSyncColors.AccentLight
                                                             isNow -> SoulSyncColors.Accent.copy(alpha = 0.45f)
                                                             else -> SoulSyncColors.Line
                                                         },
                                                         RoundedCornerShape(8.dp),
                                                     )
-                                                    .clickable { picked = ch to prog },
+                                                    .then(
+                                                        if (isSelectable) {
+                                                            Modifier
+                                                                .dpadFocusable(RoundedCornerShape(8.dp))
+                                                                .clickable { picked = ch to prog }
+                                                        } else {
+                                                            Modifier
+                                                        },
+                                                    ),
                                             ) {
                                                 if (blockW >= 26.dp) {
                                                     Column(
@@ -2593,7 +2690,7 @@ fun GuideScreen(
                                                 Text("Next: ${next.title}", color = SoulSyncColors.TextSecondary, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                             }
                                         }
-                                        IconButton(onClick = { tuneInChannel(ch, cur) }) {
+                                        IconButton(onClick = { tuneInChannel(ch, cur) }, modifier = Modifier.dpadFocusable(androidx.compose.foundation.shape.CircleShape),) {
                                             Icon(Icons.Default.PlayArrow, contentDescription = "Tune in", tint = SoulSyncColors.AccentLight)
                                         }
                                     }
@@ -2703,7 +2800,7 @@ private fun MakeGuideChannelDialog(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text("Make a Channel", color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.ExtraBold)
-                    IconButton(onClick = onDismiss) {
+                    IconButton(onClick = onDismiss, modifier = Modifier.dpadFocusable(androidx.compose.foundation.shape.CircleShape),) {
                         Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White)
                     }
                 }
@@ -2874,7 +2971,7 @@ private fun MakeGuideChannelDialog(
                     enabled = !saving,
                     shape = CircleShape,
                     colors = ButtonDefaults.buttonColors(containerColor = SoulSyncColors.Accent, contentColor = SoulSyncColors.OnAccent),
-                    modifier = Modifier.fillMaxWidth().height(44.dp),
+                    modifier = Modifier.fillMaxWidth().height(44.dp).dpadFocusable(androidx.compose.foundation.shape.RoundedCornerShape(999.dp)),
                 ) {
                     Text(if (saving) "Saving…" else "Make Channel", fontWeight = FontWeight.Bold)
                 }

@@ -79,7 +79,11 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import net.ssync.pairing.theme.SoulSyncColors
+import net.ssync.pairing.ui.LocalIsTv
 import net.ssync.pairing.ui.dpadFocusable
 import net.ssync.player.HomeLayout
 import net.ssync.player.LibAlbum
@@ -120,7 +124,10 @@ internal object HomeWarmCache {
     var hasLoadedOnce: Boolean = false
 }
 
-@kotlin.OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@kotlin.OptIn(
+    androidx.compose.material3.ExperimentalMaterial3Api::class,
+    androidx.compose.foundation.ExperimentalFoundationApi::class,
+)
 @Composable
 fun HomeScreen(
     api: PlayerApiClient,
@@ -499,6 +506,74 @@ fun HomeScreen(
             .take(18)
     }
 
+    val isTv = LocalIsTv.current
+    if (isTv) {
+        TvSpotlightHome(
+            api = api,
+            coordinator = coordinator,
+            continueItems = continueItems,
+            catalog = catalog,
+            watchlist = watchlist,
+            studioCollections = studioCollections,
+            discoverPlaylists = discoverPlaylists,
+            albums = albums,
+            podcasts = podcasts,
+            books = books,
+            homeLayout = homeLayout,
+            liveGuideHighlights = liveGuideHighlights,
+            logos = logos,
+            onNavigate = onNavigate,
+        )
+        if (showEditor) {
+            HomeEditorSheet(
+                initialLayout = homeLayout,
+                initialShared = layoutShared,
+                availableMovieGenres = catalog.movies.flatMap { it.genres }.distinct().sorted(),
+                onSave = { updated, shared ->
+                    homeLayout = updated
+                    layoutShared = shared
+                    showEditor = false
+                    scope.launch {
+                        api.saveHomeLayout(layout = updated, shared = shared)
+                    }
+                },
+                onReset = {
+                    homeLayout = HomeLayout()
+                    showEditor = false
+                    scope.launch { api.resetHomeLayout(device = "android-phone") }
+                },
+                onDismiss = { showEditor = false },
+            )
+        }
+        return
+    }
+    val heroPlayFocus = remember { FocusRequester() }
+    LaunchedEffect(isTv, showBillboard) {
+        if (isTv && showBillboard) {
+            delay(120L)
+            runCatching { heroPlayFocus.requestFocus() }
+        }
+    }
+
+    val homeBringIntoViewSpec = remember {
+        object : androidx.compose.foundation.gestures.BringIntoViewSpec {
+            override fun calculateScrollDistance(
+                offset: Float,
+                size: Float,
+                containerSize: Float,
+            ): Float {
+                if (containerSize <= 0f) return 0f
+                val topMargin = 16f
+                val bottomMargin = 24f
+                return when {
+                    offset < topMargin -> offset - topMargin
+                    offset + size > containerSize - bottomMargin -> (offset + size) - (containerSize - bottomMargin)
+                    else -> 0f
+                }
+            }
+        }
+    }
+
     androidx.compose.material3.pulltorefresh.PullToRefreshBox(
         isRefreshing = isRefreshing,
         onRefresh = {
@@ -511,6 +586,9 @@ fun HomeScreen(
             }
         },
         modifier = Modifier.fillMaxSize(),
+    ) {
+    androidx.compose.runtime.CompositionLocalProvider(
+        androidx.compose.foundation.gestures.LocalBringIntoViewSpec provides homeBringIntoViewSpec,
     ) {
     LazyColumn(
         state = listState,
@@ -525,7 +603,20 @@ fun HomeScreen(
                 // Use hardware-cached backdrop artwork on mobile Home instead of spinning up an
                 // ExoPlayer TextureView decoding full-bitrate movie files inside the LazyColumn.
                 val allowHeroVideo = false
-                Box {
+                var heroHadFocus by remember { mutableStateOf(false) }
+                Box(
+                    modifier = Modifier.onFocusChanged { state ->
+                        val nowHasFocus = state.hasFocus
+                        if (isTv && nowHasFocus && !heroHadFocus) {
+                            scope.launch {
+                                if (listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 0) {
+                                    listState.animateScrollToItem(0, 0)
+                                }
+                            }
+                        }
+                        heroHadFocus = nowHasFocus
+                    },
+                ) {
                     HeroSpotlight(
                         title = hero.title,
                         subtitle = hero.subtitle,
@@ -533,6 +624,7 @@ fun HomeScreen(
                         eyebrow = hero.eyebrow,
                         logoUrl = logoKey?.let { logos[it] }?.let { api.artwork.resolve(it) },
                         inWatchlist = saved,
+                        playButtonModifier = Modifier.focusRequester(heroPlayFocus),
                         backgroundVideo = if (allowHeroVideo) {
                             {
                                 HeroVideoBackdrop(
@@ -583,7 +675,7 @@ fun HomeScreen(
                                 .size(36.dp)
                                 .clip(CircleShape)
                                 .background(Color.Black.copy(alpha = 0.56f))
-                                .border(1.dp, Color.White.copy(alpha = 0.22f), CircleShape),
+                                .border(1.dp, Color.White.copy(alpha = 0.22f), CircleShape).dpadFocusable(androidx.compose.foundation.shape.CircleShape),
                         ) {
                             Icon(
                                 imageVector = if (heroMuted) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeUp,
@@ -626,9 +718,11 @@ fun HomeScreen(
             }
         }
 
-        // Sleek Plex/Apple-TV-style Quick-Jump Category Pill Strip (no dated bottom nav needed)
-        item(key = "quick-pills") {
-            QuickJumpStrip(onNavigate = onNavigate)
+        // Sleek Plex/Apple-TV-style Quick-Jump Category Pill Strip on mobile (redundant on TV since left rail has all sections)
+        if (!isTv) {
+            item(key = "quick-pills") {
+                QuickJumpStrip(onNavigate = onNavigate)
+            }
         }
 
         // Dynamic customizable rows driven by HomeLayout (order, visibility, style, genre rows)
@@ -777,6 +871,7 @@ fun HomeScreen(
                                     title = ch.programTitle,
                                     subtitle = "LIVE · ${ch.programSubtitle}",
                                     artworkUrl = ch.artworkUrl,
+                                    fallbackArtworkUrl = ch.artworkUrl?.replace("/backdrop/", "/poster/"),
                                     progress = ch.progressFraction,
                                     onClick = { ch.tune(coordinator) },
                                 )
@@ -796,6 +891,7 @@ fun HomeScreen(
                                     title = p.title,
                                     subtitle = "NEW · ${p.subtitle}",
                                     artworkUrl = p.artworkUrl,
+                                    fallbackArtworkUrl = p.artworkUrl?.replace("/backdrop/", "/poster/"),
                                     onClick = { onNavigate(PlayerDestination.Guide) },
                                 )
                             }
@@ -905,9 +1001,7 @@ fun HomeScreen(
                                         inLibrary = true,
                                         width = cardWidth,
                                         onClick = {
-                                            val firstId = members.first()
-                                            if (c.mediaType == "movie") onNavigate(PlayerDestination.MovieDetail(firstId))
-                                            else onNavigate(PlayerDestination.ShowDetail(firstId))
+                                            onNavigate(PlayerDestination.CollectionDetail(c))
                                         },
                                     )
                                 }
@@ -958,13 +1052,17 @@ fun HomeScreen(
                     item(key = "row-new-episodes") {
                         MediaRail("New Episodes", actionLabel = "TV", onAction = { onNavigate(PlayerDestination.Tv) }) {
                             items(catalog.recentEpisodes.take(18), key = { it.id }) { ep ->
-                                val art = if (ep.hasStill) api.artwork.episodeStill(ep.id)
-                                else api.artwork.showBackdrop(ep.showId)
+                                val showBackdrop = api.artwork.showBackdrop(ep.showId)
+                                val showPoster = api.artwork.showPoster(ep.showId)
+                                // Always prefer 16:9 widescreen episode still -> 16:9 show backdrop -> show poster so no card is ever blank
+                                val art = if (ep.hasStill) api.artwork.episodeStill(ep.id) else showBackdrop
                                 WideMediaCard(
                                     title = ep.showTitle,
                                     subtitle = "S${ep.seasonNumber} E${ep.episodeNumber}" +
                                         (ep.title?.let { " · $it" } ?: ""),
                                     artworkUrl = art,
+                                    fallbackArtworkUrl = showBackdrop,
+                                    secondaryFallbackArtworkUrl = showPoster,
                                     contextItem = MediaContextItem(
                                         itemType = "episode",
                                         itemId = ep.id.toString(),
@@ -1300,6 +1398,7 @@ fun HomeScreen(
                 }
             }
         }
+    }
     }
     }
 

@@ -11,6 +11,9 @@ sealed interface PlayerDestination {
     data object AdminUsers : PlayerDestination
     data object Movies : PlayerDestination
     data class MovieDetail(val movieId: Int) : PlayerDestination
+    data class CollectionDetail(
+        val collection: net.ssync.player.StudioCollection,
+    ) : PlayerDestination
     data object Tv : PlayerDestination
     data class ShowDetail(
         val showId: Int,
@@ -20,6 +23,7 @@ sealed interface PlayerDestination {
     data class EpisodeDetail(val showId: Int, val episodeId: Int) : PlayerDestination
     data class PersonDetail(val tmdbId: Int, val name: String) : PlayerDestination
     data object Music : PlayerDestination
+    data object Playlists : PlayerDestination
     data class ArtistDetail(val artistId: Int) : PlayerDestination
     data class AlbumDetail(
         val albumId: Int,

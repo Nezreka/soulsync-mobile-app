@@ -48,6 +48,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import net.ssync.pairing.theme.SoulSyncColors
+import net.ssync.pairing.ui.LocalIsTv
 import net.ssync.pairing.ui.dpadFocusable
 import net.ssync.player.CatalogMovie
 import net.ssync.player.CatalogRecentEpisode
@@ -244,7 +245,7 @@ fun MoviesScreen(
                     EmptyBox("No movies match your filters.")
                 } else if (gridView) {
                     LazyVerticalGrid(
-                        columns = GridCells.Adaptive(minSize = 116.dp),
+                        columns = GridCells.Adaptive(minSize = if (LocalIsTv.current) 148.dp else 116.dp),
                         contentPadding = PaddingValues(16.dp),
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                         verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -543,7 +544,7 @@ fun TvScreen(
                     EmptyBox("No TV shows match your filters.")
                 } else if (gridView) {
                     LazyVerticalGrid(
-                        columns = GridCells.Adaptive(minSize = 116.dp),
+                        columns = GridCells.Adaptive(minSize = if (LocalIsTv.current) 148.dp else 116.dp),
                         contentPadding = PaddingValues(16.dp),
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                         verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -805,7 +806,6 @@ internal fun CompactMediaListRow(
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
             .background(Color.White.copy(alpha = 0.04f))
-            .border(1.dp, SoulSyncColors.Line, RoundedCornerShape(12.dp))
             .dpadFocusable(RoundedCornerShape(12.dp))
             .clickable(onClick = onClick)
             .padding(10.dp),
@@ -895,18 +895,20 @@ private fun CategoriesTabView(
     onPickGenre: (String) -> Unit,
     onPickDecade: (String) -> Unit,
 ) {
+    val isTv = LocalIsTv.current
+    val cols = if (isTv) 5 else 2
     LazyColumn(
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
+        contentPadding = PaddingValues(if (isTv) 24.dp else 16.dp),
+        verticalArrangement = Arrangement.spacedBy(if (isTv) 14.dp else 16.dp),
         modifier = Modifier.fillMaxSize(),
     ) {
         if (genres.isNotEmpty()) {
             item {
                 Text("Genres", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
             }
-            items(genres.chunked(2)) { pair ->
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    pair.forEach { (g, count) ->
+            items(genres.chunked(cols)) { row ->
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    row.forEach { (g, count) ->
                         CategoryTile(
                             title = g,
                             subtitle = "$count titles",
@@ -914,7 +916,7 @@ private fun CategoriesTabView(
                             onClick = { onPickGenre(g) },
                         )
                     }
-                    if (pair.size == 1) Spacer(modifier = Modifier.weight(1f))
+                    repeat(cols - row.size) { Spacer(modifier = Modifier.weight(1f)) }
                 }
             }
         }
@@ -923,9 +925,9 @@ private fun CategoriesTabView(
                 Spacer(modifier = Modifier.height(6.dp))
                 Text("Decades", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
             }
-            items(decades.chunked(2)) { pair ->
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    pair.forEach { (d, count) ->
+            items(decades.chunked(cols)) { row ->
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    row.forEach { (d, count) ->
                         CategoryTile(
                             title = d,
                             subtitle = "$count titles",
@@ -933,7 +935,7 @@ private fun CategoriesTabView(
                             onClick = { onPickDecade(d) },
                         )
                     }
-                    if (pair.size == 1) Spacer(modifier = Modifier.weight(1f))
+                    repeat(cols - row.size) { Spacer(modifier = Modifier.weight(1f)) }
                 }
             }
         }
@@ -963,5 +965,136 @@ private fun CategoryTile(
         Text(text = title, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
         Spacer(modifier = Modifier.height(2.dp))
         Text(text = subtitle, color = SoulSyncColors.TextSecondary, fontSize = 12.sp)
+    }
+}
+
+@Composable
+fun CollectionDetailScreen(
+    collection: net.ssync.player.StudioCollection,
+    api: PlayerApiClient,
+    onNavigate: (PlayerDestination) -> Unit,
+    onDeviceRevoked: () -> Unit,
+) {
+    val isTv = LocalIsTv.current
+    val warmHit = HomeWarmCache.hasLoadedOnce && HomeWarmCache.baseUrl == api.baseUrl
+    var catalog by remember(api.baseUrl) {
+        mutableStateOf(if (warmHit) HomeWarmCache.catalog else net.ssync.player.VideoCatalog())
+    }
+    var isLoading by remember(api.baseUrl) { mutableStateOf(!warmHit) }
+
+    LaunchedEffect(api, collection.id) {
+        if (!warmHit || (catalog.movies.isEmpty() && catalog.shows.isEmpty())) {
+            isLoading = true
+            when (val r = api.fetchVideoCatalog()) {
+                is MusicApiResult.Success -> {
+                    catalog = r.data
+                    HomeWarmCache.catalog = r.data
+                }
+                MusicApiResult.DeviceRevoked -> onDeviceRevoked()
+                is MusicApiResult.Error -> Unit
+            }
+            isLoading = false
+        }
+    }
+
+    val isMovieCol = collection.mediaType == "movie"
+    val memberMovies = remember(catalog.movies, collection.members, isMovieCol) {
+        if (!isMovieCol) emptyList() else {
+            val byId = catalog.movies.associateBy { it.id }
+            collection.members.mapNotNull { byId[it] }
+        }
+    }
+    val memberShows = remember(catalog.shows, collection.members, isMovieCol) {
+        if (isMovieCol) emptyList() else {
+            val byId = catalog.shows.associateBy { it.id }
+            collection.members.mapNotNull { byId[it] }
+        }
+    }
+    val totalCount = if (isMovieCol) memberMovies.size else memberShows.size
+
+    if (isLoading && totalCount == 0) {
+        LoadingBox()
+        return
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = if (isTv) 24.dp else 16.dp),
+    ) {
+        Spacer(modifier = Modifier.height(if (isTv) 8.dp else 12.dp))
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text(
+                text = collection.name,
+                color = Color.White,
+                fontSize = if (isTv) 26.sp else 22.sp,
+                fontWeight = FontWeight.ExtraBold,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f, fill = false),
+            )
+            Box(
+                modifier = Modifier
+                    .clip(CircleShape)
+                    .background(SoulSyncColors.Accent.copy(alpha = 0.22f))
+                    .border(1.dp, SoulSyncColors.AccentLight.copy(alpha = 0.45f), CircleShape)
+                    .padding(horizontal = 10.dp, vertical = 4.dp),
+            ) {
+                Text(
+                    text = "$totalCount ${if (isMovieCol) (if (totalCount == 1) "film" else "films") else (if (totalCount == 1) "show" else "shows")}",
+                    color = SoulSyncColors.AccentLight,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+        }
+        if (!collection.summary.isNullOrBlank()) {
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = collection.summary!!,
+                color = SoulSyncColors.TextSecondary,
+                fontSize = 13.sp,
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Spacer(modifier = Modifier.height(14.dp))
+
+        if (totalCount == 0) {
+            EmptyBox("No matching titles found in this collection.")
+        } else {
+            LazyVerticalGrid(
+                columns = GridCells.Adaptive(minSize = if (isTv) 136.dp else 108.dp),
+                contentPadding = PaddingValues(bottom = 32.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+                modifier = Modifier.fillMaxSize(),
+            ) {
+                if (isMovieCol) {
+                    items(memberMovies, key = { it.id }) { m ->
+                        PosterCard(
+                            title = m.title,
+                            subtitle = listOfNotNull(m.year?.toString(), m.rating?.let { "★ ${"%.1f".format(it)}" }).joinToString(" · ").ifBlank { null },
+                            artworkUrl = api.artwork.moviePoster(m.id),
+                            width = if (isTv) 136.dp else 108.dp,
+                            onClick = { onNavigate(PlayerDestination.MovieDetail(m.id)) },
+                        )
+                    }
+                } else {
+                    items(memberShows, key = { it.id }) { s ->
+                        PosterCard(
+                            title = s.title,
+                            subtitle = listOfNotNull(s.year?.toString(), s.rating?.let { "★ ${"%.1f".format(it)}" }).joinToString(" · ").ifBlank { null },
+                            artworkUrl = api.artwork.showPoster(s.id),
+                            width = if (isTv) 136.dp else 108.dp,
+                            onClick = { onNavigate(PlayerDestination.ShowDetail(s.id)) },
+                        )
+                    }
+                }
+            }
+        }
     }
 }

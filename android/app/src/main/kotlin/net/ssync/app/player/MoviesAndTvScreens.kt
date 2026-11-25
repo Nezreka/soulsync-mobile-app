@@ -73,7 +73,10 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
+import androidx.compose.ui.focus.focusRequester
+import kotlinx.coroutines.delay
 import net.ssync.pairing.theme.SoulSyncColors
+import net.ssync.pairing.ui.LocalIsTv
 import net.ssync.pairing.ui.dpadFocusable
 import net.ssync.player.CatalogMovie
 import net.ssync.player.CatalogShow
@@ -372,19 +375,39 @@ private fun NotesSection(
     onAdd: () -> Unit,
     onDelete: (Int) -> Unit,
 ) {
+    val isTv = LocalIsTv.current
+    var tvEditingNote by remember { mutableStateOf(false) }
     Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 10.dp)) {
         Text("Personal Notes", style = MaterialTheme.typography.titleMedium)
         Spacer(modifier = Modifier.height(8.dp))
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedTextField(
-                value = draft,
-                onValueChange = onDraftChange,
-                placeholder = { Text("Add a note...") },
-                singleLine = true,
-                modifier = Modifier.weight(1f).dpadFocusable(),
-            )
-            IconButton(onClick = onAdd, modifier = Modifier.dpadFocusable()) {
-                Icon(Icons.Default.Add, contentDescription = "Save note", tint = SoulSyncColors.AccentLight)
+        if (isTv && !tvEditingNote) {
+            OutlinedButton(
+                onClick = { tvEditingNote = true },
+                shape = CircleShape,
+                modifier = Modifier.dpadFocusable(CircleShape),
+            ) {
+                Icon(Icons.Default.Add, contentDescription = null, tint = SoulSyncColors.AccentLight, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("Add a note", color = Color.White, fontSize = 13.sp)
+            }
+        } else {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = draft,
+                    onValueChange = onDraftChange,
+                    placeholder = { Text("Add a note...") },
+                    singleLine = true,
+                    modifier = Modifier.weight(1f).dpadFocusable(),
+                )
+                IconButton(
+                    onClick = {
+                        onAdd()
+                        tvEditingNote = false
+                    },
+                    modifier = Modifier.dpadFocusable(CircleShape),
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = "Save note", tint = SoulSyncColors.AccentLight)
+                }
             }
         }
         notes.forEach { n ->
@@ -398,7 +421,7 @@ private fun NotesSection(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(n.body, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-                    IconButton(onClick = { onDelete(n.id) }) {
+                    IconButton(onClick = { onDelete(n.id) }, modifier = Modifier.dpadFocusable(androidx.compose.foundation.shape.CircleShape),) {
                         Icon(Icons.Default.Delete, contentDescription = "Delete", tint = SoulSyncColors.TextSecondary, modifier = Modifier.size(18.dp))
                     }
                 }
@@ -607,6 +630,7 @@ fun PersonDetailScreen(
     var isLoading by remember { mutableStateOf(true) }
     var filter by remember { mutableStateOf("all") } // "all" | "owned" | "acting" | "crew"
     var gridView by remember { mutableStateOf(true) }
+    val isTv = LocalIsTv.current
     var bioExpanded by remember { mutableStateOf(false) }
     var pendingRequest by remember { mutableStateOf<UnownedTitleTarget?>(null) }
 
@@ -837,7 +861,7 @@ fun PersonDetailScreen(
                                 modifier = Modifier
                                     .size(32.dp)
                                     .clip(CircleShape)
-                                    .background(if (gridView) SoulSyncColors.Accent else Color.Transparent),
+                                    .background(if (gridView) SoulSyncColors.Accent else Color.Transparent).dpadFocusable(androidx.compose.foundation.shape.CircleShape),
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.GridView,
@@ -851,7 +875,7 @@ fun PersonDetailScreen(
                                 modifier = Modifier
                                     .size(32.dp)
                                     .clip(CircleShape)
-                                    .background(if (!gridView) SoulSyncColors.Accent else Color.Transparent),
+                                    .background(if (!gridView) SoulSyncColors.Accent else Color.Transparent).dpadFocusable(androidx.compose.foundation.shape.CircleShape),
                             ) {
                                 Icon(
                                     imageVector = Icons.AutoMirrored.Filled.ViewList,
@@ -891,7 +915,8 @@ fun PersonDetailScreen(
             }
 
             if (gridView) {
-                val rows = visibleCredits.chunked(3)
+                val cols = if (isTv) 7 else 3
+                val rows = visibleCredits.chunked(cols)
                 items(
                     items = rows,
                     key = { row -> row.joinToString("|") { "${it.kind}-${it.tmdbId}-${it.role.orEmpty()}" } },
@@ -899,8 +924,8 @@ fun PersonDetailScreen(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 18.dp),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            .padding(horizontal = if (isTv) 24.dp else 18.dp),
+                        horizontalArrangement = Arrangement.spacedBy(if (isTv) 14.dp else 10.dp),
                     ) {
                         row.forEach { c ->
                             Box(modifier = Modifier.weight(1f)) {
@@ -913,7 +938,7 @@ fun PersonDetailScreen(
                                 )
                             }
                         }
-                        repeat(3 - row.size) {
+                        repeat(cols - row.size) {
                             Spacer(modifier = Modifier.weight(1f))
                         }
                     }
@@ -984,10 +1009,8 @@ private fun UnownedTitleRequestSheet(
     val canDownload = mode == "download"
     val canRequest = mode != "none"
 
-    ModalBottomSheet(
+    AdaptiveTvSheet(
         onDismissRequest = onDismiss,
-        containerColor = SoulSyncColors.Surface,
-        contentColor = SoulSyncColors.TextPrimary,
     ) {
         Column(
             modifier = Modifier
@@ -1234,13 +1257,21 @@ fun ShowDetailScreen(
     val ownedSeasonEps = activeSeason?.episodes?.count { it.owned } ?: 0
     val hasMissingInSeason = ownedSeasonEps < totalSeasonEps
 
+    val isTv = LocalIsTv.current
     val showListState = rememberLazyListState()
-    LaunchedEffect(activeEpisodes, highlightEpisode, activeSeason?.seasonNumber) {
+    val highlightedEpFocus = remember { androidx.compose.ui.focus.FocusRequester() }
+    val hasOverviewOrGenres = show.genres.isNotEmpty() || !show.overview.isNullOrBlank()
+    val headerItemsCount = 2 + (if (hasOverviewOrGenres) 1 else 0) + (if (seasons.isNotEmpty()) 1 else 0) + 1
+
+    LaunchedEffect(activeEpisodes, highlightEpisode, activeSeason?.seasonNumber, headerItemsCount) {
         if (highlightEpisode != null && (initialSeason == null || activeSeason?.seasonNumber == initialSeason)) {
             val epIdx = activeEpisodes.indexOfFirst { it.episodeNumber == highlightEpisode }
             if (epIdx >= 0) {
-                // Account for Hero + Overview + Seasons + Active Season Header items above episodes
-                showListState.animateScrollToItem((epIdx + 3).coerceAtLeast(0))
+                showListState.animateScrollToItem((epIdx + headerItemsCount).coerceAtLeast(0))
+                if (isTv) {
+                    delay(120L)
+                    runCatching { highlightedEpFocus.requestFocus() }
+                }
             }
         }
     }
@@ -1574,6 +1605,9 @@ fun ShowDetailScreen(
             // 5. Apple TV+ / Infuse-Grade Expandable Episode Cards
             items(activeEpisodes, key = { it.id }) { ep ->
                 val epCode = "S${activeSeason.seasonNumber.toString().padStart(2, '0')}E${ep.episodeNumber.toString().padStart(2, '0')}"
+                val isHighlightedEp = highlightEpisode != null &&
+                    ep.episodeNumber == highlightEpisode &&
+                    (initialSeason == null || activeSeason.seasonNumber == initialSeason)
                 ShowEpisodeCard(
                     episode = ep,
                     showTitle = show.title,
@@ -1581,10 +1615,10 @@ fun ShowDetailScreen(
                     showTmdbId = showTmdbId,
                     requestMode = showRequestMode,
                     stillUrl = api.artwork.episodeStill(ep.id),
+                    fallbackBackdropUrl = api.artwork.showBackdrop(show.id),
                     api = api,
-                    initialExpanded = highlightEpisode != null &&
-                        ep.episodeNumber == highlightEpisode &&
-                        (initialSeason == null || activeSeason.seasonNumber == initialSeason),
+                    initialExpanded = isHighlightedEp,
+                    headerFocusRequester = if (isHighlightedEp) highlightedEpFocus else null,
                     onPlay = { playEpisode(activeSeason.seasonNumber, ep) },
                     onStartWatchParty = {
                         scope.launch {
@@ -1746,8 +1780,10 @@ private fun ShowEpisodeCard(
     showTmdbId: Int?,
     requestMode: String = "ask",
     stillUrl: String,
+    fallbackBackdropUrl: String? = null,
     api: PlayerApiClient,
     initialExpanded: Boolean = false,
+    headerFocusRequester: androidx.compose.ui.focus.FocusRequester? = null,
     onPlay: () -> Unit,
     onStartWatchParty: () -> Unit = {},
     onReportIssue: () -> Unit = {},
@@ -1820,10 +1856,7 @@ private fun ShowEpisodeCard(
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp)
-            .clip(RoundedCornerShape(14.dp))
-            .clickable { expanded = !expanded }
-            .dpadFocusable(RoundedCornerShape(14.dp)),
+            .padding(horizontal = 16.dp),
         shape = RoundedCornerShape(14.dp),
         color = when {
             expanded -> SoulSyncColors.CardRaised
@@ -1846,7 +1879,15 @@ private fun ShowEpisodeCard(
                 .padding(10.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
+            // Put clickable ONLY on the header row so expanded child buttons (Play, Watch Party, Report) are 100% D-pad navigable!
             Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .then(headerFocusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
+                    .dpadFocusable(RoundedCornerShape(10.dp))
+                    .clickable { expanded = !expanded }
+                    .padding(2.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
@@ -1856,11 +1897,11 @@ private fun ShowEpisodeCard(
                         .width(146.dp)
                         .aspectRatio(16f / 9f)
                         .clip(RoundedCornerShape(10.dp))
-                        .background(SoulSyncColors.Surface)
-                        .clickable(enabled = episode.owned, onClick = onPlay),
+                        .background(SoulSyncColors.Surface),
                 ) {
                     SoulSyncArtwork(
                         url = stillUrl,
+                        fallbackUrl = fallbackBackdropUrl,
                         contentDescription = episode.title,
                         fallbackIcon = Icons.Default.Movie,
                         modifier = Modifier
@@ -2089,7 +2130,7 @@ private fun ShowEpisodeCard(
                                 contentColor = SoulSyncColors.OnAccent,
                             ),
                             contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
-                            modifier = Modifier.weight(1f).height(38.dp),
+                            modifier = Modifier.weight(1f).height(38.dp).dpadFocusable(androidx.compose.foundation.shape.RoundedCornerShape(999.dp)),
                         ) {
                             Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(17.dp))
                             Spacer(modifier = Modifier.width(4.dp))
@@ -2100,7 +2141,7 @@ private fun ShowEpisodeCard(
                             shape = CircleShape,
                             border = BorderStroke(1.dp, SoulSyncColors.Accent.copy(alpha = 0.55f)),
                             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                            modifier = Modifier.height(38.dp),
+                            modifier = Modifier.height(38.dp).dpadFocusable(androidx.compose.foundation.shape.RoundedCornerShape(999.dp)),
                         ) {
                             Text("🍿 Party", color = SoulSyncColors.AccentLight, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                         }
@@ -2126,7 +2167,7 @@ private fun ShowEpisodeCard(
                                 contentColor = if (reqDone) SoulSyncColors.AccentLight else SoulSyncColors.OnAccent,
                             ),
                             contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
-                            modifier = Modifier.weight(1f).height(38.dp),
+                            modifier = Modifier.weight(1f).height(38.dp).dpadFocusable(androidx.compose.foundation.shape.RoundedCornerShape(999.dp)),
                         ) {
                             Icon(
                                 imageVector = if (reqDone) Icons.Default.Check else Icons.Default.Download,
@@ -2491,7 +2532,7 @@ fun EpisodeDetailScreen(
                             }
                         }
                         if (other.owned) {
-                            IconButton(onClick = { playEpisode(season.seasonNumber, other) }) {
+                            IconButton(onClick = { playEpisode(season.seasonNumber, other) }, modifier = Modifier.dpadFocusable(androidx.compose.foundation.shape.CircleShape),) {
                                 Icon(
                                     Icons.Default.PlayArrow,
                                     contentDescription = "Play",

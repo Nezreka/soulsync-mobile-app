@@ -4,6 +4,16 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.Network
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.tween
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -30,6 +40,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.CalendarMonth
@@ -89,11 +100,23 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.focusGroup
+import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.zIndex
+import androidx.compose.ui.res.imageResource
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -112,6 +135,7 @@ import net.ssync.connect.CandidateScope
 import net.ssync.network.CandidateAddressRacer
 import net.ssync.network.CertPinningOkHttp
 import net.ssync.pairing.theme.SoulSyncColors
+import net.ssync.pairing.ui.LocalIsTv
 import net.ssync.pairing.ui.dpadFocusable
 import net.ssync.player.DeviceProfileInfo
 import net.ssync.player.MusicApiResult
@@ -252,17 +276,31 @@ fun PlayerShell(
         }
     }
 
+    val isTv = LocalIsTv.current
     var backStack by remember { mutableStateOf<List<PlayerDestination>>(listOf(PlayerDestination.Home)) }
     val current = backStack.last()
     var showProfileSheet by remember { mutableStateOf(false) }
     var openHomeEditor by remember { mutableStateOf(false) }
-    var sidebarCollapsed by remember { mutableStateOf(false) }
+    // On TV start with a sleek collapsed icon rail (auto-expands on D-pad focus) and allow hiding it completely
+    var sidebarCollapsed by remember(isTv) { mutableStateOf(isTv) }
+    var tvSidebarHidden by remember(isTv) { mutableStateOf(false) }
+    var sidebarHasFocus by remember { mutableStateOf(false) }
+    var tvSidebarForcedOpen by remember { mutableStateOf(false) }
+    val sidebarFocusRequester = remember { FocusRequester() }
+    val contentFocusRequester = remember { FocusRequester() }
     var headerScrolled by remember { mutableStateOf(false) }
     var homeHasHero by remember { mutableStateOf(false) }
     var watchingOthersCount by remember { mutableIntStateOf(0) }
     var activeAvatarUrl by remember { mutableStateOf<String?>(null) }
     var contextMenuItem by remember { mutableStateOf<MediaContextItem?>(null) }
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
+
+    LaunchedEffect(tvSidebarForcedOpen) {
+        if (tvSidebarForcedOpen) {
+            delay(40L)
+            runCatching { sidebarFocusRequester.requestFocus() }
+        }
+    }
 
     LaunchedEffect(api, currentRecord.profileId, profileEpoch) {
         val fallback = api.artwork.profileAvatar(currentRecord.profileId)
@@ -290,22 +328,83 @@ fun PlayerShell(
 
     BackHandler(
         enabled = drawerState.isOpen ||
-            coordinator.showVideoOverlay ||
+            (coordinator.showVideoOverlay && !isTv) ||
             coordinator.showAudioSheet ||
-            backStack.size > 1,
+            tvSidebarForcedOpen ||
+            backStack.size > 1 ||
+            (isTv && !sidebarHasFocus && !coordinator.showVideoOverlay),
     ) {
         when {
             drawerState.isOpen -> scope.launch { drawerState.close() }
-            coordinator.showVideoOverlay -> coordinator.minimizeVideo(coordinator.positionMs, coordinator.durationMs)
+            coordinator.showVideoOverlay && !isTv -> coordinator.minimizeVideo(coordinator.positionMs, coordinator.durationMs)
             coordinator.showAudioSheet -> coordinator.showAudioSheet = false
-            else -> popBack()
+            tvSidebarForcedOpen && sidebarHasFocus -> {
+                tvSidebarForcedOpen = false
+                runCatching { contentFocusRequester.requestFocus() }
+            }
+            backStack.size > 1 -> popBack()
+            isTv && !sidebarHasFocus -> {
+                // Standard Android TV root Back: focus & glide open the navigation sidebar
+                tvSidebarForcedOpen = true
+                runCatching { sidebarFocusRequester.requestFocus() }
+            }
         }
     }
 
-    LaunchedEffect(coordinator, mediaController) {
-        while (true) {
-            coordinator.syncAudioProgress()
-            delay(1_000L)
+    // Real-time MediaController listener + ON_RESUME rehydration so song transitions,
+    // car Bluetooth AVRCP skips, background album playback, and Activity recreates NEVER desync UI!
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    DisposableEffect(mediaController, coordinator, lifecycleOwner) {
+        val controller = mediaController
+        val playerListener = if (controller != null) {
+            object : androidx.media3.common.Player.Listener {
+                override fun onMediaItemTransition(mediaItem: androidx.media3.common.MediaItem?, reason: Int) {
+                    coordinator.syncAudioProgress()
+                }
+                override fun onIsPlayingChanged(isPlaying: Boolean) {
+                    coordinator.syncAudioProgress()
+                }
+                override fun onPlaybackStateChanged(playbackState: Int) {
+                    coordinator.syncAudioProgress()
+                }
+                override fun onTimelineChanged(timeline: androidx.media3.common.Timeline, reason: Int) {
+                    coordinator.rehydrateFromController()
+                }
+                override fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) {
+                    coordinator.syncAudioProgress()
+                }
+                override fun onRepeatModeChanged(repeatMode: Int) {
+                    coordinator.syncAudioProgress()
+                }
+            }.also {
+                controller.addListener(it)
+                coordinator.rehydrateFromController()
+            }
+        } else {
+            null
+        }
+        val lifecycleObserver = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                coordinator.rehydrateFromController()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(lifecycleObserver)
+        onDispose {
+            if (controller != null && playerListener != null) {
+                controller.removeListener(playerListener)
+            }
+            lifecycleOwner.lifecycle.removeObserver(lifecycleObserver)
+        }
+    }
+
+    LaunchedEffect(coordinator, mediaController, coordinator.activeItem, coordinator.showAudioSheet) {
+        val active = coordinator.activeItem
+        if (active != null && !active.isVideo) {
+            val tickMs = if (coordinator.showAudioSheet) 250L else 1_000L
+            while (true) {
+                coordinator.syncAudioProgress()
+                delay(tickMs)
+            }
         }
     }
     var playerSettings by remember { mutableStateOf(net.ssync.player.PlayerSettings()) }
@@ -339,6 +438,13 @@ fun PlayerShell(
                 .background(SoulSyncColors.BgPrimary),
         ) {
             val usePermanentSidebar = maxWidth >= 700.dp
+            val tvIsSpotlightHome = isTv && current is PlayerDestination.Home
+            val tvSidebarExpanded = isTv && (sidebarHasFocus || tvSidebarForcedOpen)
+            val tvShowSidebarRail = isTv && (!tvSidebarHidden || tvSidebarExpanded)
+            val tvContentStartPadding by animateDpAsState(
+                targetValue = if (isTv && !tvSidebarHidden && !tvIsSpotlightHome) 68.dp else 0.dp,
+                label = "tvContentStartPad",
+            )
 
             val mainScaffold: @Composable () -> Unit = {
                 Column(
@@ -347,64 +453,166 @@ fun PlayerShell(
                         .background(SoulSyncColors.BgPrimary)
                         .navigationBarsPadding(),
                 ) {
-                    Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                        if (usePermanentSidebar) {
-                            PlayerSidebar(
-                                current = current,
-                                collapsed = sidebarCollapsed,
-                                watchingCount = watchingOthersCount,
-                                isAdmin = isAdminUser,
-                                showCollapseToggle = true,
-                                onNavigate = { navigateTo(it, clearToRoot = true) },
-                                onToggleCollapse = { sidebarCollapsed = !sidebarCollapsed },
-                            )
-                        }
-
-                        Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .then(
-                                        if (hasFullBleedHero) Modifier
-                                        else Modifier.statusBarsPadding().padding(top = 60.dp),
-                                    ),
-                            ) {
-                                key(profileEpoch) {
-                                    PlayerContent(
-                                        current = current,
-                                        record = currentRecord,
-                                        api = api,
-                                        pinnedHttpClient = pinnedClient,
-                                        coordinator = coordinator,
-                                        openHomeEditor = openHomeEditor,
-                                        onConsumeHomeEditor = { openHomeEditor = false },
-                                        onCustomizeHome = {
-                                            openHomeEditor = true
-                                            navigateTo(PlayerDestination.Home, clearToRoot = true)
-                                        },
-                                        onNavigate = { navigateTo(it) },
-                                        onScrolledChanged = { headerScrolled = it },
-                                        onHasHeroChanged = { homeHasHero = it },
-                                        onDeviceRevoked = onDeviceRevoked,
-                                        onUnpair = onUnpair,
-                                        onSettingsChanged = { playerSettings = it },
-                                    )
-                                }
+                    Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                        Row(modifier = Modifier.fillMaxSize()) {
+                            if (usePermanentSidebar && !isTv) {
+                                PlayerSidebar(
+                                    current = current,
+                                    collapsed = sidebarCollapsed,
+                                    watchingCount = watchingOthersCount,
+                                    isAdmin = isAdminUser,
+                                    showCollapseToggle = true,
+                                    collapseLabel = if (sidebarCollapsed) "Expand" else "Collapse",
+                                    onNavigate = { navigateTo(it, clearToRoot = true) },
+                                    onToggleCollapse = { sidebarCollapsed = !sidebarCollapsed },
+                                )
                             }
 
-                            FloatingTopHeader(
-                                record = currentRecord,
-                                avatarUrl = activeAvatarUrl ?: api.artwork.profileAvatar(currentRecord.profileId),
-                                showBack = backStack.size > 1,
-                                showMenuButton = !usePermanentSidebar,
-                                transparentOverHero = hasFullBleedHero && !headerScrolled,
-                                castConnected = castController.isConnected,
-                                onBack = { popBack() },
-                                onOpenDrawer = { scope.launch { drawerState.open() } },
-                                onCastClick = { showCastSheet = true },
-                                onSearch = { navigateTo(PlayerDestination.Search) },
-                                onProfileClick = { showProfileSheet = true },
-                            )
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .fillMaxHeight()
+                                    .padding(start = tvContentStartPadding)
+                                    .focusRequester(contentFocusRequester),
+                            ) {
+                                val minimizedTitle = coordinator.activeItem
+                                    ?.takeIf { it.isVideo && coordinator.isVideoMinimized }
+                                    ?.title
+                                if (!tvIsSpotlightHome) {
+                                    // Keep FloatingTopHeader first in focus order (with zIndex(3f) so it floats visually on top)
+                                    // so pressing D-pad Down / Next from Search or Profile always enters PlayerContent cleanly.
+                                    FloatingTopHeader(
+                                        record = currentRecord,
+                                        avatarUrl = activeAvatarUrl ?: api.artwork.profileAvatar(currentRecord.profileId),
+                                        showBack = backStack.size > 1,
+                                        showMenuButton = !usePermanentSidebar || (isTv && tvSidebarHidden),
+                                        showCastButton = !isTv,
+                                        minimizedVideoTitle = minimizedTitle,
+                                        tvMiniAudioSlot = if (isTv && !castController.isCastingMedia && coordinator.activeItem != null && !coordinator.activeItem!!.isVideo) {
+                                            {
+                                                coordinator.activeItem?.let { audioItem ->
+                                                    TvTopRightMiniPlayer(
+                                                        coordinator = coordinator,
+                                                        item = audioItem,
+                                                    )
+                                                }
+                                            }
+                                        } else {
+                                            null
+                                        },
+                                        transparentOverHero = hasFullBleedHero && !isTv && !headerScrolled,
+                                        castConnected = castController.isConnected,
+                                        onBack = { popBack() },
+                                        onOpenDrawer = {
+                                            if (isTv) {
+                                                tvSidebarForcedOpen = true
+                                                runCatching { sidebarFocusRequester.requestFocus() }
+                                            } else {
+                                                scope.launch { drawerState.open() }
+                                            }
+                                        },
+                                        onExpandMinimizedVideo = { coordinator.expandVideo() },
+                                        onCastClick = { showCastSheet = true },
+                                        onSearch = { navigateTo(PlayerDestination.Search) },
+                                        onProfileClick = { showProfileSheet = true },
+                                    )
+                                }
+
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .then(
+                                            if (tvIsSpotlightHome || (hasFullBleedHero && !isTv)) Modifier
+                                            else Modifier.statusBarsPadding().padding(top = if (isTv) 56.dp else 60.dp),
+                                        ),
+                                ) {
+                                    key(profileEpoch) {
+                                        AnimatedContent(
+                                            targetState = current,
+                                            transitionSpec = {
+                                                (fadeIn(tween(220)) + scaleIn(tween(240), initialScale = 0.985f))
+                                                    .togetherWith(fadeOut(tween(140)))
+                                            },
+                                            label = "playerPageTransition",
+                                        ) { targetDest ->
+                                            PlayerContent(
+                                                current = targetDest,
+                                                record = currentRecord,
+                                                api = api,
+                                                pinnedHttpClient = pinnedClient,
+                                                coordinator = coordinator,
+                                                openHomeEditor = openHomeEditor,
+                                                onConsumeHomeEditor = { openHomeEditor = false },
+                                                onCustomizeHome = {
+                                                    openHomeEditor = true
+                                                    navigateTo(PlayerDestination.Home, clearToRoot = true)
+                                                },
+                                                onNavigate = { navigateTo(it) },
+                                                onScrolledChanged = { headerScrolled = it },
+                                                onHasHeroChanged = { homeHasHero = it },
+                                                onDeviceRevoked = onDeviceRevoked,
+                                                onUnpair = onUnpair,
+                                                onSettingsChanged = { playerSettings = it },
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // TV overlay auto-expanding rail (glides smoothly over content without layout reflow)
+                        if (isTv) {
+                            androidx.compose.animation.AnimatedVisibility(
+                                visible = tvSidebarExpanded,
+                                enter = fadeIn(),
+                                exit = fadeOut(),
+                                modifier = Modifier.fillMaxSize(),
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .background(Color.Black.copy(alpha = 0.52f)),
+                                )
+                            }
+
+                            if (tvShowSidebarRail) {
+                                PlayerSidebar(
+                                    current = current,
+                                    collapsed = !tvSidebarExpanded,
+                                    watchingCount = watchingOthersCount,
+                                    isAdmin = isAdminUser,
+                                    showCollapseToggle = true,
+                                    collapseLabel = if (tvSidebarHidden) "Pin Sidebar Rail" else "Hide Sidebar",
+                                    isOverlay = tvSidebarExpanded,
+                                    profileName = currentRecord.profileName,
+                                    avatarUrl = activeAvatarUrl ?: api.artwork.profileAvatar(currentRecord.profileId),
+                                    onProfileClick = {
+                                        tvSidebarForcedOpen = false
+                                        showProfileSheet = true
+                                    },
+                                    firstItemFocusRequester = sidebarFocusRequester,
+                                    onFocusStateChanged = { hasFocus ->
+                                        sidebarHasFocus = hasFocus
+                                        if (!hasFocus) tvSidebarForcedOpen = false
+                                    },
+                                    onNavigate = { dest ->
+                                        tvSidebarForcedOpen = false
+                                        navigateTo(dest, clearToRoot = true)
+                                        scope.launch {
+                                            delay(60L)
+                                            runCatching { contentFocusRequester.requestFocus() }
+                                        }
+                                    },
+                                    onToggleCollapse = {
+                                        tvSidebarHidden = !tvSidebarHidden
+                                        tvSidebarForcedOpen = false
+                                        scope.launch {
+                                            delay(40L)
+                                            runCatching { contentFocusRequester.requestFocus() }
+                                        }
+                                    },
+                                )
+                            }
                         }
                     }
 
@@ -416,22 +624,12 @@ fun PlayerShell(
                         )
                     }
 
-                    // Persistent Mini Transport Bar (only when local audio is active)
+                    // Persistent Mini Transport Bar on Phone/Tablet (on TV, docked as a sleek top-right pill next to Profile)
                     val active = coordinator.activeItem
-                    if (!castController.isCastingMedia && active != null && !active.isVideo) {
-                        val frac = if (coordinator.durationMs > 0L) {
-                            (coordinator.positionMs.toFloat() / coordinator.durationMs.toFloat()).coerceIn(0f, 1f)
-                        } else {
-                            0f
-                        }
-                        MiniTransportBar(
+                    if (!isTv && !castController.isCastingMedia && active != null && !active.isVideo) {
+                        MiniTransportBarHost(
+                            coordinator = coordinator,
                             item = active,
-                            isPlaying = coordinator.isPlaying,
-                            progressFraction = frac,
-                            onExpand = { coordinator.showAudioSheet = true },
-                            onTogglePlayPause = { coordinator.togglePlayPause() },
-                            onNext = { coordinator.skipNext() },
-                            onStop = { coordinator.stopPlayback() },
                         )
                     }
                 }
@@ -524,7 +722,12 @@ fun PlayerShell(
                 )
             }
 
-            if (coordinator.showAudioSheet) {
+            AnimatedVisibility(
+                visible = coordinator.showAudioSheet,
+                enter = fadeIn(tween(240)) + scaleIn(tween(260), initialScale = 0.97f),
+                exit = fadeOut(tween(180)),
+                modifier = Modifier.fillMaxSize(),
+            ) {
                 AudioNowPlayingSheet(
                     coordinator = coordinator,
                     api = api,
@@ -535,31 +738,39 @@ fun PlayerShell(
             }
 
             val videoItem = coordinator.activeItem
-            if (videoItem != null && videoItem.isVideo && (coordinator.showVideoOverlay || coordinator.isVideoMinimized)) {
-                key(videoItem.streamUrl, videoItem.itemId) {
-                    VideoPlayerOverlay(
-                        item = videoItem,
-                        api = api,
-                        pinnedHttpClient = pinnedClient,
-                        minimized = coordinator.isVideoMinimized,
-                        castConnected = castController.isConnected,
-                        onOpenCast = { showCastSheet = true },
-                        onOpenChannel = { channelId ->
-                            coordinator.minimizeVideo(coordinator.positionMs, coordinator.durationMs)
-                            navigateTo(PlayerDestination.YouTubeChannel(channelId, videoItem.subtitle.ifBlank { "Channel" }))
-                        },
-                        onMinimize = { pos, dur -> coordinator.minimizeVideo(pos, dur) },
-                        onExpand = { coordinator.expandVideo() },
-                        onLeaveParty = { coordinator.detachWatchParty() },
-                        nextVideoTitle = coordinator.videoQueue.getOrNull(1)?.title,
-                        onVideoEnded = { coordinator.playNextVideo() },
-                        onSurfChannel = if (videoItem.isLiveGuide && coordinator.liveChannelSurfer != null) {
-                            { delta -> coordinator.surfLiveChannel(delta) }
-                        } else {
-                            null
-                        },
-                        onClose = { pos, dur -> coordinator.closeVideo(videoItem, pos, dur) },
-                    )
+            val showVideo = videoItem != null && videoItem.isVideo && (coordinator.showVideoOverlay || coordinator.isVideoMinimized)
+            AnimatedVisibility(
+                visible = showVideo,
+                enter = fadeIn(tween(260)) + scaleIn(tween(280), initialScale = 0.96f),
+                exit = fadeOut(tween(200)),
+                modifier = Modifier.fillMaxSize(),
+            ) {
+                if (videoItem != null && videoItem.isVideo) {
+                    key(videoItem.streamUrl, videoItem.itemId) {
+                        VideoPlayerOverlay(
+                            item = videoItem,
+                            api = api,
+                            pinnedHttpClient = pinnedClient,
+                            minimized = coordinator.isVideoMinimized,
+                            castConnected = castController.isConnected,
+                            onOpenCast = { showCastSheet = true },
+                            onOpenChannel = { channelId ->
+                                coordinator.minimizeVideo(coordinator.positionMs, coordinator.durationMs)
+                                navigateTo(PlayerDestination.YouTubeChannel(channelId, videoItem.subtitle.ifBlank { "Channel" }))
+                            },
+                            onMinimize = { pos, dur -> coordinator.minimizeVideo(pos, dur) },
+                            onExpand = { coordinator.expandVideo() },
+                            onLeaveParty = { coordinator.detachWatchParty() },
+                            nextVideoTitle = coordinator.videoQueue.getOrNull(1)?.title,
+                            onVideoEnded = { coordinator.playNextVideo() },
+                            onSurfChannel = if (videoItem.isLiveGuide && coordinator.liveChannelSurfer != null) {
+                                { delta -> coordinator.surfLiveChannel(delta) }
+                            } else {
+                                null
+                            },
+                            onClose = { pos, dur -> coordinator.closeVideo(videoItem, pos, dur) },
+                        )
+                    }
                 }
             }
 
@@ -621,25 +832,47 @@ private fun FloatingTopHeader(
     avatarUrl: String?,
     showBack: Boolean,
     showMenuButton: Boolean,
+    showCastButton: Boolean = true,
+    minimizedVideoTitle: String? = null,
+    tvMiniAudioSlot: (@Composable () -> Unit)? = null,
     transparentOverHero: Boolean,
     castConnected: Boolean,
     onBack: () -> Unit,
     onOpenDrawer: () -> Unit,
+    onExpandMinimizedVideo: () -> Unit = {},
     onCastClick: () -> Unit,
     onSearch: () -> Unit,
     onProfileClick: () -> Unit,
 ) {
+    val focusManager = LocalFocusManager.current
+    val isTv = LocalIsTv.current
     val bgModifier = if (transparentOverHero) {
         Modifier.background(
             Brush.verticalGradient(
-                listOf(SoulSyncColors.BgPrimary.copy(alpha = 0.82f), Color.Transparent),
+                listOf(SoulSyncColors.BgPrimary.copy(alpha = if (isTv) 0.48f else 0.82f), Color.Transparent),
             ),
         )
     } else {
         Modifier.background(SoulSyncColors.BgPrimary.copy(alpha = 0.94f))
     }
 
-    Column(modifier = Modifier.fillMaxWidth().then(bgModifier)) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .zIndex(3f)
+            .then(bgModifier)
+            .onPreviewKeyEvent { ev ->
+                if (isTv && ev.type == KeyEventType.KeyDown && ev.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_DPAD_DOWN) {
+                    // Always guarantee D-pad Down from Search / Profile drops smoothly back into main page content
+                    if (!focusManager.moveFocus(FocusDirection.Down)) {
+                        focusManager.moveFocus(FocusDirection.Next)
+                    }
+                    true
+                } else {
+                    false
+                }
+            },
+    ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -676,9 +909,11 @@ private fun FloatingTopHeader(
                         modifier = Modifier.size(22.dp),
                     )
                     Spacer(modifier = Modifier.width(8.dp))
+                    val logoBitmap = androidx.compose.ui.graphics.ImageBitmap.imageResource(id = R.drawable.soulsync_mark)
                     Image(
-                        painter = painterResource(id = R.drawable.soulsync_mark),
+                        bitmap = logoBitmap,
                         contentDescription = "SoulSync",
+                        filterQuality = androidx.compose.ui.graphics.FilterQuality.High,
                         modifier = Modifier.size(26.dp),
                     )
                 }
@@ -714,28 +949,67 @@ private fun FloatingTopHeader(
 
             Spacer(modifier = Modifier.weight(1f))
 
-            IconButton(
-                onClick = onCastClick,
-                modifier = Modifier
-                    .size(36.dp)
-                    .clip(CircleShape)
-                    .background(if (castConnected) SoulSyncColors.Accent.copy(alpha = 0.22f) else SoulSyncColors.PanelGlass)
-                    .border(
-                        1.dp,
-                        if (castConnected) SoulSyncColors.Accent else Color.White.copy(alpha = 0.12f),
-                        CircleShape,
+            if (!minimizedVideoTitle.isNullOrBlank()) {
+                Row(
+                    modifier = Modifier
+                        .height(36.dp)
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(SoulSyncColors.Accent.copy(alpha = 0.24f))
+                        .border(1.dp, SoulSyncColors.AccentLight, RoundedCornerShape(999.dp))
+                        .dpadFocusable(RoundedCornerShape(999.dp))
+                        .clickable(onClick = onExpandMinimizedVideo)
+                        .padding(horizontal = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Icon(
+                        Icons.Default.PlayArrow,
+                        contentDescription = "Resume video",
+                        tint = SoulSyncColors.AccentLight,
+                        modifier = Modifier.size(16.dp),
                     )
-                    .dpadFocusable(CircleShape),
-            ) {
-                Icon(
-                    imageVector = if (castConnected) Icons.Default.CastConnected else Icons.Default.Cast,
-                    contentDescription = "Cast",
-                    tint = if (castConnected) SoulSyncColors.AccentLight else Color.White,
-                    modifier = Modifier.size(18.dp),
-                )
+                    Text(
+                        text = "Resume: $minimizedVideoTitle",
+                        color = Color.White,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.width(140.dp),
+                    )
+                }
+                Spacer(modifier = Modifier.width(8.dp))
             }
 
-            Spacer(modifier = Modifier.width(8.dp))
+            if (tvMiniAudioSlot != null) {
+                tvMiniAudioSlot()
+                Spacer(modifier = Modifier.width(10.dp))
+            }
+
+            if (showCastButton) {
+                IconButton(
+                    onClick = onCastClick,
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .background(if (castConnected) SoulSyncColors.Accent.copy(alpha = 0.22f) else SoulSyncColors.PanelGlass)
+                        .border(
+                            1.dp,
+                            if (castConnected) SoulSyncColors.Accent else Color.White.copy(alpha = 0.12f),
+                            CircleShape,
+                        )
+                        .dpadFocusable(CircleShape),
+                ) {
+                    Icon(
+                        imageVector = if (castConnected) Icons.Default.CastConnected else Icons.Default.Cast,
+                        contentDescription = "Cast",
+                        tint = if (castConnected) SoulSyncColors.AccentLight else Color.White,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+
+                Spacer(modifier = Modifier.width(8.dp))
+            }
 
             // Clean circular Profile avatar button -> opens Profile & Household Switcher Sheet
             Box(
@@ -805,7 +1079,7 @@ private fun ProfileMenuSheet(
         }
     }
 
-    ModalBottomSheet(
+    AdaptiveTvSheet(
         onDismissRequest = onDismiss,
         containerColor = SoulSyncColors.Surface,
         contentColor = SoulSyncColors.TextPrimary,
@@ -941,7 +1215,7 @@ private fun ProfileMenuSheet(
                                 else submitSwitch(authTarget, pin = credentialInput)
                             },
                             enabled = !switching && credentialInput.isNotBlank(),
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier.fillMaxWidth().dpadFocusable(androidx.compose.foundation.shape.RoundedCornerShape(999.dp)),
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = SoulSyncColors.Accent,
                                 contentColor = SoulSyncColors.OnAccent,
@@ -985,6 +1259,7 @@ private fun ProfileSheetAction(icon: ImageVector, label: String, onClick: () -> 
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
+            .dpadFocusable(RoundedCornerShape(12.dp))
             .clickable(onClick = onClick)
             .padding(horizontal = 10.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -997,113 +1272,429 @@ private fun ProfileSheetAction(icon: ImageVector, label: String, onClick: () -> 
 }
 
 @Composable
+private fun SoulSyncAnimatedBrandMark(
+    size: Dp,
+) {
+    val transition = androidx.compose.animation.core.rememberInfiniteTransition(label = "sidebarBrandAnim")
+    val breathe by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+            animation = tween(durationMillis = 2200, easing = androidx.compose.animation.core.EaseInOut),
+            repeatMode = androidx.compose.animation.core.RepeatMode.Reverse,
+        ),
+        label = "brandBreathe",
+    )
+    val drift by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+            animation = tween(durationMillis = 4200, easing = androidx.compose.animation.core.EaseInOut),
+            repeatMode = androidx.compose.animation.core.RepeatMode.Reverse,
+        ),
+        label = "brandAuraDrift",
+    )
+    val logoBitmap = androidx.compose.ui.graphics.ImageBitmap.imageResource(id = R.drawable.soulsync_mark)
+    Box(
+        modifier = Modifier.size(size + 8.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        // Soft dual-lobe chromatic aura echoing the SoulSync cinema boot animation
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .clip(CircleShape)
+                .background(
+                    Brush.radialGradient(
+                        0.0f to SoulSyncColors.AccentLight.copy(alpha = 0.24f + breathe * 0.14f),
+                        0.55f to Color(0xFF38BDF8).copy(alpha = 0.10f + drift * 0.08f),
+                        1.0f to Color.Transparent,
+                    ),
+                ),
+        )
+        Image(
+            bitmap = logoBitmap,
+            contentDescription = "SoulSync",
+            filterQuality = androidx.compose.ui.graphics.FilterQuality.High,
+            modifier = Modifier
+                .size(size)
+                .graphicsLayer {
+                    val s = 0.96f + breathe * 0.07f
+                    scaleX = s
+                    scaleY = s
+                    rotationZ = (drift - 0.5f) * 2.4f
+                },
+        )
+    }
+}
+
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
+@Composable
 private fun PlayerSidebar(
     current: PlayerDestination,
     collapsed: Boolean,
     watchingCount: Int,
     isAdmin: Boolean,
     showCollapseToggle: Boolean,
+    collapseLabel: String = "Collapse",
+    isOverlay: Boolean = false,
+    profileName: String? = null,
+    avatarUrl: String? = null,
+    onProfileClick: (() -> Unit)? = null,
+    firstItemFocusRequester: FocusRequester? = null,
+    onFocusStateChanged: ((Boolean) -> Unit)? = null,
     onNavigate: (PlayerDestination) -> Unit,
     onToggleCollapse: () -> Unit,
 ) {
-    Column(
-        modifier = Modifier
-            .width(if (collapsed) 72.dp else 248.dp)
-            .fillMaxHeight()
-            .background(
-                Brush.verticalGradient(
-                    listOf(Color(0x0EFFFFFF), Color(0x05FFFFFF)),
-                ),
-            )
-            .statusBarsPadding()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 12.dp, vertical = 16.dp),
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
+    val isTv = LocalIsTv.current
+    val scope = rememberCoroutineScope()
+    val sidebarScrollState = rememberScrollState()
+    val activeItemFocusRequester = remember { FocusRequester() }
+    var wasSidebarFocused by remember { mutableStateOf(false) }
+
+    val isHomeSel = current is PlayerDestination.Home
+    val isSearchSel = current is PlayerDestination.Search
+    LaunchedEffect(isHomeSel, wasSidebarFocused, collapsed) {
+        if (isTv && !collapsed && isHomeSel && wasSidebarFocused) {
+            sidebarScrollState.animateScrollTo(0)
+        }
+    }
+
+    // When TV collapsed, render Plex-style floating minimal glass pill centered on the left edge!
+    // Pressing Left onto it immediately expands into the floating rounded drawer & focuses the active page.
+    if (isTv && collapsed) {
+        Box(
+            modifier = Modifier
+                .fillMaxHeight()
+                .padding(start = 12.dp),
+            contentAlignment = Alignment.CenterStart,
         ) {
-            Image(
-                painter = painterResource(id = R.drawable.soulsync_mark),
-                contentDescription = "SoulSync",
-                modifier = Modifier.size(30.dp),
-            )
-            if (!collapsed) {
-                Spacer(modifier = Modifier.width(10.dp))
-                Text(
-                    text = "SoulSync",
-                    color = Color.White,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 18.sp,
-                    letterSpacing = (-0.2).sp,
+            Column(
+                modifier = Modifier
+                    .width(46.dp)
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(Color(0xC40A0C16))
+                    .border(1.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(999.dp))
+                    .onFocusChanged { state ->
+                        if (state.isFocused || state.hasFocus) {
+                            onFocusStateChanged?.invoke(true)
+                        }
+                    }
+                    .then(firstItemFocusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
+                    .clickable { onFocusStateChanged?.invoke(true) }
+                    .padding(vertical = 12.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                SoulSyncAnimatedBrandMark(size = 24.dp)
+                if (profileName != null) {
+                    ProfileAvatarCircle(
+                        avatarUrl = avatarUrl,
+                        name = profileName,
+                        size = 26.dp,
+                        fontSize = 11.sp,
+                    )
+                }
+                Icon(
+                    imageVector = Icons.Default.Search,
+                    contentDescription = "Search",
+                    tint = if (isSearchSel) SoulSyncColors.AccentLight else Color.White.copy(alpha = 0.78f),
+                    modifier = Modifier.size(18.dp),
+                )
+                Icon(
+                    imageVector = Icons.Default.Home,
+                    contentDescription = "Home",
+                    tint = if (isHomeSel) SoulSyncColors.AccentLight else Color.White.copy(alpha = 0.78f),
+                    modifier = Modifier.size(18.dp),
+                )
+                Icon(
+                    imageVector = Icons.Default.Menu,
+                    contentDescription = "Menu",
+                    tint = Color.White.copy(alpha = 0.72f),
+                    modifier = Modifier.size(18.dp),
                 )
             }
         }
+        return
+    }
 
-        Spacer(modifier = Modifier.height(14.dp))
-
-        SidebarItem(Icons.Default.Home, "Home", current is PlayerDestination.Home, collapsed) { onNavigate(PlayerDestination.Home) }
-        SidebarItem(Icons.Default.LiveTv, "Live Guide", current is PlayerDestination.Guide, collapsed) { onNavigate(PlayerDestination.Guide) }
-        SidebarItem(Icons.Default.CalendarMonth, "Calendar", current is PlayerDestination.Calendar, collapsed) { onNavigate(PlayerDestination.Calendar) }
-        SidebarItem(Icons.Default.Bookmark, "Watchlist", current is PlayerDestination.Watchlist, collapsed) { onNavigate(PlayerDestination.Watchlist) }
-        SidebarItem(
-            icon = Icons.Default.Group,
-            label = if (watchingCount > 0) "Watching ($watchingCount)" else "Watching now",
-            selected = current is PlayerDestination.WatchingNow,
-            collapsed = collapsed,
-        ) { onNavigate(PlayerDestination.WatchingNow) }
-
-        if (!collapsed) SidebarGroupLabel("WATCH") else Spacer(Modifier.height(10.dp))
-        SidebarItem(Icons.Default.Movie, "Movies", current is PlayerDestination.Movies || current is PlayerDestination.MovieDetail, collapsed) { onNavigate(PlayerDestination.Movies) }
-        SidebarItem(Icons.Default.Tv, "TV Shows", current is PlayerDestination.Tv || current is PlayerDestination.ShowDetail || current is PlayerDestination.EpisodeDetail, collapsed) { onNavigate(PlayerDestination.Tv) }
-        SidebarItem(Icons.Default.SmartDisplay, "YouTube", current is PlayerDestination.YouTube || current is PlayerDestination.YouTubeChannel, collapsed) { onNavigate(PlayerDestination.YouTube) }
-
-        if (!collapsed) SidebarGroupLabel("LISTEN") else Spacer(Modifier.height(10.dp))
-        SidebarItem(Icons.Default.MusicNote, "Music", current is PlayerDestination.Music || current is PlayerDestination.AlbumDetail || current is PlayerDestination.ArtistDetail || current is PlayerDestination.PlaylistDetail, collapsed) { onNavigate(PlayerDestination.Music) }
-        SidebarItem(Icons.Default.Podcasts, "Podcasts", current is PlayerDestination.Podcasts || current is PlayerDestination.PodcastDetail, collapsed) { onNavigate(PlayerDestination.Podcasts) }
-        SidebarItem(Icons.Default.Headphones, "Audiobooks", current is PlayerDestination.Audiobooks || current is PlayerDestination.AudiobookDetail, collapsed) { onNavigate(PlayerDestination.Audiobooks) }
-
-        Spacer(modifier = Modifier.weight(1f))
-        HorizontalDivider(color = SoulSyncColors.Line, modifier = Modifier.padding(vertical = 10.dp))
-
-        if (isAdmin) {
-            SidebarItem(
-                Icons.Default.AdminPanelSettings,
-                "Users & Downloads",
-                current is PlayerDestination.AdminUsers || current is PlayerDestination.Downloads,
-                collapsed,
-            ) { onNavigate(PlayerDestination.AdminUsers) }
-        } else {
-            SidebarItem(
-                Icons.Default.Download,
-                "Downloads",
-                current is PlayerDestination.Downloads,
-                collapsed,
-            ) { onNavigate(PlayerDestination.Downloads) }
+    // Auto-focus active page on frame 0 when expanding from the TV floating pill!
+    LaunchedEffect(isTv, collapsed) {
+        if (isTv && !collapsed) {
+            runCatching { activeItemFocusRequester.requestFocus() }
         }
-        SidebarItem(Icons.Default.Settings, "Player Settings", current is PlayerDestination.Settings, collapsed) { onNavigate(PlayerDestination.Settings) }
-        if (showCollapseToggle) {
+    }
+    val isGuideSel = current is PlayerDestination.Guide
+    val isCalendarSel = current is PlayerDestination.Calendar
+    val isWatchlistSel = current is PlayerDestination.Watchlist
+    val isWatchingNowSel = current is PlayerDestination.WatchingNow
+    val isMoviesSel = current is PlayerDestination.Movies ||
+        current is PlayerDestination.MovieDetail ||
+        (current is PlayerDestination.CollectionDetail && current.collection.mediaType == "movie")
+    val isTvSel = current is PlayerDestination.Tv ||
+        current is PlayerDestination.ShowDetail ||
+        current is PlayerDestination.EpisodeDetail ||
+        (current is PlayerDestination.CollectionDetail && current.collection.mediaType != "movie")
+    val isYouTubeSel = current is PlayerDestination.YouTube || current is PlayerDestination.YouTubeChannel
+    val isMusicSel = current is PlayerDestination.Music || current is PlayerDestination.AlbumDetail || current is PlayerDestination.ArtistDetail
+    val isPlaylistsSel = current is PlayerDestination.Playlists || current is PlayerDestination.PlaylistDetail
+    val isPodcastsSel = current is PlayerDestination.Podcasts || current is PlayerDestination.PodcastDetail
+    val isAudiobooksSel = current is PlayerDestination.Audiobooks || current is PlayerDestination.AudiobookDetail
+    val isAdminOrDownloadsSel = if (isAdmin) {
+        current is PlayerDestination.AdminUsers || current is PlayerDestination.Downloads
+    } else {
+        current is PlayerDestination.Downloads
+    }
+    val isSettingsSel = current is PlayerDestination.Settings
+    val anySidebarSelected = isHomeSel || isSearchSel || isGuideSel || isCalendarSel || isWatchlistSel ||
+        isWatchingNowSel || isMoviesSel || isTvSel || isYouTubeSel || isMusicSel ||
+        isPlaylistsSel || isPodcastsSel || isAudiobooksSel || isAdminOrDownloadsSel || isSettingsSel
+
+    fun activeMod(selected: Boolean, extra: Modifier = Modifier): Modifier =
+        if (selected) extra.focusRequester(activeItemFocusRequester) else extra
+
+    val animatedWidth by animateDpAsState(
+        targetValue = if (collapsed) 68.dp else if (isTv) 264.dp else 252.dp,
+        animationSpec = tween(durationMillis = 220, easing = androidx.compose.animation.core.FastOutSlowInEasing),
+        label = "sidebarWidth",
+    )
+    val tvFloatingDrawer = isTv && isOverlay
+    val drawerShape = if (tvFloatingDrawer) RoundedCornerShape(22.dp) else RoundedCornerShape(0.dp)
+    Row(
+        modifier = Modifier
+            .then(if (tvFloatingDrawer) Modifier.padding(start = 14.dp, top = 14.dp, bottom = 14.dp) else Modifier)
+            .width(animatedWidth)
+            .fillMaxHeight()
+            .clip(drawerShape)
+            .background(
+                if (tvFloatingDrawer) {
+                    Brush.verticalGradient(
+                        listOf(Color(0xF60A0C15), Color(0xF60D101E)),
+                    )
+                } else if (isOverlay) {
+                    Brush.horizontalGradient(
+                        listOf(Color(0xFA090B14), Color(0xF2101424)),
+                    )
+                } else {
+                    Brush.verticalGradient(
+                        listOf(Color(0xFF0A0C16), Color(0xFF0D101D)),
+                    )
+                },
+            )
+            .then(
+                if (tvFloatingDrawer) Modifier.border(1.dp, Color.White.copy(alpha = 0.14f), drawerShape)
+                else Modifier,
+            )
+            .then(
+                if (isTv) {
+                    Modifier
+                        .focusProperties {
+                            enter = { activeItemFocusRequester }
+                        }
+                        .focusGroup()
+                } else {
+                    Modifier
+                },
+            )
+            .onFocusChanged { state ->
+                val nowFocused = state.hasFocus
+                wasSidebarFocused = nowFocused
+                onFocusStateChanged?.invoke(nowFocused)
+            },
+    ) {
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight()
+                .statusBarsPadding()
+                .verticalScroll(sidebarScrollState)
+                .padding(horizontal = if (isTv) 8.dp else 10.dp, vertical = if (isTv) 8.dp else 16.dp),
+            horizontalAlignment = if (collapsed) Alignment.CenterHorizontally else Alignment.Start,
+        ) {
+            // Animated SoulSync cinema brand header
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = if (collapsed) 0.dp else 6.dp, vertical = if (isTv) 2.dp else 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = if (collapsed) Arrangement.Center else Arrangement.Start,
+            ) {
+                SoulSyncAnimatedBrandMark(size = if (isTv) 28.dp else 32.dp)
+                if (!collapsed) {
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        Text(
+                            text = "SoulSync",
+                            color = Color.White,
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = 18.sp,
+                            letterSpacing = (-0.2).sp,
+                        )
+                        Box(
+                            modifier = Modifier
+                                .width(44.dp)
+                                .height(2.dp)
+                                .clip(CircleShape)
+                                .background(
+                                    Brush.horizontalGradient(
+                                        listOf(Color(0xFFF43F5E), SoulSyncColors.AccentLight, Color(0xFF38BDF8)),
+                                    ),
+                                ),
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(if (isTv) 10.dp else 14.dp))
+
+            if (isTv && !collapsed && profileName != null && onProfileClick != null) {
+                var profileFocused by remember { mutableStateOf(false) }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(if (profileFocused) Color.White else Color.White.copy(alpha = 0.05f))
+                        .onFocusChanged { profileFocused = it.isFocused || it.hasFocus }
+                        .clickable(onClick = onProfileClick)
+                        .padding(horizontal = 10.dp, vertical = 7.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    ProfileAvatarCircle(
+                        avatarUrl = avatarUrl,
+                        name = profileName,
+                        size = 26.dp,
+                        fontSize = 11.sp,
+                    )
+                    Text(
+                        text = profileName,
+                        color = if (profileFocused) Color(0xFF0B0D14) else Color.White,
+                        fontSize = 13.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Icon(
+                        imageVector = Icons.Default.ChevronRight,
+                        contentDescription = null,
+                        tint = if (profileFocused) Color(0xFF0B0D14) else SoulSyncColors.TextSecondary,
+                        modifier = Modifier.size(16.dp),
+                    )
+                }
+                Spacer(modifier = Modifier.height(6.dp))
+                SidebarItem(
+                    icon = Icons.Default.Search,
+                    label = "Search",
+                    selected = isSearchSel,
+                    collapsed = collapsed,
+                    itemModifier = activeMod(isSearchSel),
+                ) { onNavigate(PlayerDestination.Search) }
+            }
+
             SidebarItem(
-                icon = if (collapsed) Icons.Default.ChevronRight else Icons.Default.ChevronLeft,
-                label = "Collapse",
-                selected = false,
+                icon = Icons.Default.Home,
+                label = "Home",
+                selected = isHomeSel,
                 collapsed = collapsed,
-                onClick = onToggleCollapse,
+                itemModifier = activeMod(
+                    selected = isHomeSel || !anySidebarSelected,
+                    extra = firstItemFocusRequester?.let { Modifier.focusRequester(it) } ?: Modifier,
+                ),
+            ) { onNavigate(PlayerDestination.Home) }
+            SidebarItem(Icons.Default.LiveTv, "Live Guide", isGuideSel, collapsed, itemModifier = activeMod(isGuideSel)) { onNavigate(PlayerDestination.Guide) }
+            SidebarItem(Icons.Default.CalendarMonth, "Calendar", isCalendarSel, collapsed, itemModifier = activeMod(isCalendarSel)) { onNavigate(PlayerDestination.Calendar) }
+            SidebarItem(Icons.Default.Bookmark, "Watchlist", isWatchlistSel, collapsed, itemModifier = activeMod(isWatchlistSel)) { onNavigate(PlayerDestination.Watchlist) }
+            SidebarItem(
+                icon = Icons.Default.Group,
+                label = "Watching now",
+                selected = isWatchingNowSel,
+                collapsed = collapsed,
+                badgeCount = watchingCount,
+                itemModifier = activeMod(isWatchingNowSel),
+            ) { onNavigate(PlayerDestination.WatchingNow) }
+
+            SidebarSectionBreak("WATCH", collapsed)
+            SidebarItem(Icons.Default.Movie, "Movies", isMoviesSel, collapsed, itemModifier = activeMod(isMoviesSel)) { onNavigate(PlayerDestination.Movies) }
+            SidebarItem(Icons.Default.Tv, "TV Shows", isTvSel, collapsed, itemModifier = activeMod(isTvSel)) { onNavigate(PlayerDestination.Tv) }
+            SidebarItem(Icons.Default.SmartDisplay, "YouTube", isYouTubeSel, collapsed, itemModifier = activeMod(isYouTubeSel)) { onNavigate(PlayerDestination.YouTube) }
+
+            SidebarSectionBreak("LISTEN", collapsed)
+            SidebarItem(Icons.Default.MusicNote, "Music", isMusicSel, collapsed, itemModifier = activeMod(isMusicSel)) { onNavigate(PlayerDestination.Music) }
+            SidebarItem(Icons.AutoMirrored.Filled.QueueMusic, "Playlists", isPlaylistsSel, collapsed, itemModifier = activeMod(isPlaylistsSel)) { onNavigate(PlayerDestination.Playlists) }
+            SidebarItem(Icons.Default.Podcasts, "Podcasts", isPodcastsSel, collapsed, itemModifier = activeMod(isPodcastsSel)) { onNavigate(PlayerDestination.Podcasts) }
+            SidebarItem(Icons.Default.Headphones, "Audiobooks", isAudiobooksSel, collapsed, itemModifier = activeMod(isAudiobooksSel)) { onNavigate(PlayerDestination.Audiobooks) }
+
+            Spacer(modifier = Modifier.weight(1f))
+            HorizontalDivider(
+                color = Color.White.copy(alpha = 0.08f),
+                modifier = Modifier.padding(horizontal = if (collapsed) 10.dp else 4.dp, vertical = 8.dp),
+            )
+
+            if (isAdmin) {
+                SidebarItem(
+                    Icons.Default.AdminPanelSettings,
+                    "Users & Downloads",
+                    isAdminOrDownloadsSel,
+                    collapsed,
+                    itemModifier = activeMod(isAdminOrDownloadsSel),
+                ) { onNavigate(PlayerDestination.AdminUsers) }
+            } else {
+                SidebarItem(
+                    Icons.Default.Download,
+                    "Downloads",
+                    isAdminOrDownloadsSel,
+                    collapsed,
+                    itemModifier = activeMod(isAdminOrDownloadsSel),
+                ) { onNavigate(PlayerDestination.Downloads) }
+            }
+            SidebarItem(Icons.Default.Settings, "Player Settings", isSettingsSel, collapsed, itemModifier = activeMod(isSettingsSel)) { onNavigate(PlayerDestination.Settings) }
+            if (showCollapseToggle) {
+                SidebarItem(
+                    icon = if (collapsed) Icons.Default.ChevronRight else Icons.Default.ChevronLeft,
+                    label = collapseLabel,
+                    selected = false,
+                    collapsed = collapsed,
+                    onClick = onToggleCollapse,
+                )
+            }
+        }
+        if (!tvFloatingDrawer) {
+            // Subtle luminous right-edge separator
+            Box(
+                modifier = Modifier
+                    .width(1.dp)
+                    .fillMaxHeight()
+                    .background(
+                        if (isOverlay) SoulSyncColors.AccentLight.copy(alpha = 0.28f)
+                        else Color.White.copy(alpha = 0.08f),
+                    ),
             )
         }
     }
 }
 
 @Composable
-private fun SidebarGroupLabel(text: String) {
-    Text(
-        text = text,
-        color = SoulSyncColors.TextSecondary,
-        fontSize = 10.sp,
-        fontWeight = FontWeight.Bold,
-        letterSpacing = 1.sp,
-        modifier = Modifier.padding(start = 10.dp, top = 16.dp, bottom = 6.dp),
-    )
+private fun SidebarSectionBreak(text: String, collapsed: Boolean) {
+    if (collapsed) {
+        Box(
+            modifier = Modifier
+                .padding(vertical = 6.dp)
+                .width(22.dp)
+                .height(1.dp)
+                .clip(CircleShape)
+                .background(Color.White.copy(alpha = 0.14f)),
+        )
+    } else {
+        Text(
+            text = text,
+            color = SoulSyncColors.TextSecondary.copy(alpha = 0.78f),
+            fontSize = 10.sp,
+            fontWeight = FontWeight.ExtraBold,
+            letterSpacing = 1.4.sp,
+            modifier = Modifier.padding(start = 12.dp, top = 14.dp, bottom = 5.dp),
+        )
+    }
 }
 
 @Composable
@@ -1112,31 +1703,102 @@ private fun SidebarItem(
     label: String,
     selected: Boolean,
     collapsed: Boolean,
+    badgeCount: Int = 0,
+    itemModifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
-    val bg = if (selected) SoulSyncColors.Accent.copy(alpha = 0.16f) else Color.Transparent
-    val fg = if (selected) SoulSyncColors.AccentLight else SoulSyncColors.TextSoft
+    val isTv = LocalIsTv.current
+    var focused by remember { mutableStateOf(false) }
+    val fg = when {
+        isTv && focused -> Color(0xFF0B0D14)
+        selected || focused -> Color.White
+        else -> SoulSyncColors.TextSoft
+    }
+    val iconTint = when {
+        isTv && focused -> Color(0xFF0B0D14)
+        focused -> Color.White
+        selected -> SoulSyncColors.AccentLight
+        else -> SoulSyncColors.TextSoft
+    }
+    val itemShape = if (isTv) RoundedCornerShape(999.dp) else RoundedCornerShape(12.dp)
+    val rowBg = when {
+        isTv && focused -> Brush.horizontalGradient(listOf(Color.White, Color.White))
+        focused -> Brush.horizontalGradient(
+            listOf(SoulSyncColors.Accent.copy(alpha = 0.52f), SoulSyncColors.AccentLight.copy(alpha = 0.24f)),
+        )
+        selected -> Brush.horizontalGradient(
+            listOf(SoulSyncColors.Accent.copy(alpha = 0.24f), SoulSyncColors.Accent.copy(alpha = 0.06f)),
+        )
+        else -> Brush.horizontalGradient(listOf(Color.Transparent, Color.Transparent))
+    }
+    val borderColor = if (!isTv && focused) SoulSyncColors.AccentLight.copy(alpha = 0.72f) else Color.Transparent
     Row(
-        modifier = Modifier
+        modifier = itemModifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
-            .background(bg)
-            .dpadFocusable(RoundedCornerShape(10.dp))
+            .clip(itemShape)
+            .background(rowBg)
+            .border(1.dp, borderColor, itemShape)
+            .onFocusChanged { focused = it.isFocused || it.hasFocus }
             .clickable(onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 11.dp),
+            .padding(
+                start = if (collapsed) 0.dp else 8.dp,
+                end = if (collapsed) 0.dp else 12.dp,
+                top = if (isTv) 7.dp else 10.dp,
+                bottom = if (isTv) 7.dp else 10.dp,
+            ),
         verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = if (collapsed) Arrangement.Center else Arrangement.Start,
     ) {
-        Icon(icon, contentDescription = label, tint = fg, modifier = Modifier.size(20.dp))
+        // Signature glowing left accent bar for the active destination
+        if (!collapsed) {
+            Box(
+                modifier = Modifier
+                    .width(3.dp)
+                    .height(18.dp)
+                    .clip(CircleShape)
+                    .background(if (selected) SoulSyncColors.AccentLight else Color.Transparent),
+            )
+            Spacer(modifier = Modifier.width(9.dp))
+        }
+        Box(contentAlignment = Alignment.Center) {
+            Icon(icon, contentDescription = label, tint = iconTint, modifier = Modifier.size(if (isTv) 19.dp else 20.dp))
+            if (collapsed && badgeCount > 0) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .size(7.dp)
+                        .clip(CircleShape)
+                        .background(Color(0xFF10B981)),
+                )
+            }
+        }
         if (!collapsed) {
             Spacer(modifier = Modifier.width(12.dp))
             Text(
                 text = label,
-                color = if (selected) Color.White else SoulSyncColors.TextSoft,
+                color = fg,
                 fontSize = 14.sp,
                 fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
             )
+            if (badgeCount > 0) {
+                Box(
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .background(Color(0xFF10B981).copy(alpha = 0.22f))
+                        .border(1.dp, Color(0xFF10B981).copy(alpha = 0.5f), CircleShape)
+                        .padding(horizontal = 7.dp, vertical = 2.dp),
+                ) {
+                    Text(
+                        text = badgeCount.toString(),
+                        color = Color(0xFF6EE7B7),
+                        fontSize = 10.5.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                    )
+                }
+            }
         }
     }
 }
@@ -1176,6 +1838,7 @@ private fun PlayerContent(
         PlayerDestination.AdminUsers -> AdminUsersScreen(api, coordinator, onDeviceRevoked)
         PlayerDestination.Movies -> MoviesScreen(api, { onNavigate(PlayerDestination.MovieDetail(it)) }, onDeviceRevoked)
         is PlayerDestination.MovieDetail -> MovieDetailScreen(current.movieId, api, coordinator, onNavigate, onDeviceRevoked)
+        is PlayerDestination.CollectionDetail -> CollectionDetailScreen(current.collection, api, onNavigate, onDeviceRevoked)
         PlayerDestination.Tv -> TvScreen(api, { onNavigate(PlayerDestination.ShowDetail(it)) }, onDeviceRevoked)
         is PlayerDestination.ShowDetail -> ShowDetailScreen(
             showId = current.showId,
@@ -1189,6 +1852,7 @@ private fun PlayerContent(
         is PlayerDestination.EpisodeDetail -> EpisodeDetailScreen(current.showId, current.episodeId, api, coordinator, onNavigate, onDeviceRevoked)
         is PlayerDestination.PersonDetail -> PersonDetailScreen(current.tmdbId, current.name, api, onNavigate, onDeviceRevoked)
         PlayerDestination.Music -> MusicScreen(api, coordinator, onNavigate, onDeviceRevoked)
+        PlayerDestination.Playlists -> MusicScreen(api, coordinator, onNavigate, onDeviceRevoked, startOnPlaylists = true)
         is PlayerDestination.ArtistDetail -> ArtistDetailScreen(current.artistId, api, { onNavigate(PlayerDestination.AlbumDetail(it)) }, onDeviceRevoked)
         is PlayerDestination.AlbumDetail -> AlbumDetailScreen(
             albumId = current.albumId,
@@ -1232,6 +1896,156 @@ private fun PlayerContent(
 }
 
 @Composable
+internal fun TvTopRightMiniPlayer(
+    coordinator: PlaybackCoordinator,
+    item: ActivePlayable,
+) {
+    val isPlaying = coordinator.isPlaying
+    val frac = if (coordinator.durationMs > 0L) {
+        (coordinator.positionMs.toFloat() / coordinator.durationMs.toFloat()).coerceIn(0f, 1f)
+    } else {
+        0f
+    }
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        // Clickable Now Playing pill (album art + title + live progress strip)
+        Surface(
+            shape = RoundedCornerShape(999.dp),
+            color = Color(0xEE181A28),
+            border = BorderStroke(
+                1.dp,
+                if (isPlaying) SoulSyncColors.AccentLight.copy(alpha = 0.55f) else Color.White.copy(alpha = 0.14f),
+            ),
+            modifier = Modifier
+                .height(38.dp)
+                .dpadFocusable(RoundedCornerShape(999.dp))
+                .clickable { coordinator.showAudioSheet = true },
+        ) {
+            Box {
+                Row(
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .padding(start = 6.dp, end = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    SoulSyncArtwork(
+                        url = item.artworkUrl,
+                        contentDescription = item.title,
+                        fallbackIcon = Icons.Default.MusicNote,
+                        maxPx = 128,
+                        modifier = Modifier
+                            .size(26.dp)
+                            .clip(CircleShape),
+                    )
+                    Column(
+                        modifier = Modifier.width(156.dp),
+                        verticalArrangement = Arrangement.Center,
+                    ) {
+                        Text(
+                            text = item.title,
+                            color = Color.White,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        if (item.subtitle.isNotBlank()) {
+                            Text(
+                                text = item.subtitle,
+                                color = SoulSyncColors.TextSecondary,
+                                fontSize = 10.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                }
+                if (frac > 0f) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.BottomStart)
+                            .fillMaxWidth(frac)
+                            .height(2.dp)
+                            .background(SoulSyncColors.AccentLight),
+                    )
+                }
+            }
+        }
+
+        // Compact TV transport buttons right next to the pill
+        IconButton(
+            onClick = { coordinator.togglePlayPause() },
+            modifier = Modifier
+                .size(34.dp)
+                .clip(CircleShape)
+                .background(Color.White.copy(alpha = 0.12f))
+                .dpadFocusable(CircleShape),
+        ) {
+            Icon(
+                imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                contentDescription = if (isPlaying) "Pause" else "Play",
+                tint = Color.White,
+                modifier = Modifier.size(18.dp),
+            )
+        }
+        IconButton(
+            onClick = { coordinator.skipNext() },
+            modifier = Modifier
+                .size(34.dp)
+                .clip(CircleShape)
+                .background(Color.White.copy(alpha = 0.10f))
+                .dpadFocusable(CircleShape),
+        ) {
+            Icon(
+                imageVector = Icons.Default.SkipNext,
+                contentDescription = "Next",
+                tint = Color.White,
+                modifier = Modifier.size(18.dp),
+            )
+        }
+        IconButton(
+            onClick = { coordinator.stopPlayback() },
+            modifier = Modifier
+                .size(34.dp)
+                .clip(CircleShape)
+                .background(Color.White.copy(alpha = 0.08f))
+                .dpadFocusable(CircleShape),
+        ) {
+            Icon(
+                imageVector = Icons.Default.Close,
+                contentDescription = "Stop music",
+                tint = SoulSyncColors.TextSoft,
+                modifier = Modifier.size(16.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun MiniTransportBarHost(
+    coordinator: PlaybackCoordinator,
+    item: ActivePlayable,
+) {
+    val frac = if (coordinator.durationMs > 0L) {
+        (coordinator.positionMs.toFloat() / coordinator.durationMs.toFloat()).coerceIn(0f, 1f)
+    } else {
+        0f
+    }
+    MiniTransportBar(
+        item = item,
+        isPlaying = coordinator.isPlaying,
+        progressFraction = frac,
+        onExpand = { coordinator.showAudioSheet = true },
+        onTogglePlayPause = { coordinator.togglePlayPause() },
+        onNext = { coordinator.skipNext() },
+        onStop = { coordinator.stopPlayback() },
+    )
+}
+
+@Composable
 private fun MiniTransportBar(
     item: ActivePlayable,
     isPlaying: Boolean,
@@ -1249,6 +2063,7 @@ private fun MiniTransportBar(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 10.dp, vertical = 6.dp)
+            .dpadFocusable(RoundedCornerShape(16.dp))
             .clickable(onClick = onExpand),
     ) {
         Column {

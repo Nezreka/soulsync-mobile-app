@@ -5,13 +5,17 @@ import android.content.Intent
 import android.provider.Settings
 import android.view.ViewGroup
 import android.widget.FrameLayout
+import androidx.activity.compose.BackHandler
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.annotation.OptIn
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -39,6 +43,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AspectRatio
 import androidx.compose.material.icons.filled.Brightness6
 import androidx.compose.material.icons.filled.Cast
@@ -68,6 +73,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.foundation.focusable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -108,6 +114,7 @@ import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import net.ssync.pairing.theme.SoulSyncColors
+import net.ssync.pairing.ui.LocalIsTv
 import net.ssync.pairing.ui.dpadFocusable
 import net.ssync.player.MusicApiResult
 import net.ssync.player.PlayerApiClient
@@ -140,6 +147,7 @@ fun VideoPlayerOverlay(
     onClose: (positionMs: Long, durationMs: Long) -> Unit,
 ) {
     val context = LocalContext.current
+    val isTv = LocalIsTv.current
     val scope = rememberCoroutineScope()
     LaunchedEffect(context) { PlayerDevicePrefs.init(context) }
     val displayPrefs by PlayerDevicePrefs.state.collectAsState()
@@ -155,32 +163,28 @@ fun VideoPlayerOverlay(
             item.streamUrl.startsWith("https://", ignoreCase = true)
     }
 
-    val exoPlayer = remember(item.streamUrl) {
-        // a downloaded video is a file:// uri: OkHttp alone can't open it
+    // Single reused ExoPlayer instance with decoder fallback enabled:
+    // - Prevents Tegra/Shield TV hardware MediaCodec deadlocks & crashes when transitioning
+    //   between Guide commercials and shows (never creates a 2nd decoder before releasing the 1st).
+    // - Enables software decoder fallback for audio/mpeg (MP2/MP3) Guide tracks when hardware
+    //   audio decoders reject mid-stream frames.
+    val exoPlayer = remember {
         val dataSourceFactory = DefaultDataSource.Factory(context, OkHttpDataSource.Factory(pinnedHttpClient))
+        val renderersFactory = androidx.media3.exoplayer.DefaultRenderersFactory(context)
+            .setEnableDecoderFallback(true)
         val audioAttributes = AudioAttributes.Builder()
             .setUsage(C.USAGE_MEDIA)
             .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
             .build()
-        ExoPlayer.Builder(context)
+        ExoPlayer.Builder(context, renderersFactory)
             .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory))
             .setAudioAttributes(audioAttributes, true)
             .setHandleAudioBecomingNoisy(true)
-            .build().apply {
-                // Only direct-start immediately for offline local files; for remote streams we
-                // consult /api/player/playable first (like desktop) so AC-3/E-AC-3/HEVC/AV1/DTS
-                // files start directly on the transcoded H.264+AAC stream instead of rendering a
-                // black screen with silent audio while the clock ticks!
-                if (!isRemoteStream) {
-                    setMediaItem(MediaItem.fromUri(item.streamUrl))
-                    if (item.resumePositionMs > 0L) {
-                        seekTo(item.resumePositionMs)
-                    }
-                    prepare()
-                    playWhenReady = true
-                }
-            }
+            .build()
     }
+    val latestItem by androidx.compose.runtime.rememberUpdatedState(item)
+    val latestOnVideoEnded by androidx.compose.runtime.rememberUpdatedState(onVideoEnded)
+    val latestOnClose by androidx.compose.runtime.rememberUpdatedState(onClose)
 
     var isPlaying by remember { mutableStateOf(true) }
     var isBuffering by remember { mutableStateOf(true) }
@@ -243,7 +247,19 @@ fun VideoPlayerOverlay(
     }
 
     LaunchedEffect(item.streamUrl, item.itemType, item.itemId) {
-        if (!isRemoteStream) return@LaunchedEffect
+        playbackError = null
+        isBuffering = true
+        exoPlayer.stop()
+        exoPlayer.clearMediaItems()
+        if (!isRemoteStream) {
+            exoPlayer.setMediaItem(MediaItem.fromUri(item.streamUrl))
+            if (item.resumePositionMs > 0L) {
+                exoPlayer.seekTo(item.resumePositionMs)
+            }
+            exoPlayer.prepare()
+            exoPlayer.playWhenReady = true
+            return@LaunchedEffect
+        }
         if (canTranscode) {
             val res = api.fetchPlayable(item.itemType, item.itemId)
             if (res is MusicApiResult.Success) {
@@ -321,14 +337,22 @@ fun VideoPlayerOverlay(
                 if (!usingTranscode && exoPlayer.duration > 0L) {
                     durationMs = exoPlayer.duration
                 }
-                if (playbackState == Player.STATE_ENDED && item.isLiveGuide) {
-                    onVideoEnded?.invoke()
+                if (playbackState == Player.STATE_ENDED && latestItem.isLiveGuide) {
+                    latestOnVideoEnded?.invoke()
                 }
             }
 
             override fun onPlayerError(error: PlaybackException) {
+                val cur = latestItem
+                val curCanTranscode = cur.itemType == "movie" || cur.itemType == "episode" || cur.itemType == "youtube"
+                // If a Live Guide commercial clip fails to decode (e.g. broken audio/mpeg frame),
+                // skip seamlessly into the next scheduled item instead of interrupting playback.
+                if (cur.isLiveGuide && cur.itemType == "commercial") {
+                    latestOnVideoEnded?.invoke()
+                    return
+                }
                 // Auto-fallback to server transcode when direct play hits a codec,
-                // audio renderer (e.g. Dolby E-AC-3 / Atmos 5.1, TrueHD, DTS), or
+                // audio renderer (e.g. audio/mpeg, Dolby E-AC-3 / Atmos 5.1, TrueHD, DTS), or
                 // container/parser error on this device.
                 val msg = error.localizedMessage.orEmpty()
                 val isCodecOrRendererError =
@@ -336,11 +360,12 @@ fun VideoPlayerOverlay(
                         msg.contains("MediaCodec", ignoreCase = true) ||
                         msg.contains("AudioRenderer", ignoreCase = true) ||
                         msg.contains("VideoRenderer", ignoreCase = true) ||
+                        msg.contains("audio/mpeg", ignoreCase = true) ||
                         msg.contains("audio/eac3", ignoreCase = true) ||
                         msg.contains("audio/ac3", ignoreCase = true) ||
                         msg.contains("Decoder", ignoreCase = true)
-                if (!usingTranscode && canTranscode && isCodecOrRendererError) {
-                    val resumeAt = effectivePositionMs().takeIf { it > 0L } ?: item.resumePositionMs
+                if (!usingTranscode && curCanTranscode && isCodecOrRendererError) {
+                    val resumeAt = effectivePositionMs().takeIf { it > 0L } ?: cur.resumePositionMs
                     startTranscodeAt(resumeAt)
                     return
                 }
@@ -356,8 +381,9 @@ fun VideoPlayerOverlay(
             exoPlayer.removeListener(listener)
             val pos = effectivePositionMs()
             val dur = effectiveDurationMs()
-            exoPlayer.release()
-            onClose(pos, dur)
+            runCatching { exoPlayer.stop() }
+            runCatching { exoPlayer.release() }
+            latestOnClose(pos, dur)
         }
     }
 
@@ -427,10 +453,10 @@ fun VideoPlayerOverlay(
         }
     }
 
-    // Auto-hide cinema HUD after 3.5s while playing in fullscreen
-    LaunchedEffect(showHud, isPlaying, hudPoke, showTracksSheet, minimized) {
+    // Auto-hide cinema HUD after 5.0s on TV (3.5s on touch) while playing in fullscreen
+    LaunchedEffect(showHud, isPlaying, hudPoke, showTracksSheet, minimized, isTv) {
         if (!minimized && showHud && isPlaying && !showTracksSheet) {
-            delay(3500L)
+            delay(if (isTv) 5000L else 3500L)
             showHud = false
         }
     }
@@ -554,7 +580,7 @@ fun VideoPlayerOverlay(
                                 if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
                             }
                         },
-                        modifier = Modifier.size(36.dp),
+                        modifier = Modifier.size(36.dp).clip(CircleShape).dpadFocusable(CircleShape),
                     ) {
                         Icon(
                             imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
@@ -565,7 +591,7 @@ fun VideoPlayerOverlay(
 
                     IconButton(
                         onClick = { onExpand?.invoke() },
-                        modifier = Modifier.size(34.dp),
+                        modifier = Modifier.size(34.dp).clip(CircleShape).dpadFocusable(CircleShape),
                     ) {
                         Icon(
                             imageVector = Icons.Default.KeyboardArrowUp,
@@ -576,7 +602,7 @@ fun VideoPlayerOverlay(
 
                     IconButton(
                         onClick = { onClose(effectivePositionMs(), effectiveDurationMs()) },
-                        modifier = Modifier.size(34.dp),
+                        modifier = Modifier.size(34.dp).clip(CircleShape).dpadFocusable(CircleShape),
                     ) {
                         Icon(
                             imageVector = Icons.Default.Close,
@@ -600,11 +626,67 @@ fun VideoPlayerOverlay(
         return
     }
 
-    // on a tv the player takes focus as it opens: otherwise focus stayed on the
-    // card underneath, d-pad center re-opened it, and channel, media and seek
-    // keys never reached the player
+    // Standard Android TV Back behavior:
+    // 1) If Audio/Subtitles sheet is open -> close it
+    // 2) If HUD is visible -> hide HUD so user keeps watching uninterrupted
+    // 3) If HUD is hidden -> close video cleanly & return to previous screen (never trap TV user in a minimized bar)
+    BackHandler(enabled = isTv && !minimized) {
+        when {
+            showTracksSheet -> showTracksSheet = false
+            showHud -> showHud = false
+            else -> onClose(effectivePositionMs(), effectiveDurationMs())
+        }
+    }
+
+    // TV focus management: when HUD opens, focus lands directly on Play/Pause; when HUD hides,
+    // focus returns to rootFocus so remote keys (Play/Pause, Seek, Channel, Center) always work.
     val rootFocus = remember { FocusRequester() }
-    LaunchedEffect(Unit) { runCatching { rootFocus.requestFocus() } }
+    val playPauseFocus = remember { FocusRequester() }
+    val scrubberFocus = remember { FocusRequester() }
+    var skipFeedbackText by remember { mutableStateOf<String?>(null) }
+    var skipFeedbackNonce by remember { mutableStateOf(0) }
+
+    LaunchedEffect(skipFeedbackNonce) {
+        if (skipFeedbackText != null) {
+            delay(900L)
+            skipFeedbackText = null
+        }
+    }
+
+    LaunchedEffect(showHud, isTv, showTracksSheet) {
+        if (isTv && !showTracksSheet) {
+            if (showHud) {
+                delay(60L)
+                runCatching { playPauseFocus.requestFocus() }
+            } else {
+                runCatching { rootFocus.requestFocus() }
+            }
+        }
+    }
+    LaunchedEffect(Unit) {
+        if (!isTv) runCatching { rootFocus.requestFocus() }
+    }
+
+    fun togglePlayPauseAction() {
+        val pid = item.partyId
+        if (!pid.isNullOrBlank()) {
+            val wasPlaying = exoPlayer.isPlaying
+            val posSec = effectivePositionMs() / 1000.0
+            if (wasPlaying) {
+                exoPlayer.pause()
+                scope.launch {
+                    api.updateWatchPartyState(pid, action = "pause", position = posSec)
+                }
+            } else {
+                scope.launch {
+                    api.updateWatchPartyState(pid, action = "resume", position = posSec)
+                }
+            }
+        } else {
+            if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
+        }
+        hudPoke++
+    }
 
     Box(
         modifier = Modifier
@@ -614,7 +696,20 @@ fun VideoPlayerOverlay(
             .focusable()
             .onPreviewKeyEvent { ev ->
                 if (ev.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                when (ev.nativeKeyEvent.keyCode) {
+                val code = ev.nativeKeyEvent.keyCode
+                // Keep HUD alive while user is actively navigating with D-pad
+                if (showHud && code in setOf(
+                        android.view.KeyEvent.KEYCODE_DPAD_UP,
+                        android.view.KeyEvent.KEYCODE_DPAD_DOWN,
+                        android.view.KeyEvent.KEYCODE_DPAD_LEFT,
+                        android.view.KeyEvent.KEYCODE_DPAD_RIGHT,
+                        android.view.KeyEvent.KEYCODE_DPAD_CENTER,
+                        android.view.KeyEvent.KEYCODE_ENTER,
+                    )
+                ) {
+                    hudPoke++
+                }
+                when (code) {
                     android.view.KeyEvent.KEYCODE_CHANNEL_UP,
                     android.view.KeyEvent.KEYCODE_PAGE_UP -> {
                         if (item.isLiveGuide && onSurfChannel != null) {
@@ -638,9 +733,8 @@ fun VideoPlayerOverlay(
                         }
                     }
                     android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> {
-                        if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
+                        togglePlayPauseAction()
                         showHud = true
-                        hudPoke++
                         true
                     }
                     android.view.KeyEvent.KEYCODE_MEDIA_PLAY -> {
@@ -657,19 +751,37 @@ fun VideoPlayerOverlay(
                     }
                     android.view.KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> {
                         skipBy(10_000L)
+                        skipFeedbackText = "+10s »"
+                        skipFeedbackNonce++
                         showHud = true
                         hudPoke++
                         true
                     }
                     android.view.KeyEvent.KEYCODE_MEDIA_REWIND -> {
                         skipBy(-10_000L)
+                        skipFeedbackText = "« -10s"
+                        skipFeedbackNonce++
                         showHud = true
                         hudPoke++
                         true
                     }
+                    android.view.KeyEvent.KEYCODE_DPAD_CENTER,
+                    android.view.KeyEvent.KEYCODE_ENTER,
+                    android.view.KeyEvent.KEYCODE_DPAD_UP,
+                    android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
+                        if (!showHud) {
+                            showHud = true
+                            hudPoke++
+                            true
+                        } else {
+                            false
+                        }
+                    }
                     android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> {
                         if (!showHud) {
                             skipBy(10_000L)
+                            skipFeedbackText = "+10s »"
+                            skipFeedbackNonce++
                             showHud = true
                             hudPoke++
                             true
@@ -680,6 +792,8 @@ fun VideoPlayerOverlay(
                     android.view.KeyEvent.KEYCODE_DPAD_LEFT -> {
                         if (!showHud) {
                             skipBy(-10_000L)
+                            skipFeedbackText = "« -10s"
+                            skipFeedbackNonce++
                             showHud = true
                             hudPoke++
                             true
@@ -690,13 +804,19 @@ fun VideoPlayerOverlay(
                     else -> false
                 }
             }
-            .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null,
-            ) {
-                showHud = !showHud
-                hudPoke++
-            },
+            .then(
+                if (!isTv) {
+                    Modifier.clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                    ) {
+                        showHud = !showHud
+                        hudPoke++
+                    }
+                } else {
+                    Modifier
+                },
+            ),
     ) {
         AndroidView(
             factory = { ctx ->
@@ -725,10 +845,54 @@ fun VideoPlayerOverlay(
         }
 
         if (isBuffering && playbackError == null) {
-            CircularProgressIndicator(
-                color = SoulSyncColors.AccentLight,
-                modifier = Modifier.align(Alignment.Center),
-            )
+            var bufferSeconds by remember(item.streamUrl, usingTranscode) { mutableStateOf(0) }
+            LaunchedEffect(isBuffering, item.streamUrl, usingTranscode) {
+                bufferSeconds = 0
+                while (isBuffering) {
+                    delay(1_000L)
+                    bufferSeconds += 1
+                }
+            }
+            val statusHeadline = when {
+                bufferSeconds >= 18 -> "Still waking storage drive…"
+                bufferSeconds >= 8 -> "Waking storage drive…"
+                bufferSeconds >= 3 -> if (usingTranscode) "Preparing transcoded stream…" else "Locating media file on server…"
+                else -> if (usingTranscode) "Starting transcode…" else "Loading stream…"
+            }
+            val statusSubtext = when {
+                bufferSeconds >= 8 -> "Sleeping drives can take up to 30 seconds to spin up (${bufferSeconds}s)"
+                bufferSeconds >= 3 -> "Hang tight (${bufferSeconds}s)"
+                else -> null
+            }
+            Column(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(Color.Black.copy(alpha = 0.78f))
+                    .border(1.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(18.dp))
+                    .padding(horizontal = 24.dp, vertical = 18.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                CircularProgressIndicator(
+                    color = SoulSyncColors.AccentLight,
+                    strokeWidth = 3.dp,
+                    modifier = Modifier.size(34.dp),
+                )
+                Text(
+                    text = statusHeadline,
+                    color = Color.White,
+                    fontSize = 14.5.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                if (statusSubtext != null) {
+                    Text(
+                        text = statusSubtext,
+                        color = SoulSyncColors.TextSoft,
+                        fontSize = 12.sp,
+                    )
+                }
+            }
         }
 
         if (playbackError != null) {
@@ -787,13 +951,397 @@ fun VideoPlayerOverlay(
             }
         }
 
-        // Custom Best-in-Class Cinema HUD
+        var showTvReportDialog by remember(item.itemId) { mutableStateOf(false) }
+        if (showTvReportDialog) {
+            ReportIssueDialog(
+                api = api,
+                itemType = item.itemType,
+                itemId = item.itemId,
+                title = item.title,
+                subtitle = item.subtitle,
+                positionSec = (effectivePositionMs() / 1000L).toInt(),
+                onDismiss = { showTvReportDialog = false },
+            )
+        }
+
+        // Custom Best-in-Class Cinema HUD (Dedicated TV Bottom Deck vs Mobile Touch HUD)
         AnimatedVisibility(
             visible = showHud,
-            enter = fadeIn(),
-            exit = fadeOut(),
+            enter = if (isTv) fadeIn(tween(200)) + slideInVertically(tween(240)) { it / 7 } else fadeIn(tween(180)),
+            exit = if (isTv) fadeOut(tween(180)) + slideOutVertically(tween(180)) { it / 7 } else fadeOut(tween(160)),
             modifier = Modifier.fillMaxSize(),
         ) {
+            if (isTv) {
+                // Flagship 10-Foot Apple TV / Netflix / Plex Bottom-Docked Cinema Deck
+                // Leaves the top 65% of the video completely unobstructed; 2-row D-pad flow (Timeline <-> Action Deck)
+                Box(modifier = Modifier.fillMaxSize()) {
+                    // Subtle top vignette for contrast + deep bottom cinema scrim
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(100.dp)
+                            .align(Alignment.TopCenter)
+                            .background(
+                                Brush.verticalGradient(
+                                    listOf(Color.Black.copy(alpha = 0.55f), Color.Transparent),
+                                ),
+                            ),
+                    )
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .align(Alignment.BottomCenter)
+                            .background(
+                                Brush.verticalGradient(
+                                    0.0f to Color.Transparent,
+                                    0.28f to Color.Black.copy(alpha = 0.72f),
+                                    0.65f to Color.Black.copy(alpha = 0.90f),
+                                    1.0f to Color.Black.copy(alpha = 0.96f),
+                                ),
+                            )
+                            .padding(start = 40.dp, end = 40.dp, top = 48.dp, bottom = 30.dp),
+                    ) {
+                        // Row 1: Cinema Title, Live/Transcode Badges, Up Next & Ends-At Clock
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.Bottom,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Column(
+                                modifier = Modifier.weight(1f),
+                                verticalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                ) {
+                                    if (item.isLiveGuide) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(6.dp))
+                                                .background(Color(0xFFEF4444).copy(alpha = 0.24f))
+                                                .border(1.dp, Color(0xFFEF4444).copy(alpha = 0.7f), RoundedCornerShape(6.dp))
+                                                .padding(horizontal = 8.dp, vertical = 3.dp),
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(7.dp)
+                                                    .clip(CircleShape)
+                                                    .background(Color(0xFFEF4444)),
+                                            )
+                                            Text(
+                                                text = item.channelNumber?.let { "LIVE · CH $it" } ?: "LIVE",
+                                                color = Color.White,
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.ExtraBold,
+                                                letterSpacing = 0.6.sp,
+                                            )
+                                        }
+                                    }
+                                    if (usingTranscode) {
+                                        Text(
+                                            text = "TRANSCODED",
+                                            color = SoulSyncColors.AccentLight,
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(6.dp))
+                                                .background(SoulSyncColors.Accent.copy(alpha = 0.22f))
+                                                .padding(horizontal = 7.dp, vertical = 3.dp),
+                                        )
+                                    }
+                                }
+                                Text(
+                                    text = item.title,
+                                    color = Color.White,
+                                    fontSize = 26.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    letterSpacing = (-0.4).sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                if (item.subtitle.isNotBlank()) {
+                                    Text(
+                                        text = item.subtitle,
+                                        color = SoulSyncColors.TextSoft,
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                            }
+
+                            Column(
+                                horizontalAlignment = Alignment.End,
+                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                                modifier = Modifier.padding(start = 24.dp),
+                            ) {
+                                if (!nextVideoTitle.isNullOrBlank()) {
+                                    Text(
+                                        text = "Up Next · $nextVideoTitle",
+                                        color = SoulSyncColors.TextSoft,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(999.dp))
+                                            .background(Color.White.copy(alpha = 0.10f))
+                                            .border(1.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(999.dp))
+                                            .padding(horizontal = 12.dp, vertical = 5.dp),
+                                    )
+                                }
+                                val remMs = (durationMs - positionMs).coerceAtLeast(0L)
+                                if (durationMs > 0L && remMs > 0L) {
+                                    val endsAt = remember(remMs / 60_000L) {
+                                        val fmt = java.text.SimpleDateFormat("h:mm a", java.util.Locale.getDefault())
+                                        fmt.format(java.util.Date(System.currentTimeMillis() + remMs))
+                                    }
+                                    Text(
+                                        text = "Ends at $endsAt",
+                                        color = SoulSyncColors.TextSecondary,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Medium,
+                                    )
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(14.dp))
+
+                        // Row 2: D-pad Scrubbable Cinema Timeline
+                        val tvFraction = if (scrubbing) scrubValue
+                        else if (durationMs > 0L) (positionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
+                        else 0f
+                        var tvScrubberFocused by remember { mutableStateOf(false) }
+
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .then(
+                                    if (tvScrubberFocused) {
+                                        Modifier
+                                            .background(Color.White.copy(alpha = 0.12f))
+                                            .border(2.5.dp, Color.White, RoundedCornerShape(10.dp))
+                                    } else {
+                                        Modifier
+                                    },
+                                )
+                                .focusRequester(scrubberFocus)
+                                .onFocusChanged { tvScrubberFocused = it.isFocused || it.hasFocus }
+                                .focusable()
+                                .onPreviewKeyEvent { ev ->
+                                    if (ev.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                                    val step = if (ev.nativeKeyEvent.repeatCount > 3) 30_000L else 10_000L
+                                    when (ev.nativeKeyEvent.keyCode) {
+                                        android.view.KeyEvent.KEYCODE_DPAD_LEFT -> {
+                                            skipBy(-step)
+                                            skipFeedbackText = "« -${step / 1000L}s"
+                                            skipFeedbackNonce++
+                                            hudPoke++
+                                            true
+                                        }
+                                        android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                                            skipBy(step)
+                                            skipFeedbackText = "+${step / 1000L}s »"
+                                            skipFeedbackNonce++
+                                            hudPoke++
+                                            true
+                                        }
+                                        android.view.KeyEvent.KEYCODE_DPAD_CENTER,
+                                        android.view.KeyEvent.KEYCODE_ENTER -> {
+                                            togglePlayPauseAction()
+                                            true
+                                        }
+                                        else -> false
+                                    }
+                                }
+                                .padding(horizontal = 8.dp, vertical = 2.dp),
+                        ) {
+                            Slider(
+                                value = tvFraction,
+                                onValueChange = { v ->
+                                    scrubbing = true
+                                    scrubValue = v
+                                    hudPoke++
+                                },
+                                onValueChangeFinished = {
+                                    if (durationMs > 0L) {
+                                        seekOrTranscode((scrubValue * durationMs).toLong())
+                                    }
+                                    scrubbing = false
+                                    hudPoke++
+                                },
+                                colors = SliderDefaults.colors(
+                                    thumbColor = Color.White,
+                                    activeTrackColor = if (tvScrubberFocused) Color.White else SoulSyncColors.AccentLight,
+                                    inactiveTrackColor = Color.White.copy(alpha = 0.24f),
+                                ),
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+
+                        val tvShownPos = if (scrubbing && durationMs > 0L) (scrubValue * durationMs).toLong() else positionMs
+                        val tvRemaining = (durationMs - tvShownPos).coerceAtLeast(0L)
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Text(
+                                text = formatVideoTime(tvShownPos),
+                                color = Color.White,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            if (tvScrubberFocused) {
+                                Text(
+                                    text = "◀ ▶ Seek ±10s  ·  Hold for ±30s",
+                                    color = SoulSyncColors.TextSoft,
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.Medium,
+                                )
+                            }
+                            Text(
+                                text = "-${formatVideoTime(tvRemaining)}",
+                                color = SoulSyncColors.TextSoft,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Medium,
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(14.dp))
+
+                        // Row 3: Unified Horizontal TV Transport & Cinema Action Bar
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            // Left: Transport controls
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            ) {
+                                IconButton(
+                                    onClick = { togglePlayPauseAction() },
+                                    modifier = Modifier
+                                        .size(50.dp)
+                                        .clip(CircleShape)
+                                        .background(Color.White)
+                                        .focusRequester(playPauseFocus)
+                                        .dpadFocusable(CircleShape, scaleOnFocus = true, onLightSurface = true),
+                                ) {
+                                    Icon(
+                                        imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                        contentDescription = if (isPlaying) "Pause" else "Play",
+                                        tint = Color.Black,
+                                        modifier = Modifier.size(30.dp),
+                                    )
+                                }
+                                IconButton(
+                                    onClick = {
+                                        skipBy(-10_000L)
+                                        skipFeedbackText = "« -10s"
+                                        skipFeedbackNonce++
+                                        hudPoke++
+                                    },
+                                    modifier = Modifier
+                                        .size(42.dp)
+                                        .clip(CircleShape)
+                                        .background(Color.White.copy(alpha = 0.14f))
+                                        .dpadFocusable(CircleShape, scaleOnFocus = true),
+                                ) {
+                                    Icon(Icons.Default.Replay10, contentDescription = "Back 10s", tint = Color.White, modifier = Modifier.size(22.dp))
+                                }
+                                IconButton(
+                                    onClick = {
+                                        skipBy(10_000L)
+                                        skipFeedbackText = "+10s »"
+                                        skipFeedbackNonce++
+                                        hudPoke++
+                                    },
+                                    modifier = Modifier
+                                        .size(42.dp)
+                                        .clip(CircleShape)
+                                        .background(Color.White.copy(alpha = 0.14f))
+                                        .dpadFocusable(CircleShape, scaleOnFocus = true),
+                                ) {
+                                    Icon(Icons.Default.Forward10, contentDescription = "Forward 10s", tint = Color.White, modifier = Modifier.size(22.dp))
+                                }
+                                if (item.isLiveGuide && onSurfChannel != null) {
+                                    CinemaPill(
+                                        icon = Icons.Default.KeyboardArrowDown,
+                                        label = "CH −",
+                                        onClick = {
+                                            onSurfChannel(-1)
+                                            hudPoke++
+                                        },
+                                    )
+                                    CinemaPill(
+                                        icon = Icons.Default.KeyboardArrowUp,
+                                        label = "CH +",
+                                        onClick = {
+                                            onSurfChannel(1)
+                                            hudPoke++
+                                        },
+                                    )
+                                }
+                            }
+
+                            // Right: Audio/Subs, Speed, Fit, Report, Exit
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            ) {
+                                CinemaPill(
+                                    icon = Icons.Default.Subtitles,
+                                    label = "Audio & Subs",
+                                    onClick = {
+                                        showTracksSheet = true
+                                        hudPoke++
+                                    },
+                                )
+                                CinemaPill(
+                                    icon = Icons.Default.Speed,
+                                    label = "${VIDEO_SPEEDS[speedIndex]}x",
+                                    onClick = {
+                                        speedIndex = (speedIndex + 1) % VIDEO_SPEEDS.size
+                                        exoPlayer.playbackParameters = PlaybackParameters(VIDEO_SPEEDS[speedIndex])
+                                        hudPoke++
+                                    },
+                                )
+                                CinemaPill(
+                                    icon = Icons.Default.AspectRatio,
+                                    label = displayPrefs.pictureFit.replaceFirstChar { it.uppercase() },
+                                    onClick = {
+                                        val order = listOf("fit", "fill", "stretch")
+                                        val next = order[(order.indexOf(displayPrefs.pictureFit) + 1) % order.size]
+                                        PlayerDevicePrefs.update { it.copy(pictureFit = next) }
+                                        hudPoke++
+                                    },
+                                )
+                                CinemaPill(
+                                    icon = Icons.Default.Flag,
+                                    label = "Report",
+                                    onClick = {
+                                        showTvReportDialog = true
+                                        hudPoke++
+                                    },
+                                )
+                                CinemaPill(
+                                    icon = Icons.AutoMirrored.Filled.ArrowBack,
+                                    label = "Exit",
+                                    onClick = { onClose(effectivePositionMs(), effectiveDurationMs()) },
+                                )
+                            }
+                        }
+                    }
+                }
+            } else {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -815,7 +1363,7 @@ fun VideoPlayerOverlay(
                 ) {
                     IconButton(
                         onClick = {
-                            if (onMinimize != null) {
+                            if (!isTv && onMinimize != null) {
                                 onMinimize(effectivePositionMs(), effectiveDurationMs())
                             } else {
                                 onClose(effectivePositionMs(), effectiveDurationMs())
@@ -828,8 +1376,12 @@ fun VideoPlayerOverlay(
                             .dpadFocusable(CircleShape),
                     ) {
                         Icon(
-                            imageVector = if (onMinimize != null) Icons.Default.KeyboardArrowDown else Icons.Default.Close,
-                            contentDescription = "Minimize video",
+                            imageVector = when {
+                                isTv -> Icons.AutoMirrored.Filled.ArrowBack
+                                onMinimize != null -> Icons.Default.KeyboardArrowDown
+                                else -> Icons.Default.Close
+                            },
+                            contentDescription = if (isTv) "Back" else "Minimize video",
                             tint = Color.White,
                         )
                     }
@@ -954,30 +1506,32 @@ fun VideoPlayerOverlay(
                             onDismiss = { showReportDialog = false },
                         )
                     }
-                    Spacer(modifier = Modifier.width(8.dp))
-                    IconButton(
-                        onClick = {
-                            if (onOpenCast != null) {
-                                onOpenCast()
-                            } else {
-                                runCatching {
-                                    context.startActivity(Intent(Settings.ACTION_CAST_SETTINGS))
+                    if (!isTv) {
+                        Spacer(modifier = Modifier.width(8.dp))
+                        IconButton(
+                            onClick = {
+                                if (onOpenCast != null) {
+                                    onOpenCast()
+                                } else {
+                                    runCatching {
+                                        context.startActivity(Intent(Settings.ACTION_CAST_SETTINGS))
+                                    }
                                 }
-                            }
-                            hudPoke++
-                        },
-                        modifier = Modifier
-                            .size(40.dp)
-                            .clip(CircleShape)
-                            .background(if (castConnected) SoulSyncColors.Accent.copy(alpha = 0.25f) else Color.White.copy(alpha = 0.12f))
-                            .dpadFocusable(CircleShape),
-                    ) {
-                        Icon(
-                            imageVector = if (castConnected) Icons.Default.CastConnected else Icons.Default.Cast,
-                            contentDescription = "Cast",
-                            tint = if (castConnected) SoulSyncColors.AccentLight else Color.White,
-                            modifier = Modifier.size(20.dp),
-                        )
+                                hudPoke++
+                            },
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(CircleShape)
+                                .background(if (castConnected) SoulSyncColors.Accent.copy(alpha = 0.25f) else Color.White.copy(alpha = 0.12f))
+                                .dpadFocusable(CircleShape),
+                        ) {
+                            Icon(
+                                imageVector = if (castConnected) Icons.Default.CastConnected else Icons.Default.Cast,
+                                contentDescription = "Cast",
+                                tint = if (castConnected) SoulSyncColors.AccentLight else Color.White,
+                                modifier = Modifier.size(20.dp),
+                            )
+                        }
                     }
                     Spacer(modifier = Modifier.width(8.dp))
                     IconButton(
@@ -1021,32 +1575,13 @@ fun VideoPlayerOverlay(
                     }
 
                     IconButton(
-                        onClick = {
-                            val pid = item.partyId
-                            if (!pid.isNullOrBlank()) {
-                                val wasPlaying = exoPlayer.isPlaying
-                                val posSec = effectivePositionMs() / 1000.0
-                                if (wasPlaying) {
-                                    exoPlayer.pause()
-                                    scope.launch {
-                                        api.updateWatchPartyState(pid, action = "pause", position = posSec)
-                                    }
-                                } else {
-                                    // Trigger 5-second synchronized resume countdown across all party screens
-                                    scope.launch {
-                                        api.updateWatchPartyState(pid, action = "resume", position = posSec)
-                                    }
-                                }
-                            } else {
-                                if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
-                            }
-                            hudPoke++
-                        },
+                        onClick = { togglePlayPauseAction() },
                         modifier = Modifier
                             .size(72.dp)
                             .clip(CircleShape)
                             .background(Color.White)
-                            .dpadFocusable(CircleShape),
+                            .focusRequester(playPauseFocus)
+                            .dpadFocusable(CircleShape, scaleOnFocus = true),
                     ) {
                         Icon(
                             imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
@@ -1089,27 +1624,73 @@ fun VideoPlayerOverlay(
                     else if (durationMs > 0L) (positionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
                     else 0f
 
-                    Slider(
-                        value = fraction,
-                        onValueChange = { v ->
-                            scrubbing = true
-                            scrubValue = v
-                            hudPoke++
-                        },
-                        onValueChangeFinished = {
-                            if (durationMs > 0L) {
-                                seekOrTranscode((scrubValue * durationMs).toLong())
+                    var scrubberFocused by remember { mutableStateOf(false) }
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .then(
+                                if (scrubberFocused) {
+                                    Modifier
+                                        .background(Color.White.copy(alpha = 0.08f))
+                                        .border(2.dp, SoulSyncColors.AccentLight, RoundedCornerShape(10.dp))
+                                } else {
+                                    Modifier
+                                },
+                            )
+                            .focusRequester(scrubberFocus)
+                            .onFocusChanged { scrubberFocused = it.isFocused || it.hasFocus }
+                            .then(if (isTv) Modifier.focusable() else Modifier)
+                            .onPreviewKeyEvent { ev ->
+                                if (ev.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                                val step = if (ev.nativeKeyEvent.repeatCount > 3) 30_000L else 10_000L
+                                when (ev.nativeKeyEvent.keyCode) {
+                                    android.view.KeyEvent.KEYCODE_DPAD_LEFT -> {
+                                        skipBy(-step)
+                                        skipFeedbackText = "« -${step / 1000L}s"
+                                        skipFeedbackNonce++
+                                        hudPoke++
+                                        true
+                                    }
+                                    android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                                        skipBy(step)
+                                        skipFeedbackText = "+${step / 1000L}s »"
+                                        skipFeedbackNonce++
+                                        hudPoke++
+                                        true
+                                    }
+                                    android.view.KeyEvent.KEYCODE_DPAD_CENTER,
+                                    android.view.KeyEvent.KEYCODE_ENTER -> {
+                                        togglePlayPauseAction()
+                                        true
+                                    }
+                                    else -> false
+                                }
                             }
-                            scrubbing = false
-                            hudPoke++
-                        },
-                        colors = SliderDefaults.colors(
-                            thumbColor = SoulSyncColors.AccentLight,
-                            activeTrackColor = SoulSyncColors.Accent,
-                            inactiveTrackColor = Color.White.copy(alpha = 0.25f),
-                        ),
-                        modifier = Modifier.fillMaxWidth(),
-                    )
+                            .padding(horizontal = 4.dp),
+                    ) {
+                        Slider(
+                            value = fraction,
+                            onValueChange = { v ->
+                                scrubbing = true
+                                scrubValue = v
+                                hudPoke++
+                            },
+                            onValueChangeFinished = {
+                                if (durationMs > 0L) {
+                                    seekOrTranscode((scrubValue * durationMs).toLong())
+                                }
+                                scrubbing = false
+                                hudPoke++
+                            },
+                            colors = SliderDefaults.colors(
+                                thumbColor = if (scrubberFocused) Color.White else SoulSyncColors.AccentLight,
+                                activeTrackColor = if (scrubberFocused) SoulSyncColors.AccentLight else SoulSyncColors.Accent,
+                                inactiveTrackColor = Color.White.copy(alpha = 0.25f),
+                            ),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
 
                     val shownPos = if (scrubbing && durationMs > 0L) (scrubValue * durationMs).toLong() else positionMs
                     val remaining = (durationMs - shownPos).coerceAtLeast(0L)
@@ -1196,6 +1777,32 @@ fun VideoPlayerOverlay(
                     }
                 }
             }
+            }
+        }
+
+        // Crisp skip feedback pill ("« -10s" / "+10s »") when seeking with TV remote
+        AnimatedVisibility(
+            visible = skipFeedbackText != null,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = 84.dp),
+        ) {
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(Color.Black.copy(alpha = 0.82f))
+                    .border(1.5.dp, SoulSyncColors.AccentLight, RoundedCornerShape(999.dp))
+                    .padding(horizontal = 18.dp, vertical = 8.dp),
+            ) {
+                Text(
+                    text = skipFeedbackText.orEmpty(),
+                    color = Color.White,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
         }
 
         // Fullscreen Watch Party Curtain Unfurl, Live Sync, Pee Break Alert, 5s Resume Countdown & Dual-Side Emoji Reactions
@@ -1222,7 +1829,7 @@ fun VideoPlayerOverlay(
         }
 
         if (showTracksSheet) {
-            ModalBottomSheet(
+            AdaptiveTvSheet(
                 onDismissRequest = { showTracksSheet = false },
                 containerColor = SoulSyncColors.Surface,
                 contentColor = Color.White,
@@ -1476,6 +2083,7 @@ private fun TrackOptionRow(label: String, selected: Boolean, onClick: () -> Unit
             .clip(RoundedCornerShape(10.dp))
             .background(if (selected) SoulSyncColors.Accent.copy(alpha = 0.18f) else Color.White.copy(alpha = 0.04f))
             .border(1.dp, if (selected) SoulSyncColors.Accent.copy(alpha = 0.55f) else SoulSyncColors.Line, RoundedCornerShape(10.dp))
+            .dpadFocusable(RoundedCornerShape(10.dp))
             .clickable(onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 11.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -1937,7 +2545,7 @@ private fun WatchPartyFullscreenReactions(
                     )
                 }
 
-                // 🚽 5-Minute Pee Break Button (10m per-user cooldown)
+                // 🚽 5-Minute Pee Break Button (10m per-user cooldown, modifier = Modifier.dpadFocusable(androidx.compose.foundation.shape.RoundedCornerShape(999.dp)),)
                 val cooldownMin = ((peeCooldownSec + 59) / 60).coerceAtLeast(1)
                 val peeDisabled = peeCooldownSec > 0 || peeBreak != null
                 Box(

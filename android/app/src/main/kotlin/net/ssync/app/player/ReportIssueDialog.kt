@@ -176,6 +176,7 @@ fun ReportIssueDialog(
                             }
                         }
                     },
+    modifier = Modifier.dpadFocusable(androidx.compose.foundation.shape.RoundedCornerShape(999.dp)),
                 ) {
                     Text(if (submitting) "Submitting…" else "Submit issue", fontWeight = FontWeight.SemiBold)
                 }
@@ -183,7 +184,7 @@ fun ReportIssueDialog(
         },
         dismissButton = {
             if (!done) {
-                TextButton(enabled = !submitting, onClick = onDismiss) {
+                TextButton(enabled = !submitting, onClick = onDismiss, modifier = Modifier.dpadFocusable(androidx.compose.foundation.shape.RoundedCornerShape(999.dp)),) {
                     Text("Cancel", color = SoulSyncColors.TextSecondary)
                 }
             }

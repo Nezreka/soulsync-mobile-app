@@ -73,7 +73,7 @@ fun HomeEditorSheet(
     var draft by remember(initialLayout) { mutableStateOf(initialLayout) }
     var shared by remember(initialShared) { mutableStateOf(initialShared) }
 
-    ModalBottomSheet(
+    AdaptiveTvSheet(
         onDismissRequest = onDismiss,
         containerColor = SoulSyncColors.PanelSolid,
     ) {
@@ -115,7 +115,7 @@ fun HomeEditorSheet(
                     Text("Shared layout across devices", style = MaterialTheme.typography.titleMedium)
                     Text("Sync this Home order with Web & TV", style = MaterialTheme.typography.bodyMedium, fontSize = 12.sp)
                 }
-                Switch(checked = shared, onCheckedChange = { shared = it })
+                Switch(checked = shared, onCheckedChange = { shared = it }, modifier = Modifier.dpadFocusable(androidx.compose.foundation.shape.CircleShape),)
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
@@ -125,6 +125,7 @@ fun HomeEditorSheet(
                 Switch(
                     checked = draft.billboard,
                     onCheckedChange = { draft = draft.copy(billboard = it) },
+    modifier = Modifier.dpadFocusable(androidx.compose.foundation.shape.CircleShape),
                 )
             }
 
@@ -150,6 +151,7 @@ fun HomeEditorSheet(
                                 containerColor = SoulSyncColors.Card,
                                 labelColor = SoulSyncColors.TextPrimary,
                             ),
+    modifier = Modifier.dpadFocusable(androidx.compose.foundation.shape.RoundedCornerShape(999.dp)),
                         )
                     }
                 }
@@ -184,6 +186,7 @@ fun HomeEditorSheet(
                                         }
                                     },
                                     enabled = idx > 0,
+    modifier = Modifier.dpadFocusable(androidx.compose.foundation.shape.CircleShape),
                                 ) {
                                     Icon(Icons.Default.ArrowUpward, contentDescription = "Move up", modifier = Modifier.size(18.dp))
                                 }
@@ -198,6 +201,7 @@ fun HomeEditorSheet(
                                         }
                                     },
                                     enabled = idx < draft.rows.lastIndex,
+    modifier = Modifier.dpadFocusable(androidx.compose.foundation.shape.CircleShape),
                                 ) {
                                     Icon(Icons.Default.ArrowDownward, contentDescription = "Move down", modifier = Modifier.size(18.dp))
                                 }
@@ -208,6 +212,7 @@ fun HomeEditorSheet(
                                         list[idx] = row.copy(on = checked)
                                         draft = draft.copy(rows = list)
                                     },
+    modifier = Modifier.dpadFocusable(androidx.compose.foundation.shape.CircleShape),
                                 )
                             }
                             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -231,6 +236,7 @@ fun HomeEditorSheet(
                                             containerColor = SoulSyncColors.PanelSolid,
                                             labelColor = SoulSyncColors.TextSoft,
                                         ),
+    modifier = Modifier.dpadFocusable(androidx.compose.foundation.shape.RoundedCornerShape(999.dp)),
                                     )
                                 }
                             }

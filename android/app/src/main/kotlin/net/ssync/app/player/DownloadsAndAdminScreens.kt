@@ -1,5 +1,7 @@
 package net.ssync.app.player
 
+import net.ssync.pairing.ui.dpadFocusable
+
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -118,7 +120,7 @@ fun OfflineDownloadButton(
                     )
                 }
             },
-            modifier = Modifier.size(34.dp),
+            modifier = Modifier.size(34.dp).dpadFocusable(androidx.compose.foundation.shape.CircleShape),
         ) {
             Icon(
                 imageVector = if (saved != null) Icons.Default.DownloadDone else Icons.Default.Download,
@@ -276,7 +278,7 @@ fun DownloadsScreen(
                             if (task.error != null) {
                                 IconButton(
                                     onClick = { OfflineDownloadManager.dismissError(task.key) },
-                                    modifier = Modifier.size(28.dp),
+                                    modifier = Modifier.size(28.dp).dpadFocusable(androidx.compose.foundation.shape.CircleShape),
                                 ) {
                                     Icon(Icons.Default.Close, contentDescription = "Dismiss", tint = Color(0xFFFDA4AF))
                                 }
@@ -388,7 +390,7 @@ fun DownloadsScreen(
                                 overflow = TextOverflow.Ellipsis,
                             )
                         }
-                        IconButton(onClick = { OfflineDownloadManager.deleteDownload(api, item) }) {
+                        IconButton(onClick = { OfflineDownloadManager.deleteDownload(api, item) }, modifier = Modifier.dpadFocusable(androidx.compose.foundation.shape.CircleShape),) {
                             Icon(Icons.Default.DeleteOutline, contentDescription = "Remove download", tint = Color(0xFFFDA4AF))
                         }
                     }

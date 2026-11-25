@@ -1,5 +1,7 @@
 package net.ssync.app.player
 
+import net.ssync.pairing.ui.dpadFocusable
+
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -402,7 +404,7 @@ fun CalendarScreen(
                                 weekStart = addCalendarDays(weekStart, -7)
                                 selectedDay = null
                             },
-                            modifier = Modifier.size(34.dp),
+                            modifier = Modifier.size(34.dp).dpadFocusable(androidx.compose.foundation.shape.CircleShape),
                         ) {
                             Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = "Prev week", tint = Color.White)
                         }
@@ -424,7 +426,7 @@ fun CalendarScreen(
                                 weekStart = addCalendarDays(weekStart, 7)
                                 selectedDay = null
                             },
-                            modifier = Modifier.size(34.dp),
+                            modifier = Modifier.size(34.dp).dpadFocusable(androidx.compose.foundation.shape.CircleShape),
                         ) {
                             Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = "Next week", tint = Color.White)
                         }
@@ -952,7 +954,7 @@ private fun ManagerStyleTile(
                             enabled = requestState != "loading",
                             colors = ButtonDefaults.buttonColors(containerColor = SoulSyncColors.Accent),
                             contentPadding = PaddingValues(horizontal = 14.dp, vertical = 0.dp),
-                            modifier = Modifier.height(32.dp),
+                            modifier = Modifier.height(32.dp).dpadFocusable(androidx.compose.foundation.shape.RoundedCornerShape(999.dp)),
                         ) {
                             Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(14.dp))
                             Spacer(modifier = Modifier.width(4.dp))
@@ -1112,7 +1114,7 @@ private fun CalendarVisualCard(
                         enabled = requestState != "loading",
                         colors = ButtonDefaults.buttonColors(containerColor = SoulSyncColors.Accent),
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
-                        modifier = Modifier.height(34.dp),
+                        modifier = Modifier.height(34.dp).dpadFocusable(androidx.compose.foundation.shape.RoundedCornerShape(999.dp)),
                     ) {
                         Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(14.dp))
                         Spacer(modifier = Modifier.width(4.dp))
@@ -1202,7 +1204,7 @@ private fun CalendarEpisodeModal(
                             .size(34.dp)
                             .clip(CircleShape)
                             .background(Color.Black.copy(alpha = 0.58f))
-                            .border(1.dp, Color.White.copy(alpha = 0.18f), CircleShape),
+                            .border(1.dp, Color.White.copy(alpha = 0.18f), CircleShape).dpadFocusable(androidx.compose.foundation.shape.CircleShape),
                     ) {
                         Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White, modifier = Modifier.size(18.dp))
                     }
@@ -1327,7 +1329,7 @@ private fun CalendarEpisodeModal(
                                 enabled = requestState != "loading",
                                 shape = RoundedCornerShape(999.dp),
                                 colors = ButtonDefaults.buttonColors(containerColor = SoulSyncColors.Accent),
-                                modifier = Modifier.weight(1f).height(44.dp),
+                                modifier = Modifier.weight(1f).height(44.dp).dpadFocusable(androidx.compose.foundation.shape.RoundedCornerShape(999.dp)),
                             ) {
                                 Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
                                 Spacer(modifier = Modifier.width(6.dp))
@@ -1360,7 +1362,7 @@ private fun CalendarEpisodeModal(
                                     onClick = onOpenShow,
                                     shape = RoundedCornerShape(999.dp),
                                     colors = ButtonDefaults.buttonColors(containerColor = SoulSyncColors.Accent),
-                                    modifier = Modifier.weight(1f).height(44.dp),
+                                    modifier = Modifier.weight(1f).height(44.dp).dpadFocusable(androidx.compose.foundation.shape.RoundedCornerShape(999.dp)),
                                 ) {
                                     Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
                                     Spacer(modifier = Modifier.width(6.dp))
@@ -1375,7 +1377,7 @@ private fun CalendarEpisodeModal(
                                     onClick = onOpenShow,
                                     shape = RoundedCornerShape(999.dp),
                                     border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f)),
-                                    modifier = Modifier.weight(1f).height(44.dp),
+                                    modifier = Modifier.weight(1f).height(44.dp).dpadFocusable(androidx.compose.foundation.shape.RoundedCornerShape(999.dp)),
                                 ) {
                                     Text("Open show", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
                                 }
@@ -1462,7 +1464,7 @@ private fun CalendarMovieModal(
                             .size(34.dp)
                             .clip(CircleShape)
                             .background(Color.Black.copy(alpha = 0.58f))
-                            .border(1.dp, Color.White.copy(alpha = 0.18f), CircleShape),
+                            .border(1.dp, Color.White.copy(alpha = 0.18f), CircleShape).dpadFocusable(androidx.compose.foundation.shape.CircleShape),
                     ) {
                         Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White, modifier = Modifier.size(18.dp))
                     }
@@ -1524,7 +1526,7 @@ private fun CalendarMovieModal(
                                 enabled = requestState != "loading",
                                 shape = RoundedCornerShape(999.dp),
                                 colors = ButtonDefaults.buttonColors(containerColor = SoulSyncColors.Accent),
-                                modifier = Modifier.weight(1f).height(44.dp),
+                                modifier = Modifier.weight(1f).height(44.dp).dpadFocusable(androidx.compose.foundation.shape.RoundedCornerShape(999.dp)),
                             ) {
                                 Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
                                 Spacer(modifier = Modifier.width(6.dp))
@@ -1555,7 +1557,7 @@ private fun CalendarMovieModal(
                                 onClick = onOpenMovie,
                                 shape = RoundedCornerShape(999.dp),
                                 colors = ButtonDefaults.buttonColors(containerColor = SoulSyncColors.Accent),
-                                modifier = Modifier.weight(1f).height(44.dp),
+                                modifier = Modifier.weight(1f).height(44.dp).dpadFocusable(androidx.compose.foundation.shape.RoundedCornerShape(999.dp)),
                             ) {
                                 Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
                                 Spacer(modifier = Modifier.width(6.dp))

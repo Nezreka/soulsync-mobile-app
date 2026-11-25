@@ -21,12 +21,18 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.LiveTv
+import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Podcasts
 import androidx.compose.material.icons.filled.Radio
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.Button
@@ -52,9 +58,12 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -62,6 +71,8 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import net.ssync.pairing.theme.SoulSyncColors
+import net.ssync.pairing.ui.LocalIsTv
+import net.ssync.pairing.ui.dpadCardFocusable
 import net.ssync.pairing.ui.dpadFocusable
 import net.ssync.player.GuideChannel
 import net.ssync.player.MusicApiResult
@@ -160,6 +171,7 @@ fun WatchlistScreen(
                         selectedContainerColor = SoulSyncColors.Accent,
                         selectedLabelColor = SoulSyncColors.OnAccent,
                     ),
+    modifier = Modifier.dpadFocusable(androidx.compose.foundation.shape.RoundedCornerShape(999.dp)),
                 )
                 FilterChip(
                     selected = sortByTitle,
@@ -169,16 +181,17 @@ fun WatchlistScreen(
                         selectedContainerColor = SoulSyncColors.Accent,
                         selectedLabelColor = SoulSyncColors.OnAccent,
                     ),
+    modifier = Modifier.dpadFocusable(androidx.compose.foundation.shape.RoundedCornerShape(999.dp)),
                 )
             }
-            TextButton(onClick = { gridView = !gridView }) {
+            TextButton(onClick = { gridView = !gridView }, modifier = Modifier.dpadFocusable(androidx.compose.foundation.shape.RoundedCornerShape(999.dp)),) {
                 Text(if (gridView) "List" else "Grid", color = SoulSyncColors.AccentLight)
             }
         }
 
         if (gridView) {
             LazyVerticalGrid(
-                columns = GridCells.Adaptive(minSize = 116.dp),
+                columns = GridCells.Adaptive(minSize = if (LocalIsTv.current) 148.dp else 116.dp),
                 contentPadding = PaddingValues(16.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -424,7 +437,8 @@ fun SearchScreen(
         candidates.maxByOrNull { it.score }?.takeIf { it.score >= 50 }
     }
 
-    Column(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 10.dp)) {
+    val isTv = LocalIsTv.current
+    Column(modifier = Modifier.fillMaxSize().padding(horizontal = if (isTv) 24.dp else 16.dp, vertical = 10.dp)) {
         SearchField(
             value = query,
             onValueChange = {
@@ -432,26 +446,28 @@ fun SearchScreen(
                 filter = "all"
             },
             onSubmit = { recent = SearchHistory.remember(context, query) },
+            autoFocus = !isTv,
             modifier = Modifier.fillMaxWidth(),
         )
 
         if (q.isNotEmpty() && tabs.size > 1) {
             Spacer(modifier = Modifier.height(10.dp))
-            androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(tabs, key = { it.first }) { (key, label) ->
                     val on = filter == key
                     Box(
                         modifier = Modifier
                             .clip(CircleShape)
-                            .background(if (on) Color.White else Color.White.copy(alpha = 0.06f))
-                            .border(1.dp, if (on) Color.White else SoulSyncColors.Line, CircleShape)
+                            .background(if (on) Color.White else Color.White.copy(alpha = 0.07f))
+                            .border(1.dp, if (on) Color.White else Color.White.copy(alpha = 0.12f), CircleShape)
+                            .dpadFocusable(CircleShape, onLightSurface = on)
                             .clickable { filter = key }
-                            .padding(horizontal = 13.dp, vertical = 6.dp),
+                            .padding(horizontal = 14.dp, vertical = 7.dp),
                     ) {
                         Text(
                             label,
                             color = if (on) Color.Black else SoulSyncColors.TextSoft,
-                            fontSize = 12.sp,
+                            fontSize = 12.5.sp,
                             fontWeight = FontWeight.Bold,
                         )
                     }
@@ -484,55 +500,93 @@ fun SearchScreen(
         } else if (totalCount == 0 && !searchingMusic) {
             EmptyBox("No matches for \"$query\".")
         } else {
+            val posterWidth = if (isTv) 136.dp else 116.dp
+            val squareWidth = if (isTv) 140.dp else 122.dp
+            val wideWidth = if (isTv) 224.dp else 204.dp
+
             LazyColumn(
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-                contentPadding = PaddingValues(bottom = 28.dp),
+                verticalArrangement = Arrangement.spacedBy(18.dp),
+                contentPadding = PaddingValues(bottom = 32.dp),
                 modifier = Modifier.fillMaxSize(),
             ) {
+                // 1. Elevated Spotlight Top Result (Apple TV / Spotify hero card with blurred ambient glow)
                 if (filter == "all" && topResult != null) {
                     item(key = "top-result") {
-                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             SectionHeader("Top Result")
-                            Card(
+                            val isArtistTop = topResult.kindLabel == "ARTIST"
+                            val isSongTop = topResult.kindLabel == "SONG"
+                            Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .dpadFocusable(RoundedCornerShape(16.dp))
+                                    .clip(RoundedCornerShape(18.dp))
+                                    .background(Color(0xFF141624))
+                                    .border(1.dp, SoulSyncColors.Accent.copy(alpha = 0.32f), RoundedCornerShape(18.dp))
+                                    .dpadFocusable(RoundedCornerShape(18.dp))
                                     .clickable { topResult.onActivate() },
-                                shape = RoundedCornerShape(16.dp),
-                                colors = CardDefaults.cardColors(containerColor = SoulSyncColors.Accent.copy(alpha = 0.14f)),
-                                border = BorderStroke(1.dp, SoulSyncColors.Accent.copy(alpha = 0.45f)),
                             ) {
+                                // Subtle blurred artwork aura inside the Top Result card (no fallback icon on missing art)
+                                if (!topResult.artworkUrl.isNullOrBlank()) {
+                                    coil.compose.AsyncImage(
+                                        model = coil.request.ImageRequest.Builder(context)
+                                            .data(topResult.artworkUrl)
+                                            .size(220)
+                                            .precision(coil.size.Precision.INEXACT)
+                                            .build(),
+                                        imageLoader = LocalSoulSyncImageLoader.current,
+                                        contentDescription = null,
+                                        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                                        modifier = Modifier
+                                            .matchParentSize()
+                                            .blur(36.dp),
+                                    )
+                                }
+                                Box(
+                                    modifier = Modifier
+                                        .matchParentSize()
+                                        .background(
+                                            Brush.horizontalGradient(
+                                                0.0f to Color(0xD610121E),
+                                                0.55f to Color(0xC2131626),
+                                                1.0f to Color(0xE80C0E18),
+                                            ),
+                                        ),
+                                )
                                 Row(
-                                    modifier = Modifier.padding(12.dp),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(14.dp),
                                     verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(16.dp),
                                 ) {
                                     SoulSyncArtwork(
                                         url = topResult.artworkUrl,
                                         contentDescription = topResult.title,
+                                        fallbackIcon = if (isArtistTop) Icons.Default.Person else Icons.Default.MusicNote,
                                         modifier = Modifier
-                                            .width(if (topResult.isPoster) 58.dp else 64.dp)
-                                            .height(if (topResult.isPoster) 86.dp else 64.dp)
-                                            .clip(RoundedCornerShape(10.dp)),
+                                            .width(if (topResult.isPoster) 62.dp else 74.dp)
+                                            .height(if (topResult.isPoster) 92.dp else 74.dp)
+                                            .clip(if (isArtistTop) CircleShape else RoundedCornerShape(12.dp)),
                                     )
-                                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                                         Box(
                                             modifier = Modifier
                                                 .clip(CircleShape)
-                                                .background(SoulSyncColors.Accent.copy(alpha = 0.25f))
-                                                .padding(horizontal = 8.dp, vertical = 2.dp),
+                                                .background(SoulSyncColors.Accent.copy(alpha = 0.28f))
+                                                .padding(horizontal = 9.dp, vertical = 2.5.dp),
                                         ) {
                                             Text(
                                                 text = topResult.kindLabel,
                                                 color = SoulSyncColors.AccentLight,
                                                 fontSize = 10.sp,
                                                 fontWeight = FontWeight.ExtraBold,
+                                                letterSpacing = 0.8.sp,
                                             )
                                         }
                                         Text(
                                             text = topResult.title,
                                             color = Color.White,
-                                            fontSize = 18.sp,
+                                            fontSize = if (isTv) 21.sp else 18.sp,
                                             fontWeight = FontWeight.ExtraBold,
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis,
@@ -541,129 +595,315 @@ fun SearchScreen(
                                             Text(
                                                 text = topResult.subtitle,
                                                 color = SoulSyncColors.TextSoft,
-                                                fontSize = 12.5.sp,
+                                                fontSize = 13.sp,
                                                 maxLines = 1,
                                                 overflow = TextOverflow.Ellipsis,
                                             )
                                         }
+                                    }
+                                    Row(
+                                        modifier = Modifier
+                                            .clip(CircleShape)
+                                            .background(Color.White)
+                                            .padding(horizontal = 14.dp, vertical = 8.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                    ) {
+                                        Icon(
+                                            imageVector = if (isSongTop) Icons.Default.PlayArrow else Icons.Default.ChevronRight,
+                                            contentDescription = null,
+                                            tint = Color.Black,
+                                            modifier = Modifier.size(16.dp),
+                                        )
+                                        Text(
+                                            text = if (isSongTop) "Play" else "Open",
+                                            color = Color.Black,
+                                            fontSize = 12.5.sp,
+                                            fontWeight = FontWeight.Bold,
+                                        )
                                     }
                                 }
                             }
                         }
                     }
                 }
+
+                // 2. Movies — Horizontal Poster Shelf (Netflix / Apple TV style)
                 if ((filter == "all" || filter == "movies") && movieHits.isNotEmpty()) {
-                    item { SectionHeader("Movies") }
-                    items(movieHits, key = { "m-${it.id}" }) { m ->
-                        CompactMediaListRow(
-                            title = m.title,
-                            subtitle = listOfNotNull(m.year?.toString(), m.rating?.let { "★ %.1f".format(it) }).joinToString(" · "),
-                            artworkUrl = api.artwork.moviePoster(m.id),
-                            onClick = { onNavigate(PlayerDestination.MovieDetail(m.id)) },
-                        )
+                    item(key = "search-movies") {
+                        MediaRail(
+                            title = "Movies",
+                            actionLabel = if (filter == "all" && movieHits.size > 6) "${movieHits.size} found" else null,
+                            onAction = if (filter == "all" && movieHits.size > 6) ({ filter = "movies" }) else null,
+                        ) {
+                            items(movieHits, key = { "m-${it.id}" }) { m ->
+                                PosterCard(
+                                    title = m.title,
+                                    subtitle = m.year?.toString(),
+                                    artworkUrl = api.artwork.moviePoster(m.id),
+                                    badge = m.rating?.let { "★ %.1f".format(it) },
+                                    width = posterWidth,
+                                    onClick = { onNavigate(PlayerDestination.MovieDetail(m.id)) },
+                                )
+                            }
+                        }
                     }
                 }
+
+                // 3. TV Shows — Horizontal Poster Shelf
                 if ((filter == "all" || filter == "tv") && showHits.isNotEmpty()) {
-                    item { SectionHeader("TV Shows") }
-                    items(showHits, key = { "s-${it.id}" }) { s ->
-                        CompactMediaListRow(
-                            title = s.title,
-                            subtitle = listOfNotNull("${s.episodeCount} episodes", s.network).joinToString(" · "),
-                            artworkUrl = api.artwork.showPoster(s.id),
-                            onClick = { onNavigate(PlayerDestination.ShowDetail(s.id)) },
-                        )
+                    item(key = "search-shows") {
+                        MediaRail(
+                            title = "TV Shows",
+                            actionLabel = if (filter == "all" && showHits.size > 6) "${showHits.size} found" else null,
+                            onAction = if (filter == "all" && showHits.size > 6) ({ filter = "tv" }) else null,
+                        ) {
+                            items(showHits, key = { "s-${it.id}" }) { s ->
+                                PosterCard(
+                                    title = s.title,
+                                    subtitle = s.network ?: s.year?.toString(),
+                                    artworkUrl = api.artwork.showPoster(s.id),
+                                    badge = if (s.episodeCount > 0) "${s.episodeCount} eps" else null,
+                                    width = posterWidth,
+                                    onClick = { onNavigate(PlayerDestination.ShowDetail(s.id)) },
+                                )
+                            }
+                        }
                     }
                 }
+
+                // 4. Artists — Circular Plexamp / Spotify Artist Medallions
                 if ((filter == "all" || filter == "music") && artists.isNotEmpty()) {
-                    item { SectionHeader("Artists") }
-                    items(artists, key = { "ar-${it.id}" }) { ar ->
-                        SimpleTrackRow(
-                            title = ar.name,
-                            subtitle = "${ar.albumCount} albums",
-                            artworkUrl = api.artwork.resolve(ar.imageUrl ?: ar.remoteImageUrl),
-                            onClick = { onNavigate(PlayerDestination.ArtistDetail(ar.id)) },
-                        )
+                    item(key = "search-artists") {
+                        MediaRail(title = "Artists") {
+                            items(artists, key = { "ar-${it.id}" }) { ar ->
+                                val circleSize = if (isTv) 108.dp else 94.dp
+                                Column(
+                                    modifier = Modifier
+                                        .width(circleSize + 10.dp)
+                                        .dpadCardFocusable(RoundedCornerShape(14.dp))
+                                        .clickable { onNavigate(PlayerDestination.ArtistDetail(ar.id)) }
+                                        .padding(vertical = 4.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy(7.dp),
+                                ) {
+                                    SoulSyncArtwork(
+                                        url = api.artwork.resolve(ar.imageUrl ?: ar.remoteImageUrl),
+                                        contentDescription = ar.name,
+                                        fallbackIcon = Icons.Default.Person,
+                                        modifier = Modifier
+                                            .size(circleSize)
+                                            .clip(CircleShape)
+                                            .border(1.dp, Color.White.copy(alpha = 0.12f), CircleShape),
+                                    )
+                                    Text(
+                                        text = ar.name,
+                                        color = Color.White,
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        textAlign = TextAlign.Center,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                    Text(
+                                        text = "${ar.albumCount} ${if (ar.albumCount == 1) "album" else "albums"}",
+                                        color = SoulSyncColors.TextSecondary,
+                                        fontSize = 11.sp,
+                                        maxLines = 1,
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
+
+                // 5. Albums — Horizontal Square Album Cover Shelf
                 if ((filter == "all" || filter == "music") && albums.isNotEmpty()) {
-                    item { SectionHeader("Albums") }
-                    items(albums, key = { "al-${it.id}" }) { al ->
-                        SimpleTrackRow(
-                            title = al.title,
-                            subtitle = listOfNotNull(al.artistName, al.year?.toString()).joinToString(" · "),
-                            artworkUrl = api.artwork.resolve(al.imageUrl) ?: api.artwork.albumArtwork(al.id),
-                            onClick = { onNavigate(PlayerDestination.AlbumDetail(al.id)) },
-                        )
+                    item(key = "search-albums") {
+                        MediaRail(title = "Albums") {
+                            items(albums, key = { "al-${it.id}" }) { al ->
+                                SquareMediaCard(
+                                    title = al.title,
+                                    subtitle = listOfNotNull(al.artistName, al.year?.toString()).joinToString(" · "),
+                                    artworkUrl = api.artwork.resolve(al.imageUrl) ?: api.artwork.albumArtwork(al.id),
+                                    fallbackIcon = Icons.Default.MusicNote,
+                                    width = squareWidth,
+                                    onClick = { onNavigate(PlayerDestination.AlbumDetail(al.id)) },
+                                )
+                            }
+                        }
                     }
                 }
+
+                // 6. Songs — Clean Borderless Spotify / Plexamp Track List (zero white borders!)
                 if ((filter == "all" || filter == "music") && songs.isNotEmpty()) {
-                    item { SectionHeader("Songs") }
-                    items(songs, key = { "so-${it.id}" }) { song ->
-                        SimpleTrackRow(
-                            title = song.title,
-                            subtitle = listOfNotNull(song.artistName, song.albumTitle).joinToString(" · "),
+                    item(key = "search-songs-hdr") {
+                        SectionHeader("Songs")
+                    }
+                    itemsIndexed(songs, key = { _, song -> "so-${song.id}" }) { idx, song ->
+                        SearchSongRow(
+                            song = song,
                             artworkUrl = api.artwork.albumArtwork(song.albumId),
+                            showDivider = idx < songs.lastIndex,
                             onClick = {
-                                coordinator.playAudio(
+                                val playables = songs.map { s ->
                                     ActivePlayable(
                                         itemType = "track",
-                                        itemId = song.id.toString(),
-                                        title = song.title,
-                                        subtitle = song.artistName ?: "Unknown Artist",
-                                        artworkUrl = api.artwork.albumArtwork(song.albumId),
-                                        streamUrl = api.streamUrl("track", song.id.toString()),
-                                    ),
-                                )
+                                        itemId = s.id.toString(),
+                                        title = s.title,
+                                        subtitle = s.artistName ?: "Unknown Artist",
+                                        artworkUrl = api.artwork.albumArtwork(s.albumId),
+                                        streamUrl = api.streamUrl("track", s.id.toString()),
+                                        durationMs = (s.duration ?: 0L).let { d -> if (d in 1L..9_999L) d * 1000L else d },
+                                    )
+                                }
+                                coordinator.playAudio(playables[idx], playables.drop(idx + 1))
                             },
                         )
                     }
                 }
+
+                // 7. YouTube — Horizontal 16:9 Widescreen Video Shelf
                 if ((filter == "all" || filter == "youtube") && ytHits.isNotEmpty()) {
-                    item { SectionHeader("YouTube") }
-                    items(ytHits, key = { "y-${it.id}" }) { y ->
-                        SimpleTrackRow(
-                            title = y.title,
-                            subtitle = y.channelTitle.orEmpty(),
-                            artworkUrl = api.artwork.resolve(y.thumbnailUrl),
-                            onClick = {
-                                coordinator.playVideo(
-                                    ActivePlayable(
-                                        itemType = "youtube",
-                                        itemId = y.id,
-                                        title = y.title,
-                                        subtitle = y.channelTitle.orEmpty(),
-                                        artworkUrl = api.artwork.resolve(y.thumbnailUrl),
-                                        streamUrl = api.streamUrl("youtube", y.id),
-                                        isVideo = true,
-                                    ),
+                    item(key = "search-youtube") {
+                        MediaRail(title = "YouTube") {
+                            items(ytHits, key = { "y-${it.id}" }) { y ->
+                                WideMediaCard(
+                                    title = y.title,
+                                    subtitle = y.channelTitle.orEmpty(),
+                                    artworkUrl = api.artwork.resolve(y.thumbnailUrl),
+                                    width = wideWidth,
+                                    onClick = {
+                                        coordinator.playVideo(
+                                            ActivePlayable(
+                                                itemType = "youtube",
+                                                itemId = y.id,
+                                                title = y.title,
+                                                subtitle = y.channelTitle.orEmpty(),
+                                                artworkUrl = api.artwork.resolve(y.thumbnailUrl),
+                                                streamUrl = api.streamUrl("youtube", y.id),
+                                                isVideo = true,
+                                            ),
+                                        )
+                                    },
                                 )
-                            },
-                        )
+                            }
+                        }
                     }
                 }
+
+                // 8. Podcasts — Horizontal Square Cover Shelf
                 if ((filter == "all" || filter == "podcasts") && podcastHits.isNotEmpty()) {
-                    item { SectionHeader("Podcasts") }
-                    items(podcastHits, key = { "p-${it.id}" }) { p ->
-                        SimpleTrackRow(
-                            title = p.title,
-                            subtitle = p.author.orEmpty(),
-                            artworkUrl = api.artwork.resolve(p.artworkUrl),
-                            onClick = { onNavigate(PlayerDestination.PodcastDetail(p)) },
-                        )
+                    item(key = "search-podcasts") {
+                        MediaRail(title = "Podcasts") {
+                            items(podcastHits, key = { "p-${it.id}" }) { p ->
+                                SquareMediaCard(
+                                    title = p.title,
+                                    subtitle = p.author.orEmpty(),
+                                    artworkUrl = api.artwork.resolve(p.artworkUrl),
+                                    fallbackIcon = Icons.Default.Podcasts,
+                                    width = squareWidth,
+                                    onClick = { onNavigate(PlayerDestination.PodcastDetail(p)) },
+                                )
+                            }
+                        }
                     }
                 }
+
+                // 9. Audiobooks — Horizontal Square Cover Shelf
                 if ((filter == "all" || filter == "audiobooks") && bookHits.isNotEmpty()) {
-                    item { SectionHeader("Audiobooks") }
-                    items(bookHits, key = { "b-${it.asin}" }) { b ->
-                        SimpleTrackRow(
-                            title = b.title,
-                            subtitle = b.author.orEmpty(),
-                            artworkUrl = api.artwork.resolve(b.coverUrl) ?: api.artwork.audiobookCover(b.asin),
-                            onClick = { onNavigate(PlayerDestination.AudiobookDetail(b)) },
-                        )
+                    item(key = "search-audiobooks") {
+                        MediaRail(title = "Audiobooks") {
+                            items(bookHits, key = { "b-${it.asin}" }) { b ->
+                                SquareMediaCard(
+                                    title = b.title,
+                                    subtitle = b.author.orEmpty(),
+                                    artworkUrl = api.artwork.resolve(b.coverUrl) ?: api.artwork.audiobookCover(b.asin),
+                                    fallbackIcon = Icons.Default.Headphones,
+                                    width = squareWidth,
+                                    onClick = { onNavigate(PlayerDestination.AudiobookDetail(b)) },
+                                )
+                            }
+                        }
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun SearchSongRow(
+    song: net.ssync.player.LibSong,
+    artworkUrl: String?,
+    showDivider: Boolean,
+    onClick: () -> Unit,
+) {
+    val rawDur = song.duration ?: 0L
+    val durSec = (if (rawDur > 10_000L) rawDur / 1000L else rawDur).coerceAtLeast(0L)
+    val durText = if (durSec > 0L) "%d:%02d".format(durSec / 60L, durSec % 60L) else null
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(10.dp))
+                .dpadFocusable(RoundedCornerShape(10.dp))
+                .clickable(onClick = onClick)
+                .padding(horizontal = 8.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            SoulSyncArtwork(
+                url = artworkUrl,
+                contentDescription = song.title,
+                fallbackIcon = Icons.Default.MusicNote,
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(RoundedCornerShape(8.dp)),
+            )
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    text = song.title,
+                    color = Color.White,
+                    fontSize = 14.5.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                val sub = listOfNotNull(song.artistName, song.albumTitle).joinToString(" · ")
+                if (sub.isNotBlank()) {
+                    Text(
+                        text = sub,
+                        color = SoulSyncColors.TextSecondary,
+                        fontSize = 12.5.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            if (!durText.isNullOrBlank()) {
+                Text(
+                    text = durText,
+                    color = SoulSyncColors.TextSecondary,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                )
+            }
+            Icon(
+                imageVector = Icons.Default.PlayArrow,
+                contentDescription = "Play ${song.title}",
+                tint = SoulSyncColors.TextSoft,
+                modifier = Modifier.size(20.dp),
+            )
+        }
+        if (showDivider) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 68.dp, end = 8.dp)
+                    .height(0.5.dp)
+                    .background(Color.White.copy(alpha = 0.06f)),
+            )
         }
     }
 }

@@ -1,7 +1,13 @@
 package net.ssync.player
 
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.content.Context
+import android.content.Intent
 import android.content.SharedPreferences
+import android.content.pm.ServiceInfo
+import android.os.Build
 import androidx.annotation.OptIn
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
@@ -16,7 +22,11 @@ import androidx.media3.datasource.cache.CacheWriter
 import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor
 import androidx.media3.datasource.cache.SimpleCache
 import androidx.media3.datasource.okhttp.OkHttpDataSource
+import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.audio.AudioSink
+import androidx.media3.exoplayer.audio.DefaultAudioSink
+import androidx.media3.exoplayer.audio.TeeAudioProcessor
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
@@ -102,7 +112,22 @@ class SoulSyncPlaybackService : MediaSessionService() {
             .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
             .build()
 
-        val player = ExoPlayer.Builder(this)
+        // Tap live PCM audio directly from ExoPlayer into AudioSpectrumBus for 60fps FFT visualizers
+        val renderersFactory = object : DefaultRenderersFactory(this) {
+            override fun buildAudioSink(
+                context: Context,
+                enableFloatOutput: Boolean,
+                enableAudioTrackPlaybackParams: Boolean,
+            ): AudioSink {
+                return DefaultAudioSink.Builder(context)
+                    .setEnableFloatOutput(enableFloatOutput)
+                    .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
+                    .setAudioProcessors(arrayOf(TeeAudioProcessor(AudioSpectrumBus)))
+                    .build()
+            }
+        }
+
+        val player = ExoPlayer.Builder(this, renderersFactory)
             .setMediaSourceFactory(DefaultMediaSourceFactory(playbackDataSourceFactory))
             .setAudioAttributes(audioAttributes, /* handleAudioFocus = */ true)
             .setHandleAudioBecomingNoisy(true)
@@ -264,6 +289,45 @@ class SoulSyncPlaybackService : MediaSessionService() {
             outDeck.stop()
             outDeck.clearMediaItems()
             primary.volume = 1f
+        }
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // Satisfy Android's 5-second startForegroundService() contract immediately so the OS
+        // can NEVER kill the app with RemoteServiceException if playback pauses or switches quickly.
+        ensureForegroundNotification()
+        return super.onStartCommand(intent, flags, startId)
+    }
+
+    private fun ensureForegroundNotification() {
+        runCatching {
+            val channelId = "soulsync_media_playback"
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val nm = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+                if (nm != null && nm.getNotificationChannel(channelId) == null) {
+                    nm.createNotificationChannel(
+                        NotificationChannel(
+                            channelId,
+                            "SoulSync Playback",
+                            NotificationManager.IMPORTANCE_LOW,
+                        ).apply {
+                            setShowBadge(false)
+                            setSound(null, null)
+                        },
+                    )
+                }
+            }
+            val notif = Notification.Builder(this, channelId)
+                .setContentTitle("SoulSync")
+                .setContentText("Playing audio")
+                .setSmallIcon(android.R.drawable.ic_media_play)
+                .setOngoing(false)
+                .build()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(1001, notif, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
+            } else {
+                startForeground(1001, notif)
+            }
         }
     }
 

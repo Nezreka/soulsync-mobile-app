@@ -8,15 +8,22 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import coil.ImageLoader
-import coil.compose.SubcomposeAsyncImage
+import coil.compose.AsyncImage
 import coil.disk.DiskCache
 import coil.memory.MemoryCache
+import coil.request.ImageRequest
+import coil.size.Precision
 import net.ssync.pairing.theme.SoulSyncColors
 import okhttp3.Call
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
@@ -59,31 +66,47 @@ fun createPinnedImageLoader(
         .callFactory(routingFactory)
         .memoryCache {
             MemoryCache.Builder(context)
-                .maxSizePercent(0.25)
+                .maxSizePercent(0.28)
                 .build()
         }
         .diskCache {
             DiskCache.Builder()
                 .directory(File(context.cacheDir, "soulsync_img_cache"))
-                .maxSizeBytes(120L * 1024L * 1024L)
+                .maxSizeBytes(256L * 1024L * 1024L)
                 .build()
         }
         .respectCacheHeaders(false)
-        .allowRgb565(true)
-        .crossfade(120)
+        .allowHardware(true)
+        .allowRgb565(false)
+        .crossfade(160)
         .build()
 }
 
+/**
+ * High-performance 60fps artwork renderer using `AsyncImage` (no SubcomposeLayout overhead in
+ * LazyColumn/LazyRow) with `Precision.INEXACT` and explicit `maxPx` decode cap so 4K backdrops
+ * never thrash TV RAM or trigger GC pauses while scrolling.
+ */
 @Composable
 fun SoulSyncArtwork(
     url: String?,
     contentDescription: String?,
     modifier: Modifier = Modifier,
+    fallbackUrl: String? = null,
+    secondaryFallbackUrl: String? = null,
     fallbackIcon: ImageVector = Icons.Default.Movie,
     contentScale: ContentScale = ContentScale.Crop,
+    maxPx: Int = 720,
 ) {
     val loader = LocalSoulSyncImageLoader.current
-    if (url.isNullOrBlank()) {
+    val context = LocalContext.current
+    val candidates = remember(url, fallbackUrl, secondaryFallbackUrl) {
+        listOfNotNull(url, fallbackUrl, secondaryFallbackUrl)
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .distinct()
+    }
+    if (candidates.isEmpty()) {
         Box(
             modifier = modifier.background(SoulSyncColors.CardRaised),
             contentAlignment = Alignment.Center,
@@ -95,29 +118,36 @@ fun SoulSyncArtwork(
             )
         }
     } else {
-        SubcomposeAsyncImage(
-            model = url,
-            imageLoader = loader,
-            contentDescription = contentDescription,
-            contentScale = contentScale,
-            modifier = modifier,
-            loading = {
-                Box(
-                    modifier = Modifier.fillMaxSize().background(SoulSyncColors.CardRaised),
+        var attemptIdx by remember(candidates) { mutableStateOf(0) }
+        val activeUrl = candidates.getOrNull(attemptIdx)
+        Box(
+            modifier = modifier.background(SoulSyncColors.CardRaised),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (activeUrl == null) {
+                Icon(
+                    imageVector = fallbackIcon,
+                    contentDescription = contentDescription,
+                    tint = SoulSyncColors.TextSecondary,
                 )
-            },
-            error = {
-                Box(
-                    modifier = Modifier.fillMaxSize().background(SoulSyncColors.CardRaised),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        imageVector = fallbackIcon,
-                        contentDescription = contentDescription,
-                        tint = SoulSyncColors.TextSecondary,
-                    )
+            } else {
+                val request = remember(context, activeUrl, maxPx) {
+                    ImageRequest.Builder(context)
+                        .data(activeUrl)
+                        .size(maxPx)
+                        .precision(Precision.INEXACT)
+                        .crossfade(160)
+                        .build()
                 }
-            },
-        )
+                AsyncImage(
+                    model = request,
+                    imageLoader = loader,
+                    contentDescription = contentDescription,
+                    contentScale = contentScale,
+                    onError = { attemptIdx += 1 },
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+        }
     }
 }

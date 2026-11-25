@@ -1,5 +1,7 @@
 package net.ssync.app.player
 
+import net.ssync.pairing.ui.dpadFocusable
+
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -101,7 +103,7 @@ internal fun ReportIssuePillButton(
         } else {
             PaddingValues(horizontal = 14.dp, vertical = 8.dp)
         },
-        modifier = modifier.height(if (compact) 38.dp else 40.dp),
+        modifier = modifier.height(if (compact) 38.dp else 40.dp).dpadFocusable(androidx.compose.foundation.shape.RoundedCornerShape(999.dp)),
     ) {
         Icon(
             imageVector = Icons.Default.Flag,
@@ -139,10 +141,8 @@ internal fun ReportIssueSheet(
     var done by remember { mutableStateOf(false) }
     var errorMsg by remember { mutableStateOf<String?>(null) }
 
-    ModalBottomSheet(
+    AdaptiveTvSheet(
         onDismissRequest = { if (!busy) onDismiss() },
-        containerColor = SoulSyncColors.Surface,
-        contentColor = SoulSyncColors.TextPrimary,
     ) {
         Column(
             modifier = Modifier
@@ -186,7 +186,7 @@ internal fun ReportIssueSheet(
                 }
                 Button(
                     onClick = onDismiss,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().dpadFocusable(androidx.compose.foundation.shape.RoundedCornerShape(999.dp)),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = SoulSyncColors.Accent,
                         contentColor = SoulSyncColors.OnAccent,
@@ -274,7 +274,7 @@ internal fun ReportIssueSheet(
                         }
                     },
                     enabled = !busy,
-                    modifier = Modifier.fillMaxWidth().height(46.dp),
+                    modifier = Modifier.fillMaxWidth().height(46.dp).dpadFocusable(androidx.compose.foundation.shape.RoundedCornerShape(999.dp)),
                     shape = CircleShape,
                     colors = ButtonDefaults.buttonColors(
                         containerColor = SoulSyncColors.Accent,

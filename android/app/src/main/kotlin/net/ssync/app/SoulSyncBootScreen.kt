@@ -78,7 +78,7 @@ fun SoulSyncBootOverlay(
         )
     }
     LaunchedEffect(Unit) {
-        delay(1200L)
+        delay(2200L)
         minElapsed = true
     }
     LaunchedEffect(ready, minElapsed) {
@@ -87,7 +87,7 @@ fun SoulSyncBootOverlay(
         }
     }
     LaunchedEffect(Unit) {
-        delay(2600L)
+        delay(3600L)
         visible = false
     }
 

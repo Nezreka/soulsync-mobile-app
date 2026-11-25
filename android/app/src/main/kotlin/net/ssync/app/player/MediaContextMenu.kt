@@ -54,6 +54,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 import net.ssync.pairing.theme.SoulSyncColors
+import net.ssync.pairing.ui.dpadFocusable
 import net.ssync.player.MusicApiResult
 import net.ssync.player.PlayerApiClient
 import net.ssync.player.SongRefPayload
@@ -109,12 +110,10 @@ fun MediaContextMenuSheet(
         item.itemType in setOf("movie", "episode", "track", "youtube", "audiobook", "podcast") &&
         !item.streamUrl.isNullOrBlank()
 
-    ModalBottomSheet(
+    AdaptiveTvSheet(
         onDismissRequest = onDismiss,
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         containerColor = Color(0xFF131520),
         contentColor = Color.White,
-        dragHandle = null,
     ) {
         Column(
             modifier = Modifier
@@ -408,6 +407,7 @@ private fun ContextMenuRow(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
+            .dpadFocusable(RoundedCornerShape(12.dp))
             .clickable(onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,

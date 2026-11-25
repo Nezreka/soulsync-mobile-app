@@ -1223,12 +1223,13 @@ fun SettingsScreen(
                         confirmUnpair = false
                         onUnpair()
                     },
+    modifier = Modifier.dpadFocusable(androidx.compose.foundation.shape.RoundedCornerShape(999.dp)),
                 ) {
                     Text("Unpair", color = SoulSyncColors.Danger, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
-                TextButton(onClick = { confirmUnpair = false }) {
+                TextButton(onClick = { confirmUnpair = false }, modifier = Modifier.dpadFocusable(androidx.compose.foundation.shape.RoundedCornerShape(999.dp)),) {
                     Text("Cancel", color = SoulSyncColors.TextSoft)
                 }
             },
@@ -1364,6 +1365,7 @@ private fun SettingsToggleRow(
                 uncheckedTrackColor = Color.White.copy(alpha = 0.16f),
                 uncheckedBorderColor = Color.White.copy(alpha = 0.18f),
             ),
+    modifier = Modifier.dpadFocusable(androidx.compose.foundation.shape.CircleShape),
         )
     }
 }

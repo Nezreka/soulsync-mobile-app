@@ -1,5 +1,7 @@
 package net.ssync.app.player
 
+import net.ssync.pairing.ui.dpadFocusable
+
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -775,14 +777,14 @@ fun CastMiniBar(
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
-                IconButton(onClick = { castController.toggleRemotePlayPause() }) {
+                IconButton(onClick = { castController.toggleRemotePlayPause() }, modifier = Modifier.dpadFocusable(androidx.compose.foundation.shape.CircleShape),) {
                     Icon(
                         imageVector = if (castController.remoteIsPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
                         contentDescription = if (castController.remoteIsPlaying) "Pause TV" else "Play TV",
                         tint = Color.White,
                     )
                 }
-                IconButton(onClick = { castController.stopRemote() }) {
+                IconButton(onClick = { castController.stopRemote() }, modifier = Modifier.dpadFocusable(androidx.compose.foundation.shape.CircleShape),) {
                     Icon(
                         imageVector = Icons.Default.Close,
                         contentDescription = "Stop casting",
@@ -861,7 +863,7 @@ fun CastDeviceSheet(
                             }
                         },
                         enabled = !sending,
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth().dpadFocusable(androidx.compose.foundation.shape.RoundedCornerShape(999.dp)),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = SoulSyncColors.Accent,
                             contentColor = SoulSyncColors.OnAccent,
@@ -994,7 +996,7 @@ fun CastDeviceSheet(
                     ) {
                         IconButton(
                             onClick = { castController.skipBy(-10_000L) },
-                            modifier = Modifier.size(48.dp),
+                            modifier = Modifier.size(48.dp).dpadFocusable(androidx.compose.foundation.shape.CircleShape),
                         ) {
                             Icon(Icons.Default.Replay10, contentDescription = "Rewind 10s", tint = Color.White, modifier = Modifier.size(30.dp))
                         }
@@ -1016,7 +1018,7 @@ fun CastDeviceSheet(
 
                         IconButton(
                             onClick = { castController.skipBy(30_000L) },
-                            modifier = Modifier.size(48.dp),
+                            modifier = Modifier.size(48.dp).dpadFocusable(androidx.compose.foundation.shape.CircleShape),
                         ) {
                             Icon(Icons.Default.Forward30, contentDescription = "Forward 30s", tint = Color.White, modifier = Modifier.size(30.dp))
                         }
@@ -1032,7 +1034,7 @@ fun CastDeviceSheet(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        IconButton(onClick = { castController.toggleMute() }, modifier = Modifier.size(36.dp)) {
+                        IconButton(onClick = { castController.toggleMute() }, modifier = Modifier.size(36.dp).dpadFocusable(androidx.compose.foundation.shape.CircleShape)) {
                             Icon(
                                 imageVector = if (castController.remoteMuted || castController.remoteVolume <= 0.01f) {
                                     Icons.Default.VolumeOff
@@ -1114,7 +1116,7 @@ fun CastDeviceSheet(
                                         contentColor = if (inFinalCountdown) SoulSyncColors.OnAccent else Color.White,
                                     ),
                                     contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                                    modifier = Modifier.height(32.dp),
+                                    modifier = Modifier.height(32.dp).dpadFocusable(androidx.compose.foundation.shape.RoundedCornerShape(999.dp)),
                                 ) {
                                     Text(
                                         text = if (inFinalCountdown) "Play Now" else "Skip",
@@ -1130,7 +1132,7 @@ fun CastDeviceSheet(
                     if (activeItem != null) {
                         OutlinedButton(
                             onClick = { showCastReport = true },
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier.fillMaxWidth().dpadFocusable(androidx.compose.foundation.shape.RoundedCornerShape(999.dp)),
                             border = BorderStroke(1.dp, SoulSyncColors.LineStrong),
                         ) {
                             Icon(Icons.Default.Flag, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
@@ -1152,7 +1154,7 @@ fun CastDeviceSheet(
 
                     OutlinedButton(
                         onClick = { castController.stopRemote() },
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth().dpadFocusable(androidx.compose.foundation.shape.RoundedCornerShape(999.dp)),
                         border = BorderStroke(1.dp, SoulSyncColors.LineStrong),
                     ) {
                         Icon(Icons.Default.Stop, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
@@ -1163,7 +1165,7 @@ fun CastDeviceSheet(
 
                 OutlinedButton(
                     onClick = { castController.disconnect() },
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().dpadFocusable(androidx.compose.foundation.shape.RoundedCornerShape(999.dp)),
                     border = BorderStroke(1.dp, Color(0xFFFF6B6B).copy(alpha = 0.5f)),
                 ) {
                     Text("Disconnect", color = Color(0xFFFF6B6B), fontWeight = FontWeight.SemiBold)
@@ -1215,7 +1217,7 @@ fun CastDeviceSheet(
                 onClick = {
                     runCatching { context.startActivity(Intent(Settings.ACTION_CAST_SETTINGS)) }
                 },
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().dpadFocusable(androidx.compose.foundation.shape.RoundedCornerShape(999.dp)),
                 border = BorderStroke(1.dp, SoulSyncColors.Line),
             ) {
                 Text("System Cast / Screen Mirroring", color = SoulSyncColors.TextSoft, fontSize = 13.sp)
