@@ -81,9 +81,11 @@ fun MoviesScreen(
     onDeviceRevoked: () -> Unit,
     coordinator: PlaybackCoordinator? = null,
     onNavigate: ((PlayerDestination) -> Unit)? = null,
+    /** one library's page: only its films. null is Movies itself: every film not in a library with its own page */
+    library: net.ssync.player.PlayerLibrary? = null,
 ) {
     val warmHit = HomeWarmCache.baseUrl == api.baseUrl && HomeWarmCache.catalog.movies.isNotEmpty()
-    var movies by remember(api.baseUrl) {
+    var allMovies by remember(api.baseUrl) {
         mutableStateOf(if (warmHit) HomeWarmCache.catalog.movies else emptyList())
     }
     var studioCollections by remember(api.baseUrl) {
@@ -107,13 +109,13 @@ fun MoviesScreen(
             isLoading = false
             return@LaunchedEffect
         }
-        if (movies.isEmpty()) isLoading = true
+        if (allMovies.isEmpty()) isLoading = true
         coroutineScope {
             val catDef = async { api.fetchVideoCatalog() }
             val colDef = async { api.fetchCollections() }
             when (val res = catDef.await()) {
                 is MusicApiResult.Success -> {
-                    movies = res.data.movies
+                    allMovies = res.data.movies
                     HomeWarmCache.baseUrl = api.baseUrl
                     HomeWarmCache.catalog = res.data
                     HomeWarmCache.catalogFetchedAtMs = System.currentTimeMillis()
@@ -134,8 +136,14 @@ fun MoviesScreen(
         LoadingBox()
         return
     }
+    val ownPages = HomeWarmCache.ownPageLibraries.value
+    val movies = remember(allMovies, library, ownPages) {
+        val split = ownPages.map { it.id }.toSet()
+        if (library != null) allMovies.filter { it.libraryId == library.id }
+        else allMovies.filter { it.libraryId == null || it.libraryId !in split }
+    }
     if (movies.isEmpty()) {
-        EmptyBox("No movies in your SoulSync library yet.")
+        EmptyBox(if (library != null) "Nothing in ${library.name} yet." else "No movies in your SoulSync library yet.")
         return
     }
 
@@ -198,7 +206,7 @@ fun MoviesScreen(
 
     Column(modifier = Modifier.fillMaxSize()) {
         BrowseHeaderAndTabs(
-            title = "Movies",
+            title = library?.name ?: "Movies",
             tabs = VideoBrowseTab.entries.map { it to it.label },
             selected = tab,
             onSelect = { next ->
@@ -214,6 +222,8 @@ fun MoviesScreen(
                 // the rows this page's layout names (the same layout the web player's Movies page draws)
                 VideoForYouRows(
                     kind = "movie",
+                    page = library?.let { "movies:lib:${it.id}" } ?: "movies",
+                    pageName = library?.name ?: "Movies",
                     api = api,
                     movies = movies,
                     shows = emptyList(),
@@ -392,12 +402,14 @@ fun TvScreen(
     onDeviceRevoked: () -> Unit,
     coordinator: PlaybackCoordinator? = null,
     onNavigate: ((PlayerDestination) -> Unit)? = null,
+    /** one library's page: only its shows. null is TV Shows itself: every show not in a library with its own page */
+    library: net.ssync.player.PlayerLibrary? = null,
 ) {
     val warmHit = HomeWarmCache.baseUrl == api.baseUrl && HomeWarmCache.catalog.shows.isNotEmpty()
-    var shows by remember(api.baseUrl) {
+    var allShows by remember(api.baseUrl) {
         mutableStateOf(if (warmHit) HomeWarmCache.catalog.shows else emptyList())
     }
-    var recentEpisodes by remember(api.baseUrl) {
+    var allRecentEpisodes by remember(api.baseUrl) {
         mutableStateOf(if (warmHit) HomeWarmCache.catalog.recentEpisodes else emptyList())
     }
     var tvStudioCollections by remember(api.baseUrl) {
@@ -420,14 +432,14 @@ fun TvScreen(
             isLoading = false
             return@LaunchedEffect
         }
-        if (shows.isEmpty()) isLoading = true
+        if (allShows.isEmpty()) isLoading = true
         coroutineScope {
             val catDef = async { api.fetchVideoCatalog() }
             val colDef = async { api.fetchCollections() }
             when (val res = catDef.await()) {
                 is MusicApiResult.Success -> {
-                    shows = res.data.shows
-                    recentEpisodes = res.data.recentEpisodes
+                    allShows = res.data.shows
+                    allRecentEpisodes = res.data.recentEpisodes
                     HomeWarmCache.baseUrl = api.baseUrl
                     HomeWarmCache.catalog = res.data
                     HomeWarmCache.catalogFetchedAtMs = System.currentTimeMillis()
@@ -448,8 +460,18 @@ fun TvScreen(
         LoadingBox()
         return
     }
+    val ownPages = HomeWarmCache.ownPageLibraries.value
+    val shows = remember(allShows, library, ownPages) {
+        val split = ownPages.map { it.id }.toSet()
+        if (library != null) allShows.filter { it.libraryId == library.id }
+        else allShows.filter { it.libraryId == null || it.libraryId !in split }
+    }
+    val recentEpisodes = remember(allRecentEpisodes, shows) {
+        val mine = shows.map { it.id }.toSet()
+        allRecentEpisodes.filter { it.showId in mine }
+    }
     if (shows.isEmpty()) {
-        EmptyBox("No TV shows in your SoulSync library yet.")
+        EmptyBox(if (library != null) "Nothing in ${library.name} yet." else "No TV shows in your SoulSync library yet.")
         return
     }
 
@@ -504,7 +526,7 @@ fun TvScreen(
 
     Column(modifier = Modifier.fillMaxSize()) {
         BrowseHeaderAndTabs(
-            title = "TV Shows",
+            title = library?.name ?: "TV Shows",
             tabs = VideoBrowseTab.entries.map { it to it.label },
             selected = tab,
             onSelect = { next ->
@@ -520,6 +542,8 @@ fun TvScreen(
                 // the rows this page's layout names (the same layout the web player's TV page draws)
                 VideoForYouRows(
                     kind = "show",
+                    page = library?.let { "tv:lib:${it.id}" } ?: "tv",
+                    pageName = library?.name ?: "TV Shows",
                     api = api,
                     movies = emptyList(),
                     shows = shows,

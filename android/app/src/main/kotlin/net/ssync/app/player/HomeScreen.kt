@@ -114,7 +114,14 @@ private data class BillboardSlide(
 internal object HomeWarmCache {
     var baseUrl: String? = null
     var continueItems: List<ProgressRow> = emptyList()
+    /** the libraries with a page of their own, observable: the sidebar lists them and the browse pages split by them */
+    val ownPageLibraries = mutableStateOf<List<net.ssync.player.PlayerLibrary>>(emptyList())
     var catalog: VideoCatalog = VideoCatalog()
+        set(value) {
+            field = value
+            val pages = value.libraries.filter { it.ownPage }
+            if (pages != ownPageLibraries.value) ownPageLibraries.value = pages
+        }
     var catalogFetchedAtMs: Long = 0L
     var watchlist: List<WatchlistItem> = emptyList()
     var studioCollections: List<net.ssync.player.StudioCollection> = emptyList()

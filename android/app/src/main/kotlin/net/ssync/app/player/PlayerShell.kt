@@ -1833,6 +1833,14 @@ private fun PlayerSidebar(
             SidebarSectionBreak("WATCH", collapsed)
             SidebarItem(Icons.Default.Movie, "Movies", isMoviesSel, collapsed, itemModifier = activeMod(isMoviesSel)) { onNavigate(PlayerDestination.Movies) }
             SidebarItem(Icons.Default.Tv, "TV Shows", isTvSel, collapsed, itemModifier = activeMod(isTvSel)) { onNavigate(PlayerDestination.Tv) }
+            // a library an admin gave its own page (Anime, Kids, 4K): its own entry here
+            HomeWarmCache.ownPageLibraries.value.forEach { lib ->
+                val sel = current is PlayerDestination.Library && current.library.id == lib.id
+                SidebarItem(
+                    if (lib.kind == "movie") Icons.Default.Movie else Icons.Default.Tv,
+                    lib.name, sel, collapsed, itemModifier = activeMod(sel),
+                ) { onNavigate(PlayerDestination.Library(lib)) }
+            }
             SidebarItem(Icons.Default.SmartDisplay, "YouTube", isYouTubeSel, collapsed, itemModifier = activeMod(isYouTubeSel)) { onNavigate(PlayerDestination.YouTube) }
 
             SidebarSectionBreak("LISTEN", collapsed)
@@ -2053,6 +2061,11 @@ private fun PlayerContent(
         PlayerDestination.Downloads -> DownloadsScreen(api, coordinator)
         PlayerDestination.AdminUsers -> AdminUsersScreen(api, coordinator, onDeviceRevoked)
         PlayerDestination.Movies -> MoviesScreen(api, { onNavigate(PlayerDestination.MovieDetail(it)) }, onDeviceRevoked, coordinator = coordinator, onNavigate = onNavigate)
+        is PlayerDestination.Library -> if (current.library.kind == "movie") {
+            MoviesScreen(api, { onNavigate(PlayerDestination.MovieDetail(it)) }, onDeviceRevoked, coordinator = coordinator, onNavigate = onNavigate, library = current.library)
+        } else {
+            TvScreen(api, { onNavigate(PlayerDestination.ShowDetail(it)) }, onDeviceRevoked, coordinator = coordinator, onNavigate = onNavigate, library = current.library)
+        }
         is PlayerDestination.MovieDetail -> MovieDetailScreen(current.movieId, api, coordinator, onNavigate, onDeviceRevoked)
         is PlayerDestination.CollectionDetail -> CollectionDetailScreen(current.collection, api, onNavigate, onDeviceRevoked)
         PlayerDestination.Tv -> TvScreen(api, { onNavigate(PlayerDestination.ShowDetail(it)) }, onDeviceRevoked, coordinator = coordinator, onNavigate = onNavigate)

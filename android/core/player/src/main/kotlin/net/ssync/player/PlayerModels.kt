@@ -84,6 +84,9 @@ data class CatalogMovie(
     @SerialName("collection_id")
     val collectionId: Int? = null,
     val collection: String? = null,
+    /** the library its files sit in (a title in no library folder is in the main one) */
+    @SerialName("library_id")
+    val libraryId: Int? = null,
 )
 
 @Serializable
@@ -107,6 +110,8 @@ data class CatalogShow(
     @SerialName("tmdb_id")
     val tmdbId: Int? = null,
     val episodes: List<kotlinx.serialization.json.JsonArray> = emptyList(),
+    @SerialName("library_id")
+    val libraryId: Int? = null,
 )
 
 data class CatalogShowEpisode(
@@ -164,6 +169,26 @@ data class VideoCatalogKinds(
     val youtube: Boolean = true,
 )
 
+/**
+ * a video library as the player lists it (SoulSync core/player/libraries.py).
+ * one with [ownPage] has its own entry in the sidebar and its own page; the
+ * rest are part of Movies / TV Shows. a library an admin hid from this
+ * profile is never sent.
+ */
+@Serializable
+data class PlayerLibrary(
+    val id: Int,
+    /** "movie" | "show" */
+    val kind: String = "movie",
+    val name: String = "",
+    @SerialName("own_page")
+    val ownPage: Boolean = false,
+    val main: Boolean = false,
+)
+
+@Serializable
+internal data class PlayerLibrariesResponse(val libraries: List<PlayerLibrary> = emptyList())
+
 @Serializable
 data class VideoCatalog(
     val movies: List<CatalogMovie> = emptyList(),
@@ -172,7 +197,11 @@ data class VideoCatalog(
     val recentEpisodes: List<CatalogRecentEpisode> = emptyList(),
     val youtube: List<CatalogYoutube> = emptyList(),
     val kinds: VideoCatalogKinds = VideoCatalogKinds(),
-)
+    val libraries: List<PlayerLibrary> = emptyList(),
+) {
+    /** the ids of the libraries that have a page of their own */
+    val ownPageLibraryIds: Set<Int> get() = libraries.filter { it.ownPage }.map { it.id }.toSet()
+}
 
 @Serializable
 data class HomeDiskSnapshot(
@@ -1789,7 +1818,18 @@ internal object VideoCatalogDecoder {
             shows = kindsObj?.get("shows")?.boolOrNull() ?: shows.isNotEmpty(),
             youtube = kindsObj?.get("youtube")?.boolOrNull() ?: youtube.isNotEmpty(),
         )
-        return VideoCatalog(movies, shows, recent, youtube, kinds)
+        val libraries = (root["libraries"] as? JsonArray)?.mapNotNull { el ->
+            val o = el as? JsonObject ?: return@mapNotNull null
+            val id = o["id"].intOrNullSafe() ?: return@mapNotNull null
+            PlayerLibrary(
+                id = id,
+                kind = o["kind"].strOrNull() ?: "movie",
+                name = o["name"].strOrNull() ?: "",
+                ownPage = o["own_page"].boolOrNull() ?: false,
+                main = o["main"].boolOrNull() ?: false,
+            )
+        } ?: emptyList()
+        return VideoCatalog(movies, shows, recent, youtube, kinds, libraries)
     }
 
     private fun JsonElement?.strOrNull(): String? {
@@ -1846,6 +1886,7 @@ internal object VideoCatalogDecoder {
                     hasBackdrop = item.col("has_backdrop").boolOrNull() ?: false,
                     studio = item.col("studio").strOrNull(),
                     tmdbId = item.col("tmdb_id").intOrNullSafe(),
+                    libraryId = item.col("library_id").intOrNullSafe(),
                     collectionId = item.col("collection_id").intOrNullSafe(),
                     collection = item.col("collection").strOrNull(),
                 )
@@ -1898,6 +1939,7 @@ internal object VideoCatalogDecoder {
                         hasBackdrop = item.col("has_backdrop").boolOrNull() ?: false,
                         episodeCount = epsCount,
                         tmdbId = item.col("tmdb_id").intOrNullSafe(),
+                        libraryId = item.col("library_id").intOrNullSafe(),
                         episodes = rawEps,
                     )
                 }

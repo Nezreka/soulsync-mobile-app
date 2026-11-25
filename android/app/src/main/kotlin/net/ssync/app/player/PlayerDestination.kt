@@ -10,6 +10,8 @@ sealed interface PlayerDestination {
     data object Downloads : PlayerDestination
     data object AdminUsers : PlayerDestination
     data object Movies : PlayerDestination
+    /** a library with a page of its own: its Movies or TV Shows page, only its titles */
+    data class Library(val library: net.ssync.player.PlayerLibrary) : PlayerDestination
     data class MovieDetail(val movieId: Int) : PlayerDestination
     data class CollectionDetail(
         val collection: net.ssync.player.StudioCollection,

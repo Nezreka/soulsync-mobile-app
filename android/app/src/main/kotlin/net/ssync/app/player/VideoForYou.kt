@@ -47,6 +47,10 @@ private data class Owned(
 @Composable
 internal fun VideoForYouRows(
     kind: String, // "movie" | "show"
+    /** the layout this page keeps: "movies", "tv", or one library's "movies:lib:3" */
+    page: String,
+    /** what the editor calls the page */
+    pageName: String,
     api: PlayerApiClient,
     movies: List<CatalogMovie>,
     shows: List<CatalogShow>,
@@ -60,7 +64,7 @@ internal fun VideoForYouRows(
     onPickMaker: ((String) -> Unit)? = null,
 ) {
     val isMovie = kind == "movie"
-    val state = rememberPageRows(api, if (isMovie) "movies" else "tv")
+    val state = rememberPageRows(api, page)
     val rows = state.rows
 
     var continuing by remember(api.baseUrl) { mutableStateOf<List<ProgressRow>>(emptyList()) }
@@ -224,7 +228,7 @@ internal fun VideoForYouRows(
 
     PageRowsEditor(
         state = state,
-        title = if (isMovie) "Customize Movies" else "Customize TV Shows",
+        title = "Customize $pageName",
         movieGenres = if (isMovie) movies.flatMap { it.genres }.distinct().sorted() else emptyList(),
         showGenres = if (isMovie) emptyList() else shows.flatMap { it.genres }.distinct().sorted(),
     )
