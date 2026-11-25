@@ -1879,3 +1879,86 @@ internal object VideoCatalogDecoder {
         }
     }
 }
+
+// ── Real Listening History & Stats (/api/stats/cached, /api/stats/recent, etc.) ──
+
+@Serializable
+data class StatsTopArtist(
+    val id: Int? = null,
+    val name: String = "",
+    @SerialName("play_count")
+    val playCount: Int = 0,
+    @SerialName("image_url")
+    val imageUrl: String? = null,
+)
+
+@Serializable
+data class StatsTopAlbum(
+    val id: Int? = null,
+    val name: String = "",
+    val artist: String = "",
+    @SerialName("artist_id")
+    val artistId: Int? = null,
+    @SerialName("play_count")
+    val playCount: Int = 0,
+    @SerialName("image_url")
+    val imageUrl: String? = null,
+)
+
+@Serializable
+data class StatsTopTrack(
+    val id: Int? = null,
+    val name: String = "",
+    val artist: String = "",
+    val album: String? = null,
+    @SerialName("artist_id")
+    val artistId: Int? = null,
+    @SerialName("play_count")
+    val playCount: Int = 0,
+    @SerialName("image_url")
+    val imageUrl: String? = null,
+)
+
+@Serializable
+data class StatsRecentTrack(
+    val title: String = "",
+    val artist: String = "",
+    val album: String? = null,
+    @SerialName("played_at")
+    val playedAt: String? = null,
+    @SerialName("image_url")
+    val imageUrl: String? = null,
+    @SerialName("artist_db_id")
+    val artistDbId: Int? = null,
+)
+
+@Serializable
+data class StatsGenreCount(
+    val genre: String = "",
+    val count: Int = 0,
+)
+
+@Serializable
+data class ListeningStatsSnapshot(
+    val topArtists: List<StatsTopArtist> = emptyList(),
+    val topAlbums: List<StatsTopAlbum> = emptyList(),
+    val topTracks: List<StatsTopTrack> = emptyList(),
+    val recent: List<StatsRecentTrack> = emptyList(),
+    val genres: List<StatsGenreCount> = emptyList(),
+)
+
+@Serializable
+data class ResolvedTrackInfo(
+    val id: Int,
+    val title: String = "",
+    @SerialName("artist_name")
+    val artistName: String? = null,
+    @SerialName("album_title")
+    val albumTitle: String? = null,
+    @SerialName("image_url")
+    val imageUrl: String? = null,
+    @SerialName("artist_id")
+    val artistId: Int? = null,
+    @SerialName("album_id")
+    val albumId: Int? = null,
+)

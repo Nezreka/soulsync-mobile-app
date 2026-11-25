@@ -4,6 +4,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
@@ -110,7 +111,16 @@ class PlayerApiClient(
      */
     suspend fun fetchGuideCatalog(): MusicApiResult<VideoCatalog> =
         getJson("$base/api/player/video-catalog?guide=1") { body ->
-            VideoCatalogDecoder.decode(json.parseToJsonElement(body).jsonObject)
+            val root = json.parseToJsonElement(body).jsonObject
+            // the clock the guide's days are counted on: the server's, so this
+            // device lays out the same guide as every other, wherever it is
+            (root["clock"] as? JsonObject)?.let { clock ->
+                GuideClock.set(
+                    tz = clock["tz"]?.jsonPrimitive?.contentOrNull,
+                    offsetMinutes = clock["offset_minutes"]?.jsonPrimitive?.intOrNull,
+                )
+            }
+            VideoCatalogDecoder.decode(root)
         }
 
     /** what's new and when it airs: the same slots and channels on every device */
@@ -152,12 +162,21 @@ class PlayerApiClient(
             }
         }
 
-    suspend fun fetchAlbums(search: String = "", limit: Int = 80, page: Int = 1): MusicApiResult<List<LibAlbum>> {
+    suspend fun fetchAlbums(
+        search: String = "",
+        limit: Int = 80,
+        page: Int = 1,
+        genre: String = "",
+        sort: String = "added",
+    ): MusicApiResult<List<LibAlbum>> {
         val url = "$base/api/library/v2/albums".toHttpUrl().newBuilder()
             .addQueryParameter("page", page.toString())
             .addQueryParameter("limit", limit.toString())
-            .addQueryParameter("sort", "added")
-            .apply { if (search.isNotBlank()) addQueryParameter("search", search.trim()) }
+            .addQueryParameter("sort", sort)
+            .apply {
+                if (search.isNotBlank()) addQueryParameter("search", search.trim())
+                if (genre.isNotBlank()) addQueryParameter("genre", genre.trim())
+            }
             .build()
         return getJson(url.toString()) { body ->
             json.decodeFromString<AlbumsEnvelope>(body).albums
@@ -1415,6 +1434,137 @@ class PlayerApiClient(
             MusicApiResult.Error(e.message ?: "Network error")
         }
     }
+
+    /**
+     * Fetches real per-profile listening history & top plays from /api/stats/cached
+     * (instant precomputed cache), falling back to live /api/stats/recent when needed.
+     */
+    suspend fun fetchListeningStats(range: String = "30d"): MusicApiResult<ListeningStatsSnapshot> {
+        val res = getJson("$base/api/stats/cached?range=${encodeSeg(range)}") { body ->
+            val root = json.parseToJsonElement(body).jsonObject
+            fun parseArtists(el: JsonElement?): List<StatsTopArtist> =
+                (el as? JsonArray)?.mapNotNull { item ->
+                    val o = item as? JsonObject ?: return@mapNotNull null
+                    val name = o["name"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                    StatsTopArtist(
+                        id = o["id"]?.jsonPrimitive?.intOrNull,
+                        name = name,
+                        playCount = o["play_count"]?.jsonPrimitive?.intOrNull ?: o["plays"]?.jsonPrimitive?.intOrNull ?: 0,
+                        imageUrl = o["image_url"]?.jsonPrimitive?.contentOrNull,
+                    )
+                }.orEmpty()
+
+            fun parseAlbums(el: JsonElement?): List<StatsTopAlbum> =
+                (el as? JsonArray)?.mapNotNull { item ->
+                    val o = item as? JsonObject ?: return@mapNotNull null
+                    val name = (o["name"] ?: o["album"] ?: o["title"])?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+                        ?: return@mapNotNull null
+                    StatsTopAlbum(
+                        id = o["id"]?.jsonPrimitive?.intOrNull,
+                        name = name,
+                        artist = o["artist"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+                        artistId = o["artist_id"]?.jsonPrimitive?.intOrNull,
+                        playCount = o["play_count"]?.jsonPrimitive?.intOrNull ?: o["plays"]?.jsonPrimitive?.intOrNull ?: 0,
+                        imageUrl = o["image_url"]?.jsonPrimitive?.contentOrNull,
+                    )
+                }.orEmpty()
+
+            fun parseTracks(el: JsonElement?): List<StatsTopTrack> =
+                (el as? JsonArray)?.mapNotNull { item ->
+                    val o = item as? JsonObject ?: return@mapNotNull null
+                    val name = (o["name"] ?: o["title"])?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+                        ?: return@mapNotNull null
+                    StatsTopTrack(
+                        id = o["id"]?.jsonPrimitive?.intOrNull,
+                        name = name,
+                        artist = o["artist"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+                        album = o["album"]?.jsonPrimitive?.contentOrNull,
+                        artistId = o["artist_id"]?.jsonPrimitive?.intOrNull,
+                        playCount = o["play_count"]?.jsonPrimitive?.intOrNull ?: o["plays"]?.jsonPrimitive?.intOrNull ?: 0,
+                        imageUrl = o["image_url"]?.jsonPrimitive?.contentOrNull,
+                    )
+                }.orEmpty()
+
+            fun parseRecent(el: JsonElement?): List<StatsRecentTrack> =
+                (el as? JsonArray)?.mapNotNull { item ->
+                    val o = item as? JsonObject ?: return@mapNotNull null
+                    val title = (o["title"] ?: o["name"])?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+                        ?: return@mapNotNull null
+                    StatsRecentTrack(
+                        title = title,
+                        artist = o["artist"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+                        album = o["album"]?.jsonPrimitive?.contentOrNull,
+                        playedAt = o["played_at"]?.jsonPrimitive?.contentOrNull,
+                        imageUrl = o["image_url"]?.jsonPrimitive?.contentOrNull,
+                        artistDbId = o["artist_db_id"]?.jsonPrimitive?.intOrNull,
+                    )
+                }.orEmpty()
+
+            fun parseGenres(el: JsonElement?): List<StatsGenreCount> =
+                (el as? JsonArray)?.mapNotNull { item ->
+                    val o = item as? JsonObject ?: return@mapNotNull null
+                    val g = (o["genre"] ?: o["name"])?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+                        ?: return@mapNotNull null
+                    StatsGenreCount(
+                        genre = g,
+                        count = o["count"]?.jsonPrimitive?.intOrNull ?: o["play_count"]?.jsonPrimitive?.intOrNull ?: o["plays"]?.jsonPrimitive?.intOrNull ?: 0,
+                    )
+                }.orEmpty()
+
+            ListeningStatsSnapshot(
+                topArtists = parseArtists(root["top_artists"]),
+                topAlbums = parseAlbums(root["top_albums"]),
+                topTracks = parseTracks(root["top_tracks"]),
+                recent = parseRecent(root["recent"]),
+                genres = parseGenres(root["genres"]),
+            )
+        }
+        return res
+    }
+
+    suspend fun fetchRecentStatsTracks(limit: Int = 24): MusicApiResult<List<StatsRecentTrack>> =
+        getJson("$base/api/stats/recent?limit=$limit") { body ->
+            val root = json.parseToJsonElement(body).jsonObject
+            (root["tracks"] as? JsonArray)?.mapNotNull { item ->
+                val o = item as? JsonObject ?: return@mapNotNull null
+                val title = (o["title"] ?: o["name"])?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+                    ?: return@mapNotNull null
+                StatsRecentTrack(
+                    title = title,
+                    artist = o["artist"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+                    album = o["album"]?.jsonPrimitive?.contentOrNull,
+                    playedAt = o["played_at"]?.jsonPrimitive?.contentOrNull,
+                    imageUrl = o["image_url"]?.jsonPrimitive?.contentOrNull,
+                    artistDbId = o["artist_db_id"]?.jsonPrimitive?.intOrNull,
+                )
+            }.orEmpty()
+        }
+
+    suspend fun resolveStatsTrack(title: String, artist: String): MusicApiResult<ResolvedTrackInfo?> =
+        withContext(Dispatchers.IO) {
+            val payload = kotlinx.serialization.json.buildJsonObject {
+                put("title", kotlinx.serialization.json.JsonPrimitive(title))
+                put("artist", kotlinx.serialization.json.JsonPrimitive(artist))
+            }
+            val req = Request.Builder()
+                .url("$base/api/stats/resolve-track")
+                .post(payload.toString().toRequestBody(JSON_MEDIA_TYPE))
+                .build()
+            execute(req) { body ->
+                val root = json.parseToJsonElement(body).jsonObject
+                val tObj = (root["track"] as? JsonObject) ?: root
+                val id = (tObj["lib2_track_id"] ?: tObj["id"])?.jsonPrimitive?.intOrNull ?: return@execute null
+                ResolvedTrackInfo(
+                    id = id,
+                    title = tObj["title"]?.jsonPrimitive?.contentOrNull ?: title,
+                    artistName = tObj["artist_name"]?.jsonPrimitive?.contentOrNull ?: artist,
+                    albumTitle = tObj["album_title"]?.jsonPrimitive?.contentOrNull,
+                    imageUrl = tObj["image_url"]?.jsonPrimitive?.contentOrNull,
+                    artistId = (tObj["lib2_artist_id"] ?: tObj["artist_id"])?.jsonPrimitive?.intOrNull,
+                    albumId = tObj["album_id"]?.jsonPrimitive?.intOrNull,
+                )
+            }
+        }
 
     private suspend fun <T> getJson(url: String, parser: (String) -> T): MusicApiResult<T> =
         withContext(Dispatchers.IO) {

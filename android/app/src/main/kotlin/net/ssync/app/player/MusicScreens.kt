@@ -151,6 +151,12 @@ fun MusicScreen(
     var playlists by remember(api.baseUrl) { mutableStateOf(if (warmHit) HomeWarmCache.musicPlaylists else emptyList()) }
     var discoverPlaylists by remember(api.baseUrl) { mutableStateOf(if (warmHit) HomeWarmCache.discoverPlaylists else emptyList()) }
     var musicStations by remember(api.baseUrl) { mutableStateOf(if (warmHit) HomeWarmCache.musicStations else emptyList()) }
+    var stats30d by remember(api.baseUrl) { mutableStateOf(if (warmHit) HomeWarmCache.musicStats30d else net.ssync.player.ListeningStatsSnapshot()) }
+    var statsAll by remember(api.baseUrl) { mutableStateOf(if (warmHit) HomeWarmCache.musicStatsAll else net.ssync.player.ListeningStatsSnapshot()) }
+    var recentStatsTracks by remember(api.baseUrl) { mutableStateOf(if (warmHit) HomeWarmCache.musicRecentTracks else emptyList()) }
+    var moreByArtistRails by remember(api.baseUrl) { mutableStateOf(if (warmHit) HomeWarmCache.musicMoreByArtistRails else emptyList()) }
+    var similarAlbumsRail by remember(api.baseUrl) { mutableStateOf(if (warmHit) HomeWarmCache.musicSimilarAlbums else null) }
+    var genreRails by remember(api.baseUrl) { mutableStateOf(if (warmHit) HomeWarmCache.musicGenreRails else emptyList()) }
     var playlistPickerSong by remember { mutableStateOf<SongRefPayload?>(null) }
     val likedState = rememberLikedTracksState(api)
 
@@ -159,27 +165,117 @@ fun MusicScreen(
     LaunchedEffect(tab, api) {
         when (tab) {
             MusicSubTab.FOR_YOU -> {
-                if (albums.isEmpty() && artists.isEmpty() && discoverPlaylists.isEmpty()) isLoading = true
+                if (albums.isEmpty() && stats30d.topAlbums.isEmpty() && discoverPlaylists.isEmpty()) isLoading = true
                 // Stream every music shelf independently in parallel so UI paints immediately!
                 coroutineScope {
                     launch {
-                        when (val r = api.fetchAlbums(limit = 40, page = 1)) {
+                        when (val r = api.fetchAlbums(limit = 80, page = 1)) {
                             is MusicApiResult.DeviceRevoked -> onDeviceRevoked()
                             is MusicApiResult.Success -> {
                                 albums = r.data
                                 HomeWarmCache.albums = r.data
-                                hasMoreAlbums = r.data.size >= 40
+                                hasMoreAlbums = r.data.size >= 80
                                 isLoading = false
                             }
                             is MusicApiResult.Error -> Unit
                         }
                     }
                     launch {
-                        (api.fetchArtists(limit = 40, page = 1) as? MusicApiResult.Success)?.let {
-                            artists = it.data
-                            HomeWarmCache.musicArtists = it.data
-                            hasMoreArtists = it.data.size >= 40
+                        // Real 30-day listening stats (Recent, Most Played Last Month, Top Artists, Top Genres)
+                        val r30 = api.fetchListeningStats("30d")
+                        if (r30 is MusicApiResult.Success) {
+                            stats30d = r30.data
+                            HomeWarmCache.musicStats30d = r30.data
+                            if (r30.data.recent.isNotEmpty()) {
+                                recentStatsTracks = r30.data.recent
+                                HomeWarmCache.musicRecentTracks = r30.data.recent
+                            }
                             isLoading = false
+                            // Stream dynamic "More by X", "Albums Like X", and "More in [Genre]" rails!
+                            launch {
+                                val topArtistsForMore = r30.data.topArtists.filter { it.id != null }.take(4)
+                                val builtMore = mutableListOf<Pair<String, List<LibAlbum>>>()
+                                var firstDetail: net.ssync.player.LibArtistDetail? = null
+                                for (ta in topArtistsForMore) {
+                                    val aid = ta.id ?: continue
+                                    val det = (api.fetchArtistDetail(aid) as? MusicApiResult.Success)?.data ?: continue
+                                    if (firstDetail == null) firstDetail = det
+                                    val owned = det.albums.filter { it.tracksPresent > 0 || it.trackCount > 0 }.take(16)
+                                    if (owned.size >= 2 && builtMore.size < 2) {
+                                        builtMore += det.name to owned
+                                    }
+                                    if (builtMore.size >= 2 && firstDetail != null) break
+                                }
+                                if (builtMore.isNotEmpty()) {
+                                    moreByArtistRails = builtMore
+                                    HomeWarmCache.musicMoreByArtistRails = builtMore
+                                }
+                                // "Albums Like [Top Artist]" — same genre(s) as your top artist, excluding their own albums
+                                val seed = firstDetail
+                                if (seed != null) {
+                                    val seedGenre = (seed.genres + seed.about?.tags.orEmpty())
+                                        .map { it.trim() }
+                                        .firstOrNull { it.isNotBlank() }
+                                    if (seedGenre != null) {
+                                        val simAlbums = (api.fetchAlbums(limit = 28, page = 1, genre = seedGenre) as? MusicApiResult.Success)
+                                            ?.data.orEmpty()
+                                            .filter { it.artistId != seed.id && !it.artistName.equals(seed.name, ignoreCase = true) }
+                                            .distinctBy { it.id }
+                                            .take(18)
+                                        if (simAlbums.size >= 3) {
+                                            val pair = seed.name to simAlbums
+                                            similarAlbumsRail = pair
+                                            HomeWarmCache.musicSimilarAlbums = pair
+                                        }
+                                    }
+                                }
+                            }
+                            launch {
+                                val topGenres = r30.data.genres.map { it.genre.trim() }.filter { it.isNotBlank() }.distinctBy { it.lowercase() }.take(2)
+                                val builtGenres = mutableListOf<Pair<String, List<LibAlbum>>>()
+                                for (g in topGenres) {
+                                    val gAlbums = (api.fetchAlbums(limit = 20, page = 1, genre = g) as? MusicApiResult.Success)?.data.orEmpty()
+                                    if (gAlbums.size >= 3) {
+                                        builtGenres += g to gAlbums
+                                    }
+                                }
+                                if (builtGenres.isNotEmpty()) {
+                                    genreRails = builtGenres
+                                    HomeWarmCache.musicGenreRails = builtGenres
+                                }
+                            }
+                        }
+                    }
+                    launch {
+                        val rAll = api.fetchListeningStats("all")
+                        if (rAll is MusicApiResult.Success) {
+                            statsAll = rAll.data
+                            HomeWarmCache.musicStatsAll = rAll.data
+                            if (recentStatsTracks.isEmpty() && rAll.data.recent.isNotEmpty()) {
+                                recentStatsTracks = rAll.data.recent
+                                HomeWarmCache.musicRecentTracks = rAll.data.recent
+                            }
+                            // Fallback genre rails from all-time listening if 30d genres were empty
+                            if (genreRails.isEmpty() && rAll.data.genres.isNotEmpty()) {
+                                val topGenres = rAll.data.genres.map { it.genre.trim() }.filter { it.isNotBlank() }.distinctBy { it.lowercase() }.take(2)
+                                val builtGenres = mutableListOf<Pair<String, List<LibAlbum>>>()
+                                for (g in topGenres) {
+                                    val gAlbums = (api.fetchAlbums(limit = 20, page = 1, genre = g) as? MusicApiResult.Success)?.data.orEmpty()
+                                    if (gAlbums.size >= 3) builtGenres += g to gAlbums
+                                }
+                                if (builtGenres.isNotEmpty()) {
+                                    genreRails = builtGenres
+                                    HomeWarmCache.musicGenreRails = builtGenres
+                                }
+                            }
+                        }
+                    }
+                    launch {
+                        (api.fetchRecentStatsTracks(limit = 24) as? MusicApiResult.Success)?.let {
+                            if (it.data.isNotEmpty()) {
+                                recentStatsTracks = it.data
+                                HomeWarmCache.musicRecentTracks = it.data
+                            }
                         }
                     }
                     launch {
@@ -665,33 +761,121 @@ fun MusicScreen(
             }
 
             MusicSubTab.FOR_YOU -> {
+                // Compute era rail off the loaded albums (e.g. Top Albums of the 2000s / 2010s / 90s)
+                val eraRail = remember(albums) {
+                    val byDecade = albums
+                        .filter { (it.year ?: 0) in 1960..2029 }
+                        .groupBy { ((it.year ?: 2000) / 10) * 10 }
+                        .filterValues { it.size >= 4 }
+                    val best = byDecade.entries.maxByOrNull { it.value.size }
+                    if (best != null) {
+                        val label = if (best.key >= 2000) "Top Albums of the ${best.key}s" else "Top Albums of the ${best.key % 100}s"
+                        label to best.value.take(18)
+                    } else null
+                }
+                val dedupedRecent = remember(recentStatsTracks) {
+                    recentStatsTracks
+                        .distinctBy { "${it.title.lowercase()}|${it.artist.lowercase()}" }
+                        .take(20)
+                }
+                val topAlbumsMonth = remember(stats30d) { stats30d.topAlbums.take(18) }
+                val topTracksMonth = remember(stats30d) { stats30d.topTracks.take(20) }
+                val topAlbumsAllTime = remember(statsAll, topAlbumsMonth) {
+                    val monthIds = topAlbumsMonth.mapNotNull { it.id }.toSet()
+                    statsAll.topAlbums.filter { it.id == null || it.id !in monthIds }.ifEmpty { statsAll.topAlbums }.take(18)
+                }
+
                 LazyColumn(
-                    contentPadding = PaddingValues(top = 8.dp, bottom = 32.dp),
-                    verticalArrangement = Arrangement.spacedBy(22.dp),
+                    contentPadding = PaddingValues(top = 8.dp, bottom = 40.dp),
+                    verticalArrangement = Arrangement.spacedBy(24.dp),
                 ) {
-                    // 1. Recently Played (instant 1-tap resume for music tracks)
-                    if (recentMusic.isNotEmpty()) {
-                        item {
+                    // 1. Recently Played (REAL listening history from /api/stats/recent + in-app resume!)
+                    if (dedupedRecent.isNotEmpty() || recentMusic.isNotEmpty()) {
+                        item(key = "music-recently-played") {
                             MediaRail(title = "Recently Played") {
-                                items(recentMusic.take(18), key = { "rp-${it.itemId}" }) { row ->
-                                    val art = api.artwork.resolve(row.meta?.artwork ?: row.meta?.backdrop)
-                                    SquareMediaCard(
-                                        title = row.meta?.title ?: "Track #${row.itemId}",
-                                        subtitle = row.meta?.subtitle,
+                                if (dedupedRecent.isNotEmpty()) {
+                                    itemsIndexed(dedupedRecent, key = { idx, t -> "srp-$idx-${t.title}-${t.artist}" }) { _, t ->
+                                        val art = api.artwork.resolve(t.imageUrl)
+                                        SquareMediaCard(
+                                            title = t.title,
+                                            subtitle = listOfNotNull(t.artist.takeIf { it.isNotBlank() }, t.album?.takeIf { it.isNotBlank() }).joinToString(" · "),
+                                            artworkUrl = art,
+                                            fallbackIcon = Icons.Default.MusicNote,
+                                            width = 148.dp,
+                                            onClick = {
+                                                scope.launch {
+                                                    val resolved = (api.resolveStatsTrack(t.title, t.artist) as? MusicApiResult.Success)?.data
+                                                    if (resolved != null) {
+                                                        coordinator.playAudio(
+                                                            ActivePlayable(
+                                                                itemType = "track",
+                                                                itemId = resolved.id.toString(),
+                                                                title = resolved.title,
+                                                                subtitle = resolved.artistName ?: t.artist,
+                                                                artworkUrl = api.artwork.resolve(resolved.imageUrl) ?: api.artwork.albumArtwork(resolved.albumId) ?: art,
+                                                                streamUrl = api.streamUrl("track", resolved.id.toString()),
+                                                            ),
+                                                        )
+                                                    } else if (t.artistDbId != null) {
+                                                        onNavigate(PlayerDestination.ArtistDetail(t.artistDbId!!))
+                                                    }
+                                                }
+                                            },
+                                        )
+                                    }
+                                } else {
+                                    items(recentMusic.take(18), key = { "rp-${it.itemId}" }) { row ->
+                                        val art = api.artwork.resolve(row.meta?.artwork ?: row.meta?.backdrop)
+                                        SquareMediaCard(
+                                            title = row.meta?.title ?: "Track #${row.itemId}",
+                                            subtitle = row.meta?.subtitle,
+                                            artworkUrl = art,
+                                            fallbackIcon = Icons.Default.MusicNote,
+                                            width = 148.dp,
+                                            onClick = {
+                                                coordinator.playAudio(
+                                                    ActivePlayable(
+                                                        itemType = "track",
+                                                        itemId = row.itemId,
+                                                        title = row.meta?.title ?: "Track",
+                                                        subtitle = row.meta?.subtitle.orEmpty(),
+                                                        artworkUrl = art,
+                                                        streamUrl = api.streamUrl("track", row.itemId),
+                                                    ),
+                                                )
+                                            },
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // 2. Most Played Last Month · Albums (REAL 30-day listening stats!)
+                    if (topAlbumsMonth.isNotEmpty()) {
+                        item(key = "music-top-albums-month") {
+                            MediaRail(title = "Most Played Last Month") {
+                                itemsIndexed(topAlbumsMonth, key = { idx, al -> "tam-$idx-${al.id ?: al.name}" }) { _, al ->
+                                    val art = api.artwork.resolve(al.imageUrl) ?: al.id?.let { api.artwork.albumArtwork(it) }
+                                    val sub = buildString {
+                                        if (al.artist.isNotBlank()) append(al.artist)
+                                        if (al.playCount > 0) {
+                                            if (isNotEmpty()) append(" · ")
+                                            append("${al.playCount} plays")
+                                        }
+                                    }
+                                    AlbumGridTile(
+                                        title = al.name,
+                                        subtitle = sub,
                                         artworkUrl = art,
-                                        fallbackIcon = Icons.Default.MusicNote,
-                                        width = 142.dp,
+                                        tracksPresent = 0,
+                                        trackCount = 0,
+                                        modifier = Modifier.width(148.dp),
                                         onClick = {
-                                            coordinator.playAudio(
-                                                ActivePlayable(
-                                                    itemType = "track",
-                                                    itemId = row.itemId,
-                                                    title = row.meta?.title ?: "Track",
-                                                    subtitle = row.meta?.subtitle.orEmpty(),
-                                                    artworkUrl = art,
-                                                    streamUrl = api.streamUrl("track", row.itemId),
-                                                ),
-                                            )
+                                            when {
+                                                al.id != null -> onNavigate(PlayerDestination.AlbumDetail(al.id!!))
+                                                al.artistId != null -> onNavigate(PlayerDestination.ArtistDetail(al.artistId!!))
+                                            }
                                         },
                                     )
                                 }
@@ -699,9 +883,75 @@ fun MusicScreen(
                         }
                     }
 
-                    // 2. Recently Added Albums (music-first Plexamp hero shelf!)
+                    // 3. Heavy Rotation · Most Played Tracks (REAL 30-day top tracks with play counts!)
+                    if (topTracksMonth.isNotEmpty()) {
+                        item(key = "music-heavy-rotation-tracks") {
+                            MediaRail(title = "Heavy Rotation · Last 30 Days") {
+                                itemsIndexed(topTracksMonth, key = { idx, tr -> "hrt-$idx-${tr.id ?: tr.name}" }) { idx, tr ->
+                                    val art = api.artwork.resolve(tr.imageUrl)
+                                    val sub = buildString {
+                                        if (tr.artist.isNotBlank()) append(tr.artist)
+                                        if (tr.playCount > 0) {
+                                            if (isNotEmpty()) append(" · ")
+                                            append("${tr.playCount} plays")
+                                        }
+                                    }
+                                    SquareMediaCard(
+                                        title = tr.name,
+                                        subtitle = sub,
+                                        artworkUrl = art,
+                                        fallbackIcon = Icons.Default.MusicNote,
+                                        width = 148.dp,
+                                        onClick = {
+                                            scope.launch {
+                                                val directId = tr.id
+                                                if (directId != null) {
+                                                    val playable = ActivePlayable(
+                                                        itemType = "track",
+                                                        itemId = directId.toString(),
+                                                        title = tr.name,
+                                                        subtitle = tr.artist,
+                                                        artworkUrl = art,
+                                                        streamUrl = api.streamUrl("track", directId.toString()),
+                                                    )
+                                                    val rest = topTracksMonth.drop(idx + 1).mapNotNull { nxt ->
+                                                        val nid = nxt.id ?: return@mapNotNull null
+                                                        ActivePlayable(
+                                                            itemType = "track",
+                                                            itemId = nid.toString(),
+                                                            title = nxt.name,
+                                                            subtitle = nxt.artist,
+                                                            artworkUrl = api.artwork.resolve(nxt.imageUrl),
+                                                            streamUrl = api.streamUrl("track", nid.toString()),
+                                                        )
+                                                    }
+                                                    coordinator.playAudio(playable, rest)
+                                                } else {
+                                                    val resolved = (api.resolveStatsTrack(tr.name, tr.artist) as? MusicApiResult.Success)?.data
+                                                    if (resolved != null) {
+                                                        coordinator.playAudio(
+                                                            ActivePlayable(
+                                                                itemType = "track",
+                                                                itemId = resolved.id.toString(),
+                                                                title = resolved.title,
+                                                                subtitle = resolved.artistName ?: tr.artist,
+                                                                artworkUrl = api.artwork.resolve(resolved.imageUrl) ?: api.artwork.albumArtwork(resolved.albumId) ?: art,
+                                                                streamUrl = api.streamUrl("track", resolved.id.toString()),
+                                                            ),
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        },
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // 4. Recently Added Albums
                     if (albums.isNotEmpty()) {
-                        item {
+                        item(key = "music-recently-added") {
                             MediaRail(
                                 title = "Recently Added Albums",
                                 actionLabel = "All albums",
@@ -716,7 +966,7 @@ fun MusicScreen(
                                         artworkUrl = alArt,
                                         tracksPresent = album.tracksPresent,
                                         trackCount = album.trackCount,
-                                        modifier = Modifier.width(142.dp),
+                                        modifier = Modifier.width(148.dp),
                                         contextItem = MediaContextItem(
                                             itemType = "album",
                                             itemId = album.id.toString(),
@@ -733,25 +983,115 @@ fun MusicScreen(
                         }
                     }
 
-                    // 3. Heavy Rotation · Quick Picks (instant 1-tap play + auto-queue)
-                    if (songs.isNotEmpty()) {
-                        val quickPicks = songs.take(24)
-                        item {
-                            MediaRail(
-                                title = "Heavy Rotation · Quick Picks",
-                                actionLabel = "All tracks",
-                                onAction = { tab = MusicSubTab.SONGS },
-                            ) {
-                                itemsIndexed(quickPicks, key = { _, s -> "qp-${s.id}" }) { idx, song ->
-                                    SquareMediaCard(
-                                        title = song.title,
-                                        subtitle = listOfNotNull(song.artistName, song.albumTitle).joinToString(" · "),
-                                        artworkUrl = api.artwork.albumArtwork(song.albumId),
-                                        fallbackIcon = Icons.Default.MusicNote,
-                                        width = 142.dp,
+                    // 5. More by [Top Listened Artists] (owned albums from artists you actually play!)
+                    moreByArtistRails.forEach { (artistName, artistAlbums) ->
+                        item(key = "music-more-by-$artistName") {
+                            MediaRail(title = "More by $artistName") {
+                                items(artistAlbums, key = { "mba-$artistName-${it.id}" }) { album ->
+                                    val alArt = api.artwork.resolve(album.imageUrl ?: album.remoteImageUrl)
+                                        ?: api.artwork.albumArtwork(album.id)
+                                    AlbumGridTile(
+                                        title = album.title,
+                                        subtitle = listOfNotNull(album.year?.toString(), album.albumType?.replaceFirstChar { it.uppercase() }).joinToString(" · "),
+                                        artworkUrl = alArt,
+                                        tracksPresent = album.tracksPresent,
+                                        trackCount = album.trackCount,
+                                        modifier = Modifier.width(148.dp),
+                                        onClick = { onNavigate(PlayerDestination.AlbumDetail(album.id)) },
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // 6. Albums Like [Top Artist] (from similar artists owned in your library!)
+                    similarAlbumsRail?.let { (seedArtist, simAlbums) ->
+                        item(key = "music-albums-like-$seedArtist") {
+                            MediaRail(title = "Albums Like $seedArtist") {
+                                items(simAlbums, key = { "sim-${it.id}" }) { album ->
+                                    val alArt = api.artwork.resolve(album.imageUrl ?: album.remoteImageUrl)
+                                        ?: api.artwork.albumArtwork(album.id)
+                                    AlbumGridTile(
+                                        title = album.title,
+                                        subtitle = listOfNotNull(album.artistName, album.year?.toString()).joinToString(" · "),
+                                        artworkUrl = alArt,
+                                        tracksPresent = album.tracksPresent,
+                                        trackCount = album.trackCount,
+                                        modifier = Modifier.width(148.dp),
+                                        onClick = { onNavigate(PlayerDestination.AlbumDetail(album.id)) },
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // 7. More in [Genres You've Been Listening To]
+                    genreRails.forEach { (genreName, gAlbums) ->
+                        item(key = "music-genre-$genreName") {
+                            MediaRail(title = "More in $genreName") {
+                                items(gAlbums, key = { "mg-$genreName-${it.id}" }) { album ->
+                                    val alArt = api.artwork.resolve(album.imageUrl ?: album.remoteImageUrl)
+                                        ?: api.artwork.albumArtwork(album.id)
+                                    AlbumGridTile(
+                                        title = album.title,
+                                        subtitle = listOfNotNull(album.artistName, album.year?.toString()).joinToString(" · "),
+                                        artworkUrl = alArt,
+                                        tracksPresent = album.tracksPresent,
+                                        trackCount = album.trackCount,
+                                        modifier = Modifier.width(148.dp),
+                                        onClick = { onNavigate(PlayerDestination.AlbumDetail(album.id)) },
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // 8. Top Albums of the [Decade]s
+                    eraRail?.let { (eraTitle, eraAlbums) ->
+                        item(key = "music-era-$eraTitle") {
+                            MediaRail(title = eraTitle) {
+                                items(eraAlbums, key = { "era-${it.id}" }) { album ->
+                                    val alArt = api.artwork.resolve(album.imageUrl ?: album.remoteImageUrl)
+                                        ?: api.artwork.albumArtwork(album.id)
+                                    AlbumGridTile(
+                                        title = album.title,
+                                        subtitle = listOfNotNull(album.artistName, album.year?.toString()).joinToString(" · "),
+                                        artworkUrl = alArt,
+                                        tracksPresent = album.tracksPresent,
+                                        trackCount = album.trackCount,
+                                        modifier = Modifier.width(148.dp),
+                                        onClick = { onNavigate(PlayerDestination.AlbumDetail(album.id)) },
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // 9. Most Played Albums · All Time
+                    if (topAlbumsAllTime.isNotEmpty()) {
+                        item(key = "music-most-played-alltime") {
+                            MediaRail(title = "Most Played · All Time") {
+                                itemsIndexed(topAlbumsAllTime, key = { idx, al -> "taa-$idx-${al.id ?: al.name}" }) { _, al ->
+                                    val art = api.artwork.resolve(al.imageUrl) ?: al.id?.let { api.artwork.albumArtwork(it) }
+                                    val sub = buildString {
+                                        if (al.artist.isNotBlank()) append(al.artist)
+                                        if (al.playCount > 0) {
+                                            if (isNotEmpty()) append(" · ")
+                                            append("${al.playCount} plays")
+                                        }
+                                    }
+                                    AlbumGridTile(
+                                        title = al.name,
+                                        subtitle = sub,
+                                        artworkUrl = art,
+                                        tracksPresent = 0,
+                                        trackCount = 0,
+                                        modifier = Modifier.width(148.dp),
                                         onClick = {
-                                            val playables = quickPicks.toPlayables(api)
-                                            coordinator.playAudio(playables[idx], playables.drop(idx + 1))
+                                            when {
+                                                al.id != null -> onNavigate(PlayerDestination.AlbumDetail(al.id!!))
+                                                al.artistId != null -> onNavigate(PlayerDestination.ArtistDetail(al.artistId!!))
+                                            }
                                         },
                                     )
                                 }
@@ -759,31 +1099,9 @@ fun MusicScreen(
                         }
                     }
 
-                    // 4. Artists in Your Library
-                    if (artists.isNotEmpty()) {
-                        item {
-                            MediaRail(
-                                title = "Artists in Your Library",
-                                actionLabel = "All artists",
-                                onAction = { tab = MusicSubTab.ARTISTS },
-                            ) {
-                                items(artists.take(18), key = { "fy-ar-top-${it.id}" }) { artist ->
-                                    Box(modifier = Modifier.width(108.dp)) {
-                                        ArtistCircleTile(
-                                            name = artist.name,
-                                            subtitle = formatArtistMeta(artist.albumCount, artist.trackCount),
-                                            artworkUrl = api.artwork.resolve(artist.imageUrl ?: artist.remoteImageUrl),
-                                            onClick = { onNavigate(PlayerDestination.ArtistDetail(artist.id)) },
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // 5. Stations & Artist Mixes (2x2 mosaic + similar artists + vibe badge)
-                    item {
-                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    // 10. Stations & Artist Mixes (Redesigned Cinema wide radio cards!)
+                    item(key = "music-stations-mixes") {
+                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             Text(
                                 text = "Stations & Artist Mixes",
                                 color = Color.White,
@@ -793,15 +1111,15 @@ fun MusicScreen(
                             )
                             LazyRow(
                                 contentPadding = PaddingValues(horizontal = 16.dp),
-                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                horizontalArrangement = Arrangement.spacedBy(14.dp),
                             ) {
                                 item(key = "station-shuffle") {
                                     val shuffleTiles = albums.take(4)
-                                        .mapNotNull { api.artwork.resolve(it.imageUrl ?: it.remoteImageUrl) }
+                                        .mapNotNull { api.artwork.resolve(it.imageUrl ?: it.remoteImageUrl) ?: api.artwork.albumArtwork(it.id) }
                                     ArtistMixCard(
                                         badge = "LIBRARY RADIO",
                                         title = "Library Shuffle",
-                                        subtitle = "All vibes · shuffle",
+                                        subtitle = "Endless mix from your collection",
                                         tiles = shuffleTiles,
                                         accentTint = true,
                                         vibeTint = false,
@@ -831,7 +1149,7 @@ fun MusicScreen(
                                         st.name
                                     }
                                     ArtistMixCard(
-                                        badge = if (isVibe) "${st.name.uppercase()} VIBE" else "${st.name.uppercase()} MIX",
+                                        badge = if (isVibe) "${st.name.uppercase()} VIBE" else "${st.name.uppercase()} RADIO",
                                         title = headline,
                                         subtitle = "${st.name} · ${st.count} songs",
                                         tiles = mosaicUrls,
@@ -856,11 +1174,11 @@ fun MusicScreen(
                         }
                     }
 
-                    // 2. Made for you (Discover mixes with 2x2 mosaic covers!)
+                    // 11. Made for you (Discover mixes)
                     if (discoverPlaylists.isNotEmpty()) {
-                        item {
+                        item(key = "music-discover-playlists") {
                             MediaRail(
-                                title = "Made for you · SoulSync Discovery",
+                                title = "Made for You · SoulSync Discovery",
                                 actionLabel = "All ${discoverPlaylists.size}",
                                 onAction = { tab = MusicSubTab.PLAYLISTS },
                             ) {
@@ -873,7 +1191,7 @@ fun MusicScreen(
                                         mosaicUrls = tiles,
                                         tracksPresent = 0,
                                         trackCount = 0,
-                                        modifier = Modifier.width(142.dp),
+                                        modifier = Modifier.width(148.dp),
                                         onClick = {
                                             scope.launch {
                                                 (api.fetchDiscoverPlaylistDetail(dp.key) as? MusicApiResult.Success)?.let { res ->
@@ -897,10 +1215,10 @@ fun MusicScreen(
                         }
                     }
 
-                    // 7. Your playlists (with 2x2 mosaic cover tiles!)
+                    // 12. Your playlists
                     if (playlists.isNotEmpty()) {
-                        item {
-                            MediaRail(title = "Your playlists") {
+                        item(key = "music-your-playlists") {
+                            MediaRail(title = "Your Playlists") {
                                 items(playlists.take(14), key = { "fy-pl-${it.idString}" }) { pl ->
                                     val tiles = pl.coverTiles.mapNotNull { api.artwork.resolve(it) }
                                     AlbumGridTile(
@@ -910,7 +1228,7 @@ fun MusicScreen(
                                         mosaicUrls = tiles,
                                         tracksPresent = 0,
                                         trackCount = 0,
-                                        modifier = Modifier.width(142.dp),
+                                        modifier = Modifier.width(148.dp),
                                         onClick = {
                                             pl.idString.toIntOrNull()?.let { pid ->
                                                 onNavigate(PlayerDestination.PlaylistDetail(pid))
@@ -1099,109 +1417,127 @@ private fun ArtistMixCard(
     vibeTint: Boolean,
     onClick: () -> Unit,
 ) {
-    val bgColor = when {
-        accentTint -> SoulSyncColors.Accent.copy(alpha = 0.2f)
-        vibeTint -> Color(0x2EA855F7)
-        else -> SoulSyncColors.Card
+    val accent = when {
+        accentTint -> SoulSyncColors.Accent
+        vibeTint -> Color(0xFFA855F7)
+        else -> Color(0xFF38BDF8)
     }
-    val borderColor = when {
-        accentTint -> SoulSyncColors.Accent.copy(alpha = 0.55f)
-        vibeTint -> Color(0x66A855F7)
-        else -> SoulSyncColors.Line
-    }
-    val badgeColor = when {
+    val badgeBg = accent.copy(alpha = 0.24f)
+    val badgeText = when {
         vibeTint -> Color(0xFFE9D5FF)
         accentTint -> SoulSyncColors.AccentLight
-        else -> Color.White
+        else -> Color(0xFFBAE6FD)
     }
     Surface(
         modifier = Modifier
-            .width(154.dp)
-            .clip(RoundedCornerShape(16.dp))
+            .width(268.dp)
+            .height(116.dp)
+            .clip(RoundedCornerShape(18.dp))
             .clickable(onClick = onClick)
-            .dpadFocusable(RoundedCornerShape(16.dp)),
-        shape = RoundedCornerShape(16.dp),
-        color = bgColor,
-        border = BorderStroke(1.dp, borderColor),
+            .dpadFocusable(RoundedCornerShape(18.dp)),
+        shape = RoundedCornerShape(18.dp),
+        color = Color(0xFF131726),
+        border = BorderStroke(1.dp, accent.copy(alpha = 0.34f)),
     ) {
-        Column(
-            modifier = Modifier.padding(8.dp),
-            verticalArrangement = Arrangement.spacedBy(7.dp),
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(1f)
-                    .clip(RoundedCornerShape(11.dp))
-                    .background(SoulSyncColors.CardRaised),
-            ) {
-                MosaicArtwork(
-                    primaryUrl = null,
-                    mosaicUrls = tiles,
-                    contentDescription = title,
+        Box(modifier = Modifier.fillMaxSize()) {
+            // Subtle ambient artwork backdrop glow
+            if (tiles.isNotEmpty()) {
+                SoulSyncArtwork(
+                    url = tiles.first(),
+                    contentDescription = null,
+                    fallbackIcon = Icons.Default.MusicNote,
                     modifier = Modifier.fillMaxSize(),
                 )
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(
-                            Brush.verticalGradient(
-                                listOf(Color.Black.copy(alpha = 0.18f), Color.Transparent, Color.Black.copy(alpha = 0.68f)),
+            }
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(
+                        Brush.horizontalGradient(
+                            listOf(
+                                Color(0xEB0E111D),
+                                Color(0xDC131728),
+                                accent.copy(alpha = 0.22f),
                             ),
                         ),
-                )
+                    ),
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
                 Box(
                     modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .padding(6.dp)
-                        .clip(RoundedCornerShape(999.dp))
-                        .background(Color.Black.copy(alpha = 0.72f))
-                        .padding(horizontal = 7.dp, vertical = 2.dp),
+                        .size(88.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(SoulSyncColors.CardRaised)
+                        .border(1.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(12.dp)),
                 ) {
+                    MosaicArtwork(
+                        primaryUrl = null,
+                        mosaicUrls = tiles,
+                        contentDescription = title,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(5.dp)
+                            .size(26.dp)
+                            .clip(CircleShape)
+                            .background(Color.Black.copy(alpha = 0.78f))
+                            .border(1.dp, Color.White.copy(alpha = 0.30f), CircleShape),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.PlayArrow,
+                            contentDescription = "Play station",
+                            tint = Color.White,
+                            modifier = Modifier.size(15.dp),
+                        )
+                    }
+                }
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(999.dp))
+                            .background(badgeBg)
+                            .border(0.75.dp, accent.copy(alpha = 0.45f), RoundedCornerShape(999.dp))
+                            .padding(horizontal = 8.dp, vertical = 2.dp),
+                    ) {
+                        Text(
+                            text = badge,
+                            color = badgeText,
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            letterSpacing = 0.6.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
                     Text(
-                        text = badge,
-                        color = badgeColor,
-                        fontSize = 8.5.sp,
+                        text = title,
+                        color = Color.White,
+                        fontSize = 14.sp,
                         fontWeight = FontWeight.ExtraBold,
-                        letterSpacing = 0.5.sp,
+                        maxLines = 2,
+                        lineHeight = 17.sp,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        text = subtitle,
+                        color = Color.White.copy(alpha = 0.65f),
+                        fontSize = 11.5.sp,
                         maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
                 }
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(7.dp)
-                        .size(30.dp)
-                        .clip(CircleShape)
-                        .background(Color.Black.copy(alpha = 0.72f))
-                        .border(1.dp, Color.White.copy(alpha = 0.25f), CircleShape),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.PlayArrow,
-                        contentDescription = "Play mix",
-                        tint = Color.White,
-                        modifier = Modifier.size(17.dp),
-                    )
-                }
-            }
-            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(
-                    text = title,
-                    color = Color.White,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 2,
-                    lineHeight = 16.sp,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    text = subtitle,
-                    color = SoulSyncColors.TextSecondary,
-                    fontSize = 11.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
             }
         }
     }

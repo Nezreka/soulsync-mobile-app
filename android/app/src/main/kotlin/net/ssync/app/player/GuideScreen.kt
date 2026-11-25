@@ -411,19 +411,12 @@ private fun <T> makeSeededDrawer(pool: List<T>, seed: UInt, salt: UInt): () -> T
     }
 }
 
-private fun startOfLocalDayMs(epochMs: Long): Long {
-    val cal = java.util.Calendar.getInstance().apply {
-        timeInMillis = epochMs
-        set(java.util.Calendar.HOUR_OF_DAY, 0)
-        set(java.util.Calendar.MINUTE, 0)
-        set(java.util.Calendar.SECOND, 0)
-        set(java.util.Calendar.MILLISECOND, 0)
-    }
-    return cal.timeInMillis
-}
+// a day is counted on the guide's clock (the server's, net.ssync.player.GuideClock),
+// not this device's: the same midnight and the same date on every device
+private fun startOfLocalDayMs(epochMs: Long): Long = net.ssync.player.GuideClock.startOfDayMs(epochMs)
 
 private fun dayKeyIso(dayStartMs: Long): String {
-    val cal = java.util.Calendar.getInstance().apply { timeInMillis = dayStartMs }
+    val cal = net.ssync.player.GuideClock.calendar(dayStartMs)
     val y = cal.get(java.util.Calendar.YEAR)
     val m = cal.get(java.util.Calendar.MONTH) + 1
     val d = cal.get(java.util.Calendar.DAY_OF_MONTH)

@@ -131,6 +131,12 @@ internal object HomeWarmCache {
     var musicSongs: List<net.ssync.player.LibSong> = emptyList()
     var musicPlaylists: List<net.ssync.player.MusicPlaylist> = emptyList()
     var musicStations: List<net.ssync.player.MusicChannel> = emptyList()
+    var musicStats30d: net.ssync.player.ListeningStatsSnapshot = net.ssync.player.ListeningStatsSnapshot()
+    var musicStatsAll: net.ssync.player.ListeningStatsSnapshot = net.ssync.player.ListeningStatsSnapshot()
+    var musicRecentTracks: List<net.ssync.player.StatsRecentTrack> = emptyList()
+    var musicMoreByArtistRails: List<Pair<String, List<net.ssync.player.LibAlbum>>> = emptyList()
+    var musicSimilarAlbums: Pair<String, List<net.ssync.player.LibAlbum>>? = null
+    var musicGenreRails: List<Pair<String, List<net.ssync.player.LibAlbum>>> = emptyList()
     var ytChannels: List<net.ssync.player.YtChannel> = emptyList()
     var ytDownloads: List<net.ssync.player.YtVideo> = emptyList()
     var ytLatest: List<net.ssync.player.YtVideo> = emptyList()
