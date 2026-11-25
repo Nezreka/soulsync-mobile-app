@@ -1198,6 +1198,12 @@ data class PlayerSettings(
     val commercialsEra: String = "auto",
     @SerialName("commercials_mode")
     val commercialsMode: String = "cable",
+    /** the sidebar's places in this profile's order ("/player/movies", "lib:5"); see [NavOrder] */
+    @SerialName("sidebar_order")
+    val sidebarOrder: List<String> = emptyList(),
+    /** places left out of the sidebar */
+    @SerialName("sidebar_hidden")
+    val sidebarHidden: List<String> = emptyList(),
 )
 
 @Serializable

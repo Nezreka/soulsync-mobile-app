@@ -433,6 +433,8 @@ fun PlayerShell(
         }
         (api.fetchSettings() as? MusicApiResult.Success)?.let { s ->
             playerSettings = s.data
+            PlayerNavPrefs.order.value = s.data.sidebarOrder
+            PlayerNavPrefs.hidden.value = s.data.sidebarHidden.toSet()
         }
     }
 
@@ -1544,6 +1546,21 @@ private fun SoulSyncAnimatedBrandMark(
     }
 }
 
+/** the profile's own sidebar order and hidden places (player settings), observable by the sidebar */
+internal object PlayerNavPrefs {
+    val order = mutableStateOf<List<String>>(emptyList())
+    val hidden = mutableStateOf<Set<String>>(emptySet())
+}
+
+/** one place in a sidebar section, by the id the web player uses for it */
+private class SidebarPlace(
+    val id: String,
+    val icon: ImageVector,
+    val label: String,
+    val selected: Boolean,
+    val open: () -> Unit,
+)
+
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 private fun PlayerSidebar(
@@ -1818,10 +1835,11 @@ private fun PlayerSidebar(
                     extra = firstItemFocusRequester?.let { Modifier.focusRequester(it) } ?: Modifier,
                 ),
             ) { onNavigate(PlayerDestination.Home) }
-            SidebarItem(Icons.Default.LiveTv, "Live Guide", isGuideSel, collapsed, itemModifier = activeMod(isGuideSel)) { onNavigate(PlayerDestination.Guide) }
-            SidebarItem(Icons.Default.CalendarMonth, "Calendar", isCalendarSel, collapsed, itemModifier = activeMod(isCalendarSel)) { onNavigate(PlayerDestination.Calendar) }
-            SidebarItem(Icons.Default.Bookmark, "Watchlist", isWatchlistSel, collapsed, itemModifier = activeMod(isWatchlistSel)) { onNavigate(PlayerDestination.Watchlist) }
-            SidebarItem(
+            val leftOut = PlayerNavPrefs.hidden.value
+            if ("/player/guide" !in leftOut) SidebarItem(Icons.Default.LiveTv, "Live Guide", isGuideSel, collapsed, itemModifier = activeMod(isGuideSel)) { onNavigate(PlayerDestination.Guide) }
+            if ("/player/calendar" !in leftOut) SidebarItem(Icons.Default.CalendarMonth, "Calendar", isCalendarSel, collapsed, itemModifier = activeMod(isCalendarSel)) { onNavigate(PlayerDestination.Calendar) }
+            if ("/player/watchlist" !in leftOut) SidebarItem(Icons.Default.Bookmark, "Watchlist", isWatchlistSel, collapsed, itemModifier = activeMod(isWatchlistSel)) { onNavigate(PlayerDestination.Watchlist) }
+            if ("/player/watching" !in leftOut) SidebarItem(
                 icon = Icons.Default.Group,
                 label = "Watching now",
                 selected = isWatchingNowSel,
@@ -1830,24 +1848,40 @@ private fun PlayerSidebar(
                 itemModifier = activeMod(isWatchingNowSel),
             ) { onNavigate(PlayerDestination.WatchingNow) }
 
-            SidebarSectionBreak("WATCH", collapsed)
-            SidebarItem(Icons.Default.Movie, "Movies", isMoviesSel, collapsed, itemModifier = activeMod(isMoviesSel)) { onNavigate(PlayerDestination.Movies) }
-            SidebarItem(Icons.Default.Tv, "TV Shows", isTvSel, collapsed, itemModifier = activeMod(isTvSel)) { onNavigate(PlayerDestination.Tv) }
-            // a library an admin gave its own page (Anime, Kids, 4K): its own entry here
-            HomeWarmCache.ownPageLibraries.value.forEach { lib ->
-                val sel = current is PlayerDestination.Library && current.library.id == lib.id
-                SidebarItem(
-                    if (lib.kind == "movie") Icons.Default.Movie else Icons.Default.Tv,
-                    lib.name, sel, collapsed, itemModifier = activeMod(sel),
+            // the two sections below are drawn in the profile's own order, with the places it
+            // left out gone (player settings, the same ones the web player's sidebar follows)
+            val navOrder = PlayerNavPrefs.order.value
+            val navHidden = PlayerNavPrefs.hidden.value
+            val ownPageLibraries = HomeWarmCache.ownPageLibraries.value
+            // a library an admin gave its own page (Anime, Kids, 4K): an entry after the page it is a kind of
+            fun libraryPlaces(kind: String) = ownPageLibraries.filter { it.kind == kind }.map { lib ->
+                SidebarPlace(
+                    "lib:${lib.id}",
+                    if (kind == "movie") Icons.Default.Movie else Icons.Default.Tv,
+                    lib.name,
+                    current is PlayerDestination.Library && current.library.id == lib.id,
                 ) { onNavigate(PlayerDestination.Library(lib)) }
             }
-            SidebarItem(Icons.Default.SmartDisplay, "YouTube", isYouTubeSel, collapsed, itemModifier = activeMod(isYouTubeSel)) { onNavigate(PlayerDestination.YouTube) }
-
-            SidebarSectionBreak("LISTEN", collapsed)
-            SidebarItem(Icons.Default.MusicNote, "Music", isMusicSel, collapsed, itemModifier = activeMod(isMusicSel)) { onNavigate(PlayerDestination.Music) }
-            SidebarItem(Icons.AutoMirrored.Filled.QueueMusic, "Playlists", isPlaylistsSel, collapsed, itemModifier = activeMod(isPlaylistsSel)) { onNavigate(PlayerDestination.Playlists) }
-            SidebarItem(Icons.Default.Podcasts, "Podcasts", isPodcastsSel, collapsed, itemModifier = activeMod(isPodcastsSel)) { onNavigate(PlayerDestination.Podcasts) }
-            SidebarItem(Icons.Default.Headphones, "Audiobooks", isAudiobooksSel, collapsed, itemModifier = activeMod(isAudiobooksSel)) { onNavigate(PlayerDestination.Audiobooks) }
+            val watchPlaces = listOf(SidebarPlace("/player/movies", Icons.Default.Movie, "Movies", isMoviesSel) { onNavigate(PlayerDestination.Movies) }) +
+                libraryPlaces("movie") +
+                listOf(SidebarPlace("/player/tv", Icons.Default.Tv, "TV Shows", isTvSel) { onNavigate(PlayerDestination.Tv) }) +
+                libraryPlaces("show") +
+                listOf(SidebarPlace("/player/youtube", Icons.Default.SmartDisplay, "YouTube", isYouTubeSel) { onNavigate(PlayerDestination.YouTube) })
+            val listenPlaces = listOf(
+                SidebarPlace("/player/music", Icons.Default.MusicNote, "Music", isMusicSel) { onNavigate(PlayerDestination.Music) },
+                SidebarPlace("/player/music/playlists", Icons.AutoMirrored.Filled.QueueMusic, "Playlists", isPlaylistsSel) { onNavigate(PlayerDestination.Playlists) },
+                SidebarPlace("/player/podcasts", Icons.Default.Podcasts, "Podcasts", isPodcastsSel) { onNavigate(PlayerDestination.Podcasts) },
+                SidebarPlace("/player/audiobooks", Icons.Default.Headphones, "Audiobooks", isAudiobooksSel) { onNavigate(PlayerDestination.Audiobooks) },
+            )
+            for ((title, places) in listOf("WATCH" to watchPlaces, "LISTEN" to listenPlaces)) {
+                val byId = places.associateBy { it.id }
+                val shown = net.ssync.player.NavOrder.arrange(places.map { it.id }, navOrder, navHidden).mapNotNull { byId[it] }
+                if (shown.isEmpty()) continue
+                SidebarSectionBreak(title, collapsed)
+                shown.forEach { place ->
+                    SidebarItem(place.icon, place.label, place.selected, collapsed, itemModifier = activeMod(place.selected), onClick = place.open)
+                }
+            }
 
             Spacer(modifier = Modifier.weight(1f))
             HorizontalDivider(
