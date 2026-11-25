@@ -46,6 +46,7 @@ sealed interface PlayerDestination {
         val backdrop: String? = null,
     ) : PlayerDestination
     data object Search : PlayerDestination
+    data class SearchQuery(val query: String) : PlayerDestination
     data object Settings : PlayerDestination
 }
 

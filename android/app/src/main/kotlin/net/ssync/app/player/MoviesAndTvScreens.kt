@@ -148,6 +148,7 @@ fun MovieDetailScreen(
         TvCinemaMovieDetail(
             movie = movie,
             extras = extras,
+            discoveryRails = discoveryRails,
             inWatchlist = inWatchlist,
             api = api,
             coordinator = coordinator,
@@ -1338,6 +1339,7 @@ fun ShowDetailScreen(
         TvCinemaShowDetail(
             show = show,
             extras = extras,
+            discoveryRails = discoveryRails,
             inWatchlist = inWatchlist,
             initialSeason = initialSeason,
             api = api,

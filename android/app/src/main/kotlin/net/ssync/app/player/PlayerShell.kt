@@ -1360,7 +1360,7 @@ private fun PlayerSidebar(
     var wasSidebarFocused by remember { mutableStateOf(false) }
 
     val isHomeSel = current is PlayerDestination.Home
-    val isSearchSel = current is PlayerDestination.Search
+    val isSearchSel = current is PlayerDestination.Search || current is PlayerDestination.SearchQuery
     LaunchedEffect(isHomeSel, wasSidebarFocused, collapsed) {
         if (isTv && !collapsed && isHomeSel && wasSidebarFocused) {
             sidebarScrollState.animateScrollTo(0)
@@ -1892,6 +1892,7 @@ private fun PlayerContent(
             ),
         )
         PlayerDestination.Search -> SearchScreen(api, coordinator, onNavigate, onDeviceRevoked)
+        is PlayerDestination.SearchQuery -> SearchScreen(api, coordinator, onNavigate, onDeviceRevoked, initialQuery = current.query)
         PlayerDestination.Settings -> SettingsScreen(
             record = record,
             api = api,

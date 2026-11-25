@@ -542,23 +542,60 @@ internal fun TvSpotlightHome(
                     out += TvSpotlightShelf("audiobooks", "Audiobooks", cardStyle = TvCardStyle.SQUARE, items = cards)
                 }
 
-                row.id.startsWith("genre:movie:") -> {
-                    val genre = row.id.removePrefix("genre:movie:")
+                // Raw genre spam rows omitted on Cinema Home — replaced below by personalized
+                // "Because you watched…" library rows!
+                row.id.startsWith("genre:") -> Unit
+            }
+        }
+
+        // Personalized "Because you watched [Title]" library-only shelves (up to 2 seeds from Continue Watching)
+        val becauseSeeds = mutableListOf<String>()
+        continueItems.forEach { item ->
+            if (becauseSeeds.size >= 2) return@forEach
+            when (item.itemType) {
+                "movie" -> {
+                    val m = item.itemId.toIntOrNull()?.let { moviesById[it] } ?: return@forEach
+                    if (m.genres.isEmpty() || "m-${m.id}" in becauseSeeds) return@forEach
+                    val seedGenres = m.genres.map { it.lowercase() }.toSet()
                     val matches = catalog.movies
-                        .filter { m -> m.genres.any { it.equals(genre, ignoreCase = true) } }
+                        .filter { it.id != m.id && it.genres.any { g -> g.lowercase() in seedGenres } }
+                        .sortedByDescending { cand ->
+                            val overlap = cand.genres.count { it.lowercase() in seedGenres } * 2.0
+                            val sameStudio = if (!m.studio.isNullOrBlank() && cand.studio == m.studio) 1.5 else 0.0
+                            overlap + sameStudio + (cand.rating ?: 0.0) * 0.25
+                        }
                         .take(18)
-                    if (matches.isNotEmpty()) {
-                        out += TvSpotlightShelf(row.id, "$genre Movies", cardStyle = TvCardStyle.POSTER, items = matches.map { movieCard(row.id, it) })
+                    if (matches.size >= 4) {
+                        becauseSeeds += "m-${m.id}"
+                        out += TvSpotlightShelf(
+                            id = "because-m-${m.id}",
+                            title = "Because you watched ${m.title}",
+                            cardStyle = TvCardStyle.POSTER,
+                            items = matches.map { movieCard("byw-${m.id}", it) },
+                        )
                     }
                 }
-
-                row.id.startsWith("genre:show:") -> {
-                    val genre = row.id.removePrefix("genre:show:")
+                "episode" -> {
+                    val sid = item.meta?.parentId?.toIntOrNull() ?: return@forEach
+                    val s = showsById[sid] ?: return@forEach
+                    if (s.genres.isEmpty() || "s-${s.id}" in becauseSeeds) return@forEach
+                    val seedGenres = s.genres.map { it.lowercase() }.toSet()
                     val matches = catalog.shows
-                        .filter { s -> s.genres.any { it.equals(genre, ignoreCase = true) } }
+                        .filter { it.id != s.id && it.genres.any { g -> g.lowercase() in seedGenres } }
+                        .sortedByDescending { cand ->
+                            val overlap = cand.genres.count { it.lowercase() in seedGenres } * 2.0
+                            val sameNet = if (!s.network.isNullOrBlank() && cand.network == s.network) 1.5 else 0.0
+                            overlap + sameNet + (cand.rating ?: 0.0) * 0.25
+                        }
                         .take(18)
-                    if (matches.isNotEmpty()) {
-                        out += TvSpotlightShelf(row.id, "$genre TV Shows", cardStyle = TvCardStyle.POSTER, items = matches.map { showCard(row.id, it) })
+                    if (matches.size >= 4) {
+                        becauseSeeds += "s-${s.id}"
+                        out += TvSpotlightShelf(
+                            id = "because-s-${s.id}",
+                            title = "Because you watched ${s.title}",
+                            cardStyle = TvCardStyle.POSTER,
+                            items = matches.map { showCard("byw-${s.id}", it) },
+                        )
                     }
                 }
             }

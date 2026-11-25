@@ -252,8 +252,9 @@ fun SearchScreen(
     coordinator: PlaybackCoordinator,
     onNavigate: (PlayerDestination) -> Unit,
     onDeviceRevoked: () -> Unit,
+    initialQuery: String = "",
 ) {
-    var query by remember { mutableStateOf("") }
+    var query by remember(initialQuery) { mutableStateOf(initialQuery) }
     var filter by remember { mutableStateOf("all") }
     var catalog by remember { mutableStateOf(VideoCatalog()) }
     var podcasts by remember { mutableStateOf<List<net.ssync.player.PodcastSub>>(emptyList()) }

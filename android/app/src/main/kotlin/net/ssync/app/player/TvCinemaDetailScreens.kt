@@ -105,6 +105,7 @@ private fun fmtDetailRuntime(mins: Int?): String? {
 internal fun TvCinemaMovieDetail(
     movie: MovieDetail,
     extras: TitleExtras?,
+    discoveryRails: List<DiscoveryRail> = emptyList(),
     inWatchlist: Boolean,
     api: PlayerApiClient,
     coordinator: PlaybackCoordinator,
@@ -384,22 +385,17 @@ internal fun TvCinemaMovieDetail(
                             }
                         }
 
-                        // Genre pills
+                        // Clickable Genre pills -> instant search
                         if (movie.genres.isNotEmpty()) {
                             FlowRow(
                                 horizontalArrangement = Arrangement.spacedBy(7.dp),
                                 verticalArrangement = Arrangement.spacedBy(6.dp),
                             ) {
                                 movie.genres.take(5).forEach { g ->
-                                    Box(
-                                        modifier = Modifier
-                                            .clip(CircleShape)
-                                            .background(Color.White.copy(alpha = 0.10f))
-                                            .border(1.dp, Color.White.copy(alpha = 0.16f), CircleShape)
-                                            .padding(horizontal = 10.dp, vertical = 3.dp),
-                                    ) {
-                                        Text(g, color = Color.White.copy(alpha = 0.90f), fontSize = 11.5.sp, fontWeight = FontWeight.Medium)
-                                    }
+                                    TvClickableTagChip(
+                                        label = g,
+                                        onClick = { onNavigate(PlayerDestination.SearchQuery(g)) },
+                                    )
                                 }
                             }
                         }
@@ -515,6 +511,26 @@ internal fun TvCinemaMovieDetail(
                         title = "About This Film",
                         facts = facts,
                         keywords = extras?.keywords.orEmpty().take(10),
+                        onKeywordClick = { kw -> onNavigate(PlayerDestination.SearchQuery(kw)) },
+                    )
+                }
+            }
+
+            // 3b. Library-Only Discovery Rails ("More by Director", "More with Actor", "More from Studio")
+            val ownedDiscoveryRails = discoveryRails.mapNotNull { rail ->
+                val ownedOnly = rail.items.filter { it.libraryId != null }
+                if (ownedOnly.size >= 2) rail.copy(items = ownedOnly) else null
+            }
+            ownedDiscoveryRails.forEach { rail ->
+                item(key = "disc-${rail.key}") {
+                    TvDetailOwnedDiscoveryShelf(
+                        rail = rail,
+                        rowBringIntoView = rowBringIntoView,
+                        onOpenItem = { item ->
+                            val libId = item.libraryId ?: return@TvDetailOwnedDiscoveryShelf
+                            if (item.kind == "movie") onNavigate(PlayerDestination.MovieDetail(libId))
+                            else onNavigate(PlayerDestination.ShowDetail(libId))
+                        },
                     )
                 }
             }
@@ -564,6 +580,7 @@ internal fun TvCinemaMovieDetail(
 internal fun TvCinemaShowDetail(
     show: ShowDetail,
     extras: TitleExtras?,
+    discoveryRails: List<DiscoveryRail> = emptyList(),
     inWatchlist: Boolean,
     initialSeason: Int?,
     api: PlayerApiClient,
@@ -849,15 +866,10 @@ internal fun TvCinemaShowDetail(
                                 verticalArrangement = Arrangement.spacedBy(6.dp),
                             ) {
                                 show.genres.take(5).forEach { g ->
-                                    Box(
-                                        modifier = Modifier
-                                            .clip(CircleShape)
-                                            .background(Color.White.copy(alpha = 0.10f))
-                                            .border(1.dp, Color.White.copy(alpha = 0.16f), CircleShape)
-                                            .padding(horizontal = 10.dp, vertical = 3.dp),
-                                    ) {
-                                        Text(g, color = Color.White.copy(alpha = 0.90f), fontSize = 11.5.sp, fontWeight = FontWeight.Medium)
-                                    }
+                                    TvClickableTagChip(
+                                        label = g,
+                                        onClick = { onNavigate(PlayerDestination.SearchQuery(g)) },
+                                    )
                                 }
                             }
                         }
@@ -1015,6 +1027,26 @@ internal fun TvCinemaShowDetail(
                         title = "About This Series",
                         facts = facts,
                         keywords = extras?.keywords.orEmpty().take(10),
+                        onKeywordClick = { kw -> onNavigate(PlayerDestination.SearchQuery(kw)) },
+                    )
+                }
+            }
+
+            // 4b. Library-Only Discovery Rails ("More with Actor", "More from Network", "More by Creator")
+            val ownedShowRails = discoveryRails.mapNotNull { rail ->
+                val ownedOnly = rail.items.filter { it.libraryId != null }
+                if (ownedOnly.size >= 2) rail.copy(items = ownedOnly) else null
+            }
+            ownedShowRails.forEach { rail ->
+                item(key = "disc-${rail.key}") {
+                    TvDetailOwnedDiscoveryShelf(
+                        rail = rail,
+                        rowBringIntoView = rowBringIntoView,
+                        onOpenItem = { item ->
+                            val libId = item.libraryId ?: return@TvDetailOwnedDiscoveryShelf
+                            if (item.kind == "movie") onNavigate(PlayerDestination.MovieDetail(libId))
+                            else onNavigate(PlayerDestination.ShowDetail(libId))
+                        },
                     )
                 }
             }
@@ -1404,6 +1436,7 @@ private fun TvDetailFactsBento(
     title: String,
     facts: List<Pair<String, String>>,
     keywords: List<String>,
+    onKeywordClick: (String) -> Unit,
 ) {
     Column(
         modifier = Modifier
@@ -1447,18 +1480,119 @@ private fun TvDetailFactsBento(
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 keywords.forEach { kw ->
-                    Box(
+                    TvClickableTagChip(
+                        label = "#$kw",
+                        onClick = { onKeywordClick(kw) },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TvClickableTagChip(
+    label: String,
+    onClick: () -> Unit,
+) {
+    var focused by remember { mutableStateOf(false) }
+    val scale by animateFloatAsState(
+        targetValue = if (focused) 1.06f else 1f,
+        animationSpec = tween(150),
+        label = "tagChipScale",
+    )
+    Box(
+        modifier = Modifier
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
+            .clip(CircleShape)
+            .background(if (focused) Color.White else Color.White.copy(alpha = 0.10f))
+            .border(
+                1.dp,
+                if (focused) Color.White else Color.White.copy(alpha = 0.18f),
+                CircleShape,
+            )
+            .onFocusChanged { focused = it.isFocused || it.hasFocus }
+            .clickable(onClick = onClick)
+            .padding(horizontal = 11.dp, vertical = 5.dp),
+    ) {
+        Text(
+            text = label,
+            color = if (focused) Color(0xFF0B0D14) else Color.White.copy(alpha = 0.88f),
+            fontSize = 11.5.sp,
+            fontWeight = if (focused) FontWeight.Bold else FontWeight.Medium,
+        )
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun TvDetailOwnedDiscoveryShelf(
+    rail: DiscoveryRail,
+    rowBringIntoView: BringIntoViewSpec,
+    onOpenItem: (DiscoveryCardItem) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.padding(start = 78.dp),
+        ) {
+            Text(rail.title, color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+            Text("· In Your Library", color = Color.White.copy(alpha = 0.52f), fontSize = 12.sp)
+        }
+        CompositionLocalProvider(LocalBringIntoViewSpec provides rowBringIntoView) {
+            LazyRow(
+                contentPadding = PaddingValues(start = 78.dp, end = 36.dp),
+                horizontalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                items(rail.items, key = { it.key }) { item ->
+                    var focused by remember { mutableStateOf(false) }
+                    val scale by animateFloatAsState(
+                        targetValue = if (focused) 1.06f else 1f,
+                        animationSpec = tween(170),
+                        label = "ownedDiscScale",
+                    )
+                    val shape = RoundedCornerShape(11.dp)
+                    Column(
                         modifier = Modifier
-                            .clip(CircleShape)
-                            .background(Color.White.copy(alpha = 0.07f))
-                            .border(1.dp, Color.White.copy(alpha = 0.12f), CircleShape)
-                            .padding(horizontal = 10.dp, vertical = 4.dp),
+                            .width(126.dp)
+                            .graphicsLayer {
+                                scaleX = scale
+                                scaleY = scale
+                            }
+                            .onFocusChanged { focused = it.isFocused || it.hasFocus }
+                            .clickable { onOpenItem(item) },
+                        verticalArrangement = Arrangement.spacedBy(5.dp),
                     ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(188.dp)
+                                .clip(shape)
+                                .background(Color(0xFF141622))
+                                .then(
+                                    if (focused) Modifier.border(2.5.dp, Color.White, shape)
+                                    else Modifier.border(1.dp, Color.White.copy(alpha = 0.10f), shape),
+                                ),
+                        ) {
+                            SoulSyncArtwork(
+                                url = item.artworkUrl,
+                                contentDescription = item.title,
+                                fallbackIcon = if (item.kind == "movie") Icons.Default.Movie else Icons.Default.Tv,
+                                maxPx = 500,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        }
                         Text(
-                            text = "#$kw",
-                            color = Color.White.copy(alpha = 0.72f),
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Medium,
+                            text = item.title,
+                            color = Color.White,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                         )
                     }
                 }
