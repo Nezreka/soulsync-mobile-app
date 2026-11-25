@@ -160,4 +160,39 @@ class PageShelvesTest {
         assertEquals(null, PageShelves.youtube("latest", videos, now))
         assertTrue(PageShelves.youtube("long", emptyList(), now)!!.items.isEmpty())
     }
+
+    // the TV hubs' own shelves follow the page's rows once the page is arranged
+
+    private val hub = listOf("new-releases", "recent", "top-10", "edge", "net-HBO", "gems")
+    private fun rows(vararg on: Pair<String, Boolean>) = on.map { LayoutRow(it.first, "standard", it.second) }
+
+    @Test
+    fun `a hub nobody arranged keeps its own shelves`() {
+        val layout = rows("recent" to true, "top-10" to false)
+        assertEquals(hub, PageShelves.arrangedHub("movies", hub, { it }, layout, arranged = false))
+    }
+
+    @Test
+    fun `an arranged hub follows the rows, drops what is off, and keeps shelves that are no row`() {
+        val layout = rows("top-10" to true, "thrills" to true, "recent" to false, "top-rated" to true, "popular" to true)
+        assertEquals(
+            listOf("top-10", "edge", "gems", "net-HBO"),
+            PageShelves.arrangedHub("movies", hub, { it }, layout, arranged = true),
+        )
+        // a library's own page uses its kind's shelves
+        assertEquals(
+            listOf("top-10", "edge", "gems", "net-HBO"),
+            PageShelves.arrangedHub("movies:lib:4", hub, { it }, layout, arranged = true),
+        )
+    }
+
+    @Test
+    fun `every hub shelf names a row the page has`() {
+        val movieRows = PageShelves.DEFAULT_ROWS.getValue("movies").map { it.id } +
+            listOf("new-releases", "collections", "acclaimed", "top-10", "thrills", "feel-good", "quick-watches", "epics", "classics")
+        assertTrue(PageShelves.TV_HUB_ROWS.getValue("movies").values.all { it in movieRows })
+        val tvRows = PageShelves.DEFAULT_ROWS.getValue("tv").map { it.id } +
+            listOf("collections", "acclaimed", "top-10", "comfort", "drama-scifi")
+        assertTrue(PageShelves.TV_HUB_ROWS.getValue("tv").values.all { it in tvRows })
+    }
 }

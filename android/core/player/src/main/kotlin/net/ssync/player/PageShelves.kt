@@ -67,6 +67,38 @@ object PageShelves {
             }.getOrNull()
     }
 
+    /** which page row each of the TV hubs' own shelves is */
+    val TV_HUB_ROWS: Map<String, Map<String, String>> = mapOf(
+        "movies" to mapOf(
+            "new-releases" to "new-releases", "recent" to "recent", "top-10" to "top-10",
+            "collections" to "collections", "acclaimed" to "acclaimed", "edge" to "thrills",
+            "feelgood" to "feel-good", "quick" to "quick-watches", "epics" to "epics",
+            "gems" to "top-rated", "classics" to "classics",
+        ),
+        "tv" to mapOf(
+            "new-eps" to "new-episodes", "recent" to "recent", "top-10" to "top-10",
+            "collections" to "collections", "acclaimed-tv" to "acclaimed", "comfort-tv" to "comfort",
+            "prestige-tv" to "drama-scifi",
+        ),
+    )
+
+    /**
+     * The order a TV hub's own shelves take. Until someone has arranged the
+     * page ([arranged] false) the hub's own order stands. Once arranged, the
+     * page's rows decide: a shelf whose row is off is gone, the rest follow
+     * the rows' order, and shelves that are no row of the page (a network's
+     * best, weekend binges) keep their order after them.
+     */
+    fun <T> arrangedHub(
+        page: String, shelves: List<T>, idOf: (T) -> String, rows: List<LayoutRow>, arranged: Boolean,
+    ): List<T> {
+        if (!arranged) return shelves
+        val rowOf = TV_HUB_ROWS[page.substringBefore(':')] ?: return shelves
+        val on = rows.filter { it.on }.map { it.id }
+        val byRow = shelves.filter { rowOf[idOf(it)] != null }.groupBy { rowOf.getValue(idOf(it)) }
+        return on.flatMap { byRow[it].orEmpty() } + shelves.filter { rowOf[idOf(it)] == null }
+    }
+
     private fun genreOfRow(rowId: String, kind: String): String? =
         rowId.removePrefix("genre:$kind:").takeIf { rowId.startsWith("genre:$kind:") && it.isNotBlank() }
 

@@ -80,6 +80,7 @@ import net.ssync.player.CatalogMovie
 import net.ssync.player.CatalogRecentEpisode
 import net.ssync.player.CatalogShow
 import net.ssync.player.MusicApiResult
+import net.ssync.player.PageShelves
 import net.ssync.player.PlayerApiClient
 import net.ssync.player.StudioCollection
 import java.text.SimpleDateFormat
@@ -353,12 +354,22 @@ internal fun TvCinemaMoviesHub(
         movies.map { m -> m to toCard("lib", m) }
     }
 
+    // once the Movies page has been arranged (here or in a browser), its rows decide these shelves
+    val pageRows = rememberPageRows(api, "movies")
+    val shownShelves = remember(discoverShelves, pageRows.layout, pageRows.arranged) {
+        PageShelves.arrangedHub("movies", discoverShelves, { it.id }, pageRows.layout.rows, pageRows.arranged)
+    }
+    PageRowsEditor(
+        pageRows, "Movies", movieGenres = genres.map { it.first },
+        showingNow = discoverShelves.mapNotNull { PageShelves.TV_HUB_ROWS.getValue("movies")[it.id] }.toSet(),
+    )
     TvCinemaBrowseScaffold(
         pageTitle = "Movies",
         totalCountLabel = "${movies.size} films",
         api = api,
         coordinator = coordinator,
-        discoverShelves = discoverShelves,
+        onCustomize = { pageRows.editing = true },
+        discoverShelves = shownShelves,
         genres = genres,
         studioCollections = studioCollections.filter { c -> c.members.any { moviesById.containsKey(it) } },
         namedGroups = tmdbCollections.map { (name, list) ->
@@ -598,12 +609,21 @@ internal fun TvCinemaTvHub(
         out
     }
 
+    val pageRows = rememberPageRows(api, "tv")
+    val shownShelves = remember(discoverShelves, pageRows.layout, pageRows.arranged) {
+        PageShelves.arrangedHub("tv", discoverShelves, { it.id }, pageRows.layout.rows, pageRows.arranged)
+    }
+    PageRowsEditor(
+        pageRows, "TV Shows", showGenres = genres.map { it.first },
+        showingNow = discoverShelves.mapNotNull { PageShelves.TV_HUB_ROWS.getValue("tv")[it.id] }.toSet(),
+    )
     TvCinemaBrowseScaffold(
         pageTitle = "TV Shows",
         totalCountLabel = "${shows.size} series",
         api = api,
         coordinator = coordinator,
-        discoverShelves = discoverShelves,
+        onCustomize = { pageRows.editing = true },
+        discoverShelves = shownShelves,
         genres = genres,
         studioCollections = studioCollections.filter { c -> c.members.any { showsById.containsKey(it) } },
         namedGroups = networks.map { (net, list) ->
@@ -647,6 +667,8 @@ private fun TvCinemaBrowseScaffold(
     namedGroups: List<Triple<String, String, List<TvBrowseCard>>>,
     allItems: List<TvLibrarySortable>,
     onOpenStudioCollection: (StudioCollection) -> Unit,
+    /** opens the page's row editor */
+    onCustomize: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val imageLoader = LocalSoulSyncImageLoader.current
@@ -902,6 +924,10 @@ private fun TvCinemaBrowseScaffold(
                             }
                         },
                     )
+                }
+                // which rows this page shows, and in what order
+                if (onCustomize != null && mode == TvBrowseMode.DISCOVER) {
+                    TvCinemaPillTab(label = "Customize", selected = false, onClick = onCustomize)
                 }
             }
 

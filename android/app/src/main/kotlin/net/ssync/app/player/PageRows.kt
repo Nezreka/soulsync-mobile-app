@@ -55,6 +55,9 @@ class PageRowsState internal constructor(
     /** this screen follows the profile's shared rows, not its own */
     var shared by mutableStateOf(true)
         private set
+    /** someone has arranged this page (for this screen or for all): false is the page's default */
+    var arranged by mutableStateOf(false)
+        private set
     var editing by mutableStateOf(false)
 
     /** the rows to draw: the ones that are on, in order */
@@ -66,6 +69,7 @@ class PageRowsState internal constructor(
         if (resp.layout.rows.isNotEmpty()) layout = resp.layout
         if (resp.catalog.rows.isNotEmpty()) catalog = resp.catalog
         shared = resp.shared
+        arranged = resp.scope != null
     }
 
     suspend fun load() {
@@ -78,6 +82,7 @@ class PageRowsState internal constructor(
     fun save(updated: HomeLayout, toAll: Boolean) {
         layout = updated
         shared = toAll
+        arranged = true
         editing = false
         scope.launch {
             // the server cleans what it stores: show that. a save that failed
@@ -122,10 +127,16 @@ fun PageRowsEditor(
     title: String,
     movieGenres: List<String> = emptyList(),
     showGenres: List<String> = emptyList(),
+    /** rows this screen is showing before anyone arranged the page (a TV hub's
+     *  own shelves): the editor opens with them on, so saving keeps them */
+    showingNow: Set<String> = emptySet(),
 ) {
     if (!state.editing) return
+    val initial = if (state.arranged || showingNow.isEmpty()) state.layout else state.layout.copy(
+        rows = state.layout.rows.map { if (it.id in showingNow) it.copy(on = true) else it },
+    )
     HomeEditorSheet(
-        initialLayout = state.layout,
+        initialLayout = initial,
         initialShared = state.shared,
         availableMovieGenres = movieGenres,
         onSave = state::save,
