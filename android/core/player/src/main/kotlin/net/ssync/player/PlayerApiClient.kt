@@ -23,6 +23,11 @@ import okhttp3.RequestBody.Companion.toRequestBody
  */
 
 /** the home layout id for this app on a phone (8-64 of [A-Za-z0-9_-], core/player/home_layout.py) */
+/**
+ * the id every Android device used to send for its "own" layout. kept only to
+ * find a layout saved under it; a device's real id is made once per install
+ * (PlayerDevicePrefs.layoutDeviceId).
+ */
 const val PHONE_LAYOUT_DEVICE = "android-phone"
 
 private val APP_PRESENCE_SESSION: String = "android-" + java.util.UUID.randomUUID().toString().take(12)
@@ -865,9 +870,14 @@ class PlayerApiClient(
         }
     }
 
-    suspend fun resetHomeLayout(device: String = PHONE_LAYOUT_DEVICE): MusicApiResult<Unit> =
+    /**
+     * [device]: that screen follows the profile's shared rows again.
+     * null: every screen of the profile goes back to the default.
+     */
+    suspend fun resetHomeLayout(device: String? = PHONE_LAYOUT_DEVICE): MusicApiResult<Unit> =
         withContext(Dispatchers.IO) {
-            val req = Request.Builder().url("$base/api/player/home-layout?device=$device").delete().build()
+            val url = if (device == null) "$base/api/player/home-layout" else "$base/api/player/home-layout?device=$device"
+            val req = Request.Builder().url(url).delete().build()
             execute(req) { }
         }
 

@@ -86,6 +86,9 @@ import net.ssync.pairing.theme.SoulSyncColors
 import net.ssync.pairing.ui.LocalIsTv
 import net.ssync.pairing.ui.dpadFocusable
 import net.ssync.player.HomeLayout
+import net.ssync.player.HomeLayoutResponse
+import net.ssync.player.LayoutCatalog
+import net.ssync.player.PHONE_LAYOUT_DEVICE
 import net.ssync.player.LibAlbum
 import net.ssync.player.MusicApiResult
 import net.ssync.player.OwnedBook
@@ -167,6 +170,29 @@ fun HomeScreen(
 ) {
     val scope = rememberCoroutineScope()
     val appCacheDir = LocalContext.current.applicationContext.cacheDir
+    val layoutContext = LocalContext.current.applicationContext
+    val layoutIsTv = LocalIsTv.current
+    val layoutDevice = remember { PlayerDevicePrefs.layoutDeviceId(layoutContext, layoutIsTv) }
+    var layoutCatalog by remember(api.baseUrl) { mutableStateOf(LayoutCatalog()) }
+
+    /**
+     * this screen's Home rows. the first time an install asks, a layout saved
+     * under the id every Android device used to share is moved to this
+     * device's own id, so nobody's arrangement is lost by the id changing.
+     */
+    suspend fun layoutForThisScreen(): MusicApiResult<HomeLayoutResponse> {
+        val mine = api.fetchHomeLayout(device = layoutDevice)
+        if (mine is MusicApiResult.Success && mine.data.scope != "device" &&
+            PlayerDevicePrefs.takeLegacyLayoutCheck(layoutContext)
+        ) {
+            val old = api.fetchHomeLayout(device = PHONE_LAYOUT_DEVICE)
+            if (old is MusicApiResult.Success && old.data.scope == "device") {
+                api.saveHomeLayout(layout = old.data.layout, device = layoutDevice, shared = false)
+                return old
+            }
+        }
+        return mine
+    }
     val warmHit = HomeWarmCache.hasLoadedOnce && HomeWarmCache.baseUrl == api.baseUrl
     var isLoading by remember(api.baseUrl) { mutableStateOf(!warmHit) }
     var isRefreshing by remember { mutableStateOf(false) }
@@ -199,7 +225,7 @@ fun HomeScreen(
             //    without contending with 6 below-the-fold secondary requests on cold start.
             val cDef = async { api.fetchContinue() }
             val vDef = async { api.fetchVideoCatalog(forceRefresh = forceRefresh) }
-            val lDef = async { api.fetchHomeLayout(device = "android-phone") }
+            val lDef = async { layoutForThisScreen() }
 
             when (val v = vDef.await()) {
                 is MusicApiResult.Success -> {
@@ -217,6 +243,7 @@ fun HomeScreen(
                 HomeWarmCache.continueItems = it.data
             }
             (lDef.await() as? MusicApiResult.Success)?.let { resp ->
+                if (resp.data.catalog.rows.isNotEmpty()) layoutCatalog = resp.data.catalog
                 if (resp.data.layout.rows.isNotEmpty()) {
                     homeLayout = resp.data.layout
                     layoutShared = resp.data.shared
@@ -560,14 +587,31 @@ fun HomeScreen(
                     layoutShared = shared
                     showEditor = false
                     scope.launch {
-                        api.saveHomeLayout(layout = updated, shared = shared)
+                        // the server cleans what it stores (a style a row can't take goes back): show that
+                        when (val saved = api.saveHomeLayout(layout = updated, device = layoutDevice, shared = shared)) {
+                            is MusicApiResult.Success -> if (saved.data.layout.rows.isNotEmpty()) homeLayout = saved.data.layout
+                            else -> (layoutForThisScreen() as? MusicApiResult.Success)?.let {
+                                // it didn't save: back to what the server has, not a layout that only exists here
+                                homeLayout = it.data.layout
+                                layoutShared = it.data.shared
+                            }
+                        }
                     }
                 },
                 onReset = {
-                    homeLayout = HomeLayout()
                     showEditor = false
-                    scope.launch { api.resetHomeLayout(device = "android-phone") }
+                    scope.launch {
+                        // a screen with its own rows goes back to the shared ones; a screen already
+                        // on the shared ones puts the profile back to the default, on every screen
+                        api.resetHomeLayout(device = if (layoutShared) null else layoutDevice)
+                        (layoutForThisScreen() as? MusicApiResult.Success)?.let {
+                            homeLayout = it.data.layout
+                            layoutShared = it.data.shared
+                        }
+                    }
                 },
+                catalog = layoutCatalog,
+                availableShowGenres = catalog.shows.flatMap { it.genres }.distinct().sorted(),
                 onDismiss = { showEditor = false },
             )
         }
@@ -1438,14 +1482,31 @@ fun HomeScreen(
                 layoutShared = shared
                 showEditor = false
                 scope.launch {
-                    api.saveHomeLayout(layout = updated, shared = shared)
+                    // the server cleans what it stores (a style a row can't take goes back): show that
+                    when (val saved = api.saveHomeLayout(layout = updated, device = layoutDevice, shared = shared)) {
+                        is MusicApiResult.Success -> if (saved.data.layout.rows.isNotEmpty()) homeLayout = saved.data.layout
+                        else -> (layoutForThisScreen() as? MusicApiResult.Success)?.let {
+                            // it didn't save: back to what the server has, not a layout that only exists here
+                            homeLayout = it.data.layout
+                            layoutShared = it.data.shared
+                        }
+                    }
                 }
             },
             onReset = {
-                homeLayout = HomeLayout()
                 showEditor = false
-                scope.launch { api.resetHomeLayout(device = "android-phone") }
+                scope.launch {
+                    // a screen with its own rows goes back to the shared ones; a screen already
+                    // on the shared ones puts the profile back to the default, on every screen
+                    api.resetHomeLayout(device = if (layoutShared) null else layoutDevice)
+                    (layoutForThisScreen() as? MusicApiResult.Success)?.let {
+                        homeLayout = it.data.layout
+                        layoutShared = it.data.shared
+                    }
+                }
             },
+            catalog = layoutCatalog,
+            availableShowGenres = catalog.shows.flatMap { it.genres }.distinct().sorted(),
             onDismiss = { showEditor = false },
         )
     }

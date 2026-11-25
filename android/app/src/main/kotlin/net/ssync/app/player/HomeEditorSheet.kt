@@ -18,6 +18,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.RestartAlt
@@ -48,9 +49,19 @@ import androidx.compose.ui.unit.sp
 import net.ssync.pairing.theme.SoulSyncColors
 import net.ssync.pairing.ui.dpadFocusable
 import net.ssync.player.HomeLayout
+import net.ssync.player.LayoutCatalog
 import net.ssync.player.LayoutRow
 
 private val ROW_STYLES = listOf("standard", "large", "wide", "ranked")
+
+/** a style's name, the same words the web editor uses */
+private fun styleLabel(style: String): String = when (style) {
+    "standard" -> "Cards"
+    "large" -> "Large cards"
+    "wide" -> "Wide stills"
+    "ranked" -> "Top 10"
+    else -> style.replaceFirstChar { it.uppercase() }
+}
 
 /**
  * 1:1 port of SoulSync `/player` Home Layout Editor:
@@ -69,7 +80,14 @@ fun HomeEditorSheet(
     onSave: (HomeLayout, Boolean) -> Unit,
     onReset: () -> Unit,
     onDismiss: () -> Unit,
+    /** the server's rows for this page: their names, hints and the styles each can take */
+    catalog: LayoutCatalog = LayoutCatalog(),
+    title: String = "Customize Home",
+    /** only Home has a billboard to switch */
+    showBillboard: Boolean = true,
+    availableShowGenres: List<String> = emptyList(),
 ) {
+    val defs = remember(catalog) { catalog.rows.associateBy { it.id } }
     var draft by remember(initialLayout) { mutableStateOf(initialLayout) }
     var shared by remember(initialShared) { mutableStateOf(initialShared) }
 
@@ -84,7 +102,7 @@ fun HomeEditorSheet(
                 .padding(bottom = 24.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Customize Home", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+                Text(title, style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
                 OutlinedButton(
                     onClick = onReset,
                     border = BorderStroke(1.dp, SoulSyncColors.LineStrong),
@@ -113,11 +131,11 @@ fun HomeEditorSheet(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text("Shared layout across devices", style = MaterialTheme.typography.titleMedium)
-                    Text("Sync this Home order with Web & TV", style = MaterialTheme.typography.bodyMedium, fontSize = 12.sp)
+                    Text("Use the same rows on every screen of this profile", style = MaterialTheme.typography.bodyMedium, fontSize = 12.sp)
                 }
                 Switch(checked = shared, onCheckedChange = { shared = it }, modifier = Modifier.dpadFocusable(androidx.compose.foundation.shape.CircleShape),)
             }
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            if (showBillboard) Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text("Hero Billboard", style = MaterialTheme.typography.titleMedium)
                     Text("Auto-rotating spotlight at top of Home", style = MaterialTheme.typography.bodyMedium, fontSize = 12.sp)
@@ -131,7 +149,11 @@ fun HomeEditorSheet(
 
             // Add dynamic genre row chips
             val existingIds = draft.rows.map { it.id }.toSet()
-            val addableGenres = availableMovieGenres.filter { "genre:movie:$it" !in existingIds }.take(6)
+            // every genre the library has, movies then shows, that isn't a row already
+            val addableGenres = (
+                availableMovieGenres.map { "genre:movie:$it" to "$it movies" } +
+                    availableShowGenres.map { "genre:show:$it" to "$it shows" }
+                ).filter { it.first !in existingIds }
             if (addableGenres.isNotEmpty()) {
                 Spacer(Modifier.height(8.dp))
                 Text("Add genre row", color = SoulSyncColors.TextSecondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
@@ -139,14 +161,15 @@ fun HomeEditorSheet(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     contentPadding = PaddingValues(vertical = 6.dp),
                 ) {
-                    items(addableGenres) { genre ->
+                    items(addableGenres) { (genreId, genreLabel) ->
                         FilterChip(
                             selected = false,
                             onClick = {
-                                draft = draft.copy(rows = draft.rows + LayoutRow("genre:movie:$genre", "standard", true))
+                                // at the top, where the web editor puts it: a row added is a row wanted
+                                draft = draft.copy(rows = listOf(LayoutRow(genreId, "standard", true)) + draft.rows)
                             },
                             leadingIcon = { Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(15.dp)) },
-                            label = { Text("$genre movies") },
+                            label = { Text(genreLabel) },
                             colors = FilterChipDefaults.filterChipColors(
                                 containerColor = SoulSyncColors.Card,
                                 labelColor = SoulSyncColors.TextPrimary,
@@ -170,11 +193,24 @@ fun HomeEditorSheet(
                     ) {
                         Column(modifier = Modifier.padding(10.dp)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    text = labelForRowId(row.id),
-                                    style = MaterialTheme.typography.titleMedium,
-                                    modifier = Modifier.weight(1f),
-                                )
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = defs[row.id]?.label ?: labelForRowId(row.id),
+                                        style = MaterialTheme.typography.titleMedium,
+                                    )
+                                    val hint = defs[row.id]?.hint.orEmpty()
+                                    if (hint.isNotBlank()) {
+                                        Text(hint, color = SoulSyncColors.TextSecondary, fontSize = 11.sp)
+                                    }
+                                }
+                                if (row.id.startsWith("genre:")) {
+                                    IconButton(
+                                        onClick = { draft = draft.copy(rows = draft.rows.filterIndexed { i, _ -> i != idx }) },
+                                        modifier = Modifier.dpadFocusable(androidx.compose.foundation.shape.CircleShape),
+                                    ) {
+                                        Icon(Icons.Default.Close, contentDescription = "Remove row", modifier = Modifier.size(18.dp))
+                                    }
+                                }
                                 IconButton(
                                     onClick = {
                                         if (idx > 0) {
@@ -215,8 +251,11 @@ fun HomeEditorSheet(
     modifier = Modifier.dpadFocusable(androidx.compose.foundation.shape.CircleShape),
                                 )
                             }
-                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                ROW_STYLES.forEach { st ->
+                            // only the styles this row can take (the server puts any other back)
+                            val rowStyles = defs[row.id]?.styles?.takeIf { it.isNotEmpty() }
+                                ?: if (row.id.startsWith("genre:") || defs.isEmpty()) ROW_STYLES else listOf(row.style)
+                            if (rowStyles.size > 1) Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                rowStyles.forEach { st ->
                                     FilterChip(
                                         selected = row.style == st,
                                         onClick = {
@@ -226,7 +265,7 @@ fun HomeEditorSheet(
                                         },
                                         label = {
                                             Text(
-                                                text = if (st == "ranked") "Top 10" else st.replaceFirstChar { it.uppercase() },
+                                                text = styleLabel(st),
                                                 fontSize = 11.sp,
                                             )
                                         },

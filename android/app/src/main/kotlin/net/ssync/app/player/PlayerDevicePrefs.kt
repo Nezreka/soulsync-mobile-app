@@ -71,6 +71,33 @@ object PlayerDevicePrefs {
         "off" to "Off",
     )
 
+    private const val KEY_LAYOUT_DEVICE = "layout_device_id"
+    private const val KEY_LAYOUT_LEGACY_CHECKED = "layout_legacy_checked"
+
+    /**
+     * this install's id for per-screen layouts (Home and every browse page):
+     * made once and kept, so a phone and a TV of one profile can each have
+     * their own. every Android device used to send the one constant
+     * "android-phone", so "this screen only" was really "every Android
+     * device of the profile".
+     */
+    fun layoutDeviceId(context: Context, isTv: Boolean): String {
+        val sp = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        sp.getString(KEY_LAYOUT_DEVICE, null)?.takeIf { it.length in 8..64 }?.let { return it }
+        val made = (if (isTv) "android-tv-" else "android-phone-") +
+            java.util.UUID.randomUUID().toString().replace("-", "").take(12)
+        sp.edit().putString(KEY_LAYOUT_DEVICE, made).apply()
+        return made
+    }
+
+    /** true once per install: time to look for a layout saved under the old shared id */
+    fun takeLegacyLayoutCheck(context: Context): Boolean {
+        val sp = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        if (sp.getBoolean(KEY_LAYOUT_LEGACY_CHECKED, false)) return false
+        sp.edit().putBoolean(KEY_LAYOUT_LEGACY_CHECKED, true).apply()
+        return true
+    }
+
     private var prefs: SharedPreferences? = null
     private val _state = MutableStateFlow(DeviceDisplayPrefs())
     val state: StateFlow<DeviceDisplayPrefs> = _state.asStateFlow()

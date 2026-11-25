@@ -323,23 +323,23 @@ internal fun TvSpotlightHome(
                     }
                 }
 
-                row.id == "movies-recent" && catalog.movies.isNotEmpty() -> {
+                row.id == "recent-movies" && catalog.movies.isNotEmpty() -> {
                     val cards = catalog.movies
                         .sortedByDescending { it.addedAt.orEmpty() }
                         .take(20)
                         .map { movieCard("recent-m", it) }
-                    out += TvSpotlightShelf("movies-recent", "Recently Added in Movies", cardStyle = TvCardStyle.POSTER, items = cards)
+                    out += TvSpotlightShelf("recent-movies", "Recently Added in Movies", cardStyle = TvCardStyle.POSTER, items = cards)
                 }
 
-                row.id == "shows-recent" && catalog.shows.isNotEmpty() -> {
+                row.id == "recent-shows" && catalog.shows.isNotEmpty() -> {
                     val cards = catalog.shows
                         .sortedByDescending { it.addedAt.orEmpty() }
                         .take(20)
                         .map { showCard("recent-s", it) }
-                    out += TvSpotlightShelf("shows-recent", "Recently Added in TV Shows", cardStyle = TvCardStyle.POSTER, items = cards)
+                    out += TvSpotlightShelf("recent-shows", "Recently Added in TV Shows", cardStyle = TvCardStyle.POSTER, items = cards)
                 }
 
-                row.id == "episodes-recent" && catalog.recentEpisodes.isNotEmpty() -> {
+                row.id == "new-episodes" && catalog.recentEpisodes.isNotEmpty() -> {
                     val cards = catalog.recentEpisodes.take(20).map { ep ->
                         val show = showsById[ep.showId]
                         val epTag = "S${ep.seasonNumber}·E${ep.episodeNumber}"
@@ -361,7 +361,7 @@ internal fun TvSpotlightHome(
                             onClick = { onNavigate(PlayerDestination.EpisodeDetail(ep.showId, ep.id)) },
                         )
                     }
-                    out += TvSpotlightShelf("episodes-recent", "New Episodes", cardStyle = TvCardStyle.POSTER, items = cards)
+                    out += TvSpotlightShelf("new-episodes", "New Episodes", cardStyle = TvCardStyle.POSTER, items = cards)
                 }
 
                 row.id == "live-guide" && liveGuideHighlights.isNotEmpty() -> {
@@ -445,7 +445,7 @@ internal fun TvSpotlightHome(
                     }
                 }
 
-                row.id == "youtube-recent" && catalog.youtube.isNotEmpty() -> {
+                row.id == "youtube" && catalog.youtube.isNotEmpty() -> {
                     val cards = catalog.youtube.take(18).map { yt ->
                         val thumb = api.artwork.resolve(yt.thumbnailUrl) ?: api.artwork.forItem("youtube", yt.id, preferBackdrop = true)
                         TvSpotlightCard(
@@ -471,10 +471,10 @@ internal fun TvSpotlightHome(
                             },
                         )
                     }
-                    out += TvSpotlightShelf("youtube-recent", "YouTube", cardStyle = TvCardStyle.WIDESCREEN, items = cards)
+                    out += TvSpotlightShelf("youtube", "YouTube", cardStyle = TvCardStyle.WIDESCREEN, items = cards)
                 }
 
-                row.id == "music-recent" && albums.isNotEmpty() -> {
+                row.id == "recent-music" && albums.isNotEmpty() -> {
                     val cards = albums.take(18).map { alb ->
                         val art = api.artwork.resolve(alb.imageUrl) ?: api.artwork.albumArtwork(alb.id)
                         TvSpotlightCard(
@@ -488,7 +488,7 @@ internal fun TvSpotlightHome(
                             onClick = { onNavigate(PlayerDestination.AlbumDetail(alb.id)) },
                         )
                     }
-                    out += TvSpotlightShelf("music-recent", "Recently Added Music", cardStyle = TvCardStyle.SQUARE, items = cards)
+                    out += TvSpotlightShelf("recent-music", "Recently Added Music", cardStyle = TvCardStyle.SQUARE, items = cards)
                 }
 
                 row.id == "discovery-playlists" && discoverPlaylists.isNotEmpty() -> {

@@ -1464,17 +1464,18 @@ data class HomeLayout(
     val rows: List<LayoutRow> = defaultRows(),
 ) {
     companion object {
+        /** core/player/home_layout.py's default, row for row: what a profile sees before it arranges anything */
         fun defaultRows(): List<LayoutRow> = listOf(
             LayoutRow("continue", "wide", true),
-            LayoutRow("new-episodes", "wide", true),
             LayoutRow("live-guide", "wide", true),
             LayoutRow("premieres", "wide", true),
-            LayoutRow("seasonal", "standard", true),
+            LayoutRow("new-episodes", "wide", true),
             LayoutRow("collections", "standard", true),
-            LayoutRow("top-rated", "ranked", true),
+            LayoutRow("top-movies", "ranked", true),
             LayoutRow("recent-movies", "standard", true),
-            LayoutRow("recent-shows", "standard", true),
             LayoutRow("discovery-playlists", "standard", true),
+            LayoutRow("seasonal", "standard", true),
+            LayoutRow("because", "standard", true),
             LayoutRow("recent-music", "standard", true),
         )
     }
