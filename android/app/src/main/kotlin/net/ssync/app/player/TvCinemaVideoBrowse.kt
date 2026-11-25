@@ -179,31 +179,66 @@ internal fun TvCinemaMoviesHub(
     var tmdbCollections by remember { mutableStateOf<List<Map.Entry<String, List<CatalogMovie>>>>(emptyList()) }
 
     LaunchedEffect(movies, studioCollections, currentYear) {
-        // Phase 1 (instant, <10ms on Default dispatcher): first 2 visible rows
-        val phase1 = withContext(Dispatchers.Default) {
+        // Curated cinema quality score: avoids obscure 1-vote 10.0 outliers dominating every shelf
+        // and favors real, rich-metadata theatrical films with posters, backdrops, studio & rating.
+        fun movieScore(m: CatalogMovie): Double {
+            val raw = m.rating ?: 0.0
+            val clamped = when {
+                raw >= 9.6 -> 6.8 // 1-vote TMDB 10.0 outliers shouldn't beat The Godfather / Interstellar
+                raw > 0.0 -> raw
+                else -> 5.0
+            }
+            var s = clamped
+            if (m.hasBackdrop) s += 0.55
+            if (m.hasPoster) s += 0.35
+            if (!m.contentRating.isNullOrBlank()) s += 0.30
+            if (!m.studio.isNullOrBlank()) s += 0.25
+            if (!m.collection.isNullOrBlank()) s += 0.15
+            return s
+        }
+
+        // Phase 1 (instant, <10ms on Default dispatcher): first 2 visible rows (strictly disjoint!)
+        val (phase1, phase1Seen) = withContext(Dispatchers.Default) {
+            val seen = HashSet<Int>(256)
             val firstRows = mutableListOf<TvBrowseShelf>()
             val newReleases = movies
-                .filter { (it.year ?: 0) >= currentYear - 1 }
-                .sortedWith(compareByDescending<CatalogMovie> { it.year ?: 0 }.thenByDescending { it.addedAt.orEmpty() })
+                .filter { (it.year ?: 0) >= currentYear - 1 && it.hasPoster }
+                .sortedWith(compareByDescending<CatalogMovie> { it.year ?: 0 }.thenByDescending { movieScore(it) }.thenByDescending { it.addedAt.orEmpty() })
                 .take(20)
             if (newReleases.size >= 3) {
+                newReleases.forEach { seen.add(it.id) }
                 firstRows += TvBrowseShelf("new-releases", "New Releases", "${currentYear - 1}–$currentYear", newReleases.map { toCard("new", it) })
             }
-            val recent = movies.sortedByDescending { it.addedAt.orEmpty() }.take(20)
+            val recent = movies
+                .filter { it.id !in seen }
+                .sortedByDescending { it.addedAt.orEmpty() }
+                .take(20)
             if (recent.isNotEmpty()) {
+                recent.forEach { seen.add(it.id) }
                 firstRows += TvBrowseShelf("recent", "Recently Added", items = recent.map { toCard("rec", it) })
             }
-            firstRows
+            firstRows to seen
         }
         discoverShelves = phase1
 
-        // Phase 2 (background off main thread): all remaining curated rows, genres, & franchise groups
+        // Phase 2 (background off main thread): all remaining curated rows — ZERO duplicate movies across rows!
         val (computedGenres, fullShelves, computedCols) = withContext(Dispatchers.Default) {
             val gList = movies.flatMap { it.genres }.groupingBy { it }.eachCount()
                 .entries.sortedByDescending { it.value }.map { it.key to it.value }
             val out = phase1.toMutableList()
+            val seen = HashSet(phase1Seen)
 
-            val top10 = movies.filter { (it.rating ?: 0.0) > 0.0 }.sortedByDescending { it.rating ?: 0.0 }.take(10)
+            fun pickUnique(candidates: List<CatalogMovie>, limit: Int): List<CatalogMovie> {
+                val picked = candidates.filter { it.id !in seen }.take(limit)
+                picked.forEach { seen.add(it.id) }
+                return picked
+            }
+
+            val top10 = pickUnique(
+                movies.filter { (it.rating ?: 0.0) in 7.2..9.5 && it.hasBackdrop && it.hasPoster }
+                    .sortedByDescending { movieScore(it) },
+                10,
+            )
             if (top10.size >= 3) {
                 out += TvBrowseShelf("top-10", "Top 10 Highest Rated", items = top10.mapIndexed { i, m -> toCard("top10", m, rank = i + 1) })
             }
@@ -233,46 +268,70 @@ internal fun TvCinemaMoviesHub(
                 out += TvBrowseShelf("collections", "Curated Collections", "${colCards.size} collections", colCards)
             }
 
-            val acclaimed = movies.filter { (it.rating ?: 0.0) >= 7.6 }.sortedByDescending { it.rating ?: 0.0 }.drop(4).take(20)
+            val acclaimed = pickUnique(
+                movies.filter { (it.rating ?: 0.0) in 7.6..9.5 && it.hasPoster }
+                    .sortedByDescending { movieScore(it) },
+                18,
+            )
             if (acclaimed.size >= 4) {
                 out += TvBrowseShelf("acclaimed", "Critically Acclaimed", "★ 7.6+", acclaimed.map { toCard("acc", it) })
             }
 
-            val quickWatches = movies.filter { (it.runtimeSeconds ?: 0) in 3600..6000 }.sortedByDescending { it.rating ?: 0.0 }.take(18)
-            if (quickWatches.size >= 4) {
-                out += TvBrowseShelf("quick", "Quick Watches", "Under 100 minutes", quickWatches.map { toCard("quick", it) })
-            }
-
-            val epics = movies.filter { (it.runtimeSeconds ?: 0) >= 8100 }.sortedByDescending { it.rating ?: 0.0 }.take(18)
-            if (epics.size >= 4) {
-                out += TvBrowseShelf("epics", "Epic Cinema", "2h 15m+", epics.map { toCard("epic", it) })
-            }
-
-            // Curated Editorial Rails (replacing raw genre spam — Genres have their own tab above!)
-            val edgeOfSeat = movies.filter { m ->
-                m.genres.any { it.equals("Thriller", true) || it.equals("Action", true) || it.equals("Sci-Fi", true) || it.equals("Science Fiction", true) } &&
-                    (m.rating ?: 0.0) >= 6.8
-            }.sortedByDescending { it.rating ?: 0.0 }.take(18)
+            val edgeOfSeat = pickUnique(
+                movies.filter { m ->
+                    m.genres.any { it.equals("Thriller", true) || it.equals("Action", true) || it.equals("Sci-Fi", true) || it.equals("Science Fiction", true) } &&
+                        (m.rating ?: 0.0) in 6.8..9.5 && m.hasPoster
+                }.sortedByDescending { movieScore(it) },
+                18,
+            )
             if (edgeOfSeat.size >= 4) {
                 out += TvBrowseShelf("edge", "Edge of Your Seat", "Action, Thriller & Sci-Fi", edgeOfSeat.map { toCard("edge", it) })
             }
 
-            val feelGood = movies.filter { m ->
-                m.genres.any { it.equals("Comedy", true) || it.equals("Romance", true) || it.equals("Family", true) || it.equals("Animation", true) } &&
-                    (m.rating ?: 0.0) >= 7.0
-            }.sortedByDescending { it.rating ?: 0.0 }.take(18)
+            val feelGood = pickUnique(
+                movies.filter { m ->
+                    m.genres.any { it.equals("Comedy", true) || it.equals("Romance", true) || it.equals("Family", true) || it.equals("Animation", true) } &&
+                        (m.rating ?: 0.0) in 6.8..9.5 && m.hasPoster
+                }.sortedByDescending { movieScore(it) },
+                18,
+            )
             if (feelGood.size >= 4) {
                 out += TvBrowseShelf("feelgood", "Feel-Good & Date Night", "Comedy, Romance & Family", feelGood.map { toCard("fg", it) })
             }
 
-            val hiddenGems = movies.filter { m ->
-                (m.rating ?: 0.0) >= 7.5 && (m.year ?: 9999) in 2005..(currentYear - 3)
-            }.sortedByDescending { it.rating ?: 0.0 }.drop(6).take(18)
-            if (hiddenGems.size >= 4) {
-                out += TvBrowseShelf("gems", "Hidden Gems", "Modern favorites ★ 7.5+", hiddenGems.map { toCard("gem", it) })
+            val quickWatches = pickUnique(
+                movies.filter { (it.runtimeSeconds ?: 0) in 3600..6000 && (it.rating ?: 0.0) in 6.6..9.5 && it.hasPoster }
+                    .sortedByDescending { movieScore(it) },
+                18,
+            )
+            if (quickWatches.size >= 4) {
+                out += TvBrowseShelf("quick", "Quick Watches", "Under 100 minutes", quickWatches.map { toCard("quick", it) })
             }
 
-            val classics = movies.filter { (it.year ?: 9999) in 1970..2004 }.sortedByDescending { it.rating ?: 0.0 }.take(18)
+            val epics = pickUnique(
+                movies.filter { (it.runtimeSeconds ?: 0) >= 8100 && (it.rating ?: 0.0) in 6.8..9.5 && it.hasPoster }
+                    .sortedByDescending { movieScore(it) },
+                18,
+            )
+            if (epics.size >= 4) {
+                out += TvBrowseShelf("epics", "Epic Cinema", "2h 15m+", epics.map { toCard("epic", it) })
+            }
+
+            val hiddenGems = pickUnique(
+                movies.filter { m ->
+                    (m.rating ?: 0.0) in 7.3..9.5 && (m.year ?: 9999) in 2005..(currentYear - 3) && m.hasPoster
+                }.sortedByDescending { movieScore(it) },
+                18,
+            )
+            if (hiddenGems.size >= 4) {
+                out += TvBrowseShelf("gems", "Hidden Gems", "Modern favorites ★ 7.3+", hiddenGems.map { toCard("gem", it) })
+            }
+
+            val classics = pickUnique(
+                movies.filter { (it.year ?: 9999) in 1970..2004 && (it.rating ?: 0.0) in 7.0..9.5 && it.hasPoster }
+                    .sortedByDescending { movieScore(it) },
+                18,
+            )
             if (classics.size >= 4) {
                 out += TvBrowseShelf("classics", "Timeless Classics", "1970–2004", classics.map { toCard("cls", it) })
             }
@@ -371,6 +430,29 @@ internal fun TvCinemaTvHub(
     }
 
     val discoverShelves = remember(shows, recentEpisodes, studioCollections, networks) {
+        fun showScore(s: CatalogShow): Double {
+            val raw = s.rating ?: 0.0
+            val clamped = when {
+                raw >= 9.6 -> 6.8
+                raw > 0.0 -> raw
+                else -> 5.0
+            }
+            var sc = clamped
+            if (s.hasBackdrop) sc += 0.55
+            if (s.hasPoster) sc += 0.35
+            if (!s.contentRating.isNullOrBlank()) sc += 0.25
+            if (!s.network.isNullOrBlank()) sc += 0.25
+            if (s.episodeCount >= 6) sc += 0.15
+            return sc
+        }
+
+        val seen = HashSet<Int>(256)
+        fun pickUniqueShows(candidates: List<CatalogShow>, limit: Int): List<CatalogShow> {
+            val picked = candidates.filter { it.id !in seen }.take(limit)
+            picked.forEach { seen.add(it.id) }
+            return picked
+        }
+
         val out = mutableListOf<TvBrowseShelf>()
 
         // 1. New Episodes
@@ -400,13 +482,17 @@ internal fun TvCinemaTvHub(
         }
 
         // 2. Recently Added Shows
-        val recent = shows.sortedByDescending { it.addedAt.orEmpty() }.take(20)
+        val recent = pickUniqueShows(shows.sortedByDescending { it.addedAt.orEmpty() }, 20)
         if (recent.isNotEmpty()) {
             out += TvBrowseShelf("recent", "Recently Added Series", items = recent.map { toCard("rec", it) })
         }
 
         // 3. Top 10 Highest Rated Series
-        val top10 = shows.filter { (it.rating ?: 0.0) > 0.0 }.sortedByDescending { it.rating ?: 0.0 }.take(10)
+        val top10 = pickUniqueShows(
+            shows.filter { (it.rating ?: 0.0) in 7.2..9.5 && it.hasBackdrop && it.hasPoster }
+                .sortedByDescending { showScore(it) },
+            10,
+        )
         if (top10.size >= 3) {
             out += TvBrowseShelf(
                 id = "top-10",
@@ -443,55 +529,68 @@ internal fun TvCinemaTvHub(
         }
 
         // 5. Limited & Mini-Series (<= 12 episodes)
-        val mini = shows
-            .filter { it.episodeCount in 2..12 }
-            .sortedByDescending { it.rating ?: 0.0 }
-            .take(18)
+        val mini = pickUniqueShows(
+            shows.filter { it.episodeCount in 2..12 && (it.rating ?: 0.0) in 6.8..9.5 && it.hasPoster }
+                .sortedByDescending { showScore(it) },
+            18,
+        )
         if (mini.size >= 4) {
             out += TvBrowseShelf("mini", "Weekend Binges · Limited Series", subtitle = "12 episodes or fewer", items = mini.map { toCard("mini", it) })
         }
 
         // 6. Long-Running Marathons (40+ episodes)
-        val longRun = shows
-            .filter { it.episodeCount >= 40 }
-            .sortedByDescending { it.rating ?: 0.0 }
-            .take(18)
+        val longRun = pickUniqueShows(
+            shows.filter { it.episodeCount >= 40 && (it.rating ?: 0.0) in 6.8..9.5 && it.hasPoster }
+                .sortedByDescending { showScore(it) },
+            18,
+        )
         if (longRun.size >= 4) {
             out += TvBrowseShelf("marathon", "Deep Binges · 40+ Episodes", items = longRun.map { toCard("mar", it) })
         }
 
-        // 7. Top Networks
+        // 7. Top Networks (strictly unique across shelves!)
         networks.take(4).forEach { (net, list) ->
-            if (list.size >= 3) {
+            val netShows = pickUniqueShows(
+                list.filter { it.hasPoster }.sortedByDescending { showScore(it) },
+                18,
+            )
+            if (netShows.size >= 3) {
                 out += TvBrowseShelf(
                     id = "net-$net",
                     title = "Best of $net",
                     subtitle = "${list.size} series",
-                    items = list.sortedByDescending { it.rating ?: 0.0 }.take(18).map { toCard("net-$net", it) },
+                    items = netShows.map { toCard("net-$net", it) },
                 )
             }
         }
 
-        // 8. Curated Editorial TV Rails (replacing raw genre spam — Genres have their own tab above!)
-        val acclaimedTv = shows.filter { (it.rating ?: 0.0) >= 8.0 }
-            .sortedByDescending { it.rating ?: 0.0 }
-            .drop(4)
-            .take(18)
+        // 8. Curated Editorial TV Rails (strictly unique!)
+        val acclaimedTv = pickUniqueShows(
+            shows.filter { (it.rating ?: 0.0) in 7.8..9.5 && it.hasPoster }
+                .sortedByDescending { showScore(it) },
+            18,
+        )
         if (acclaimedTv.size >= 4) {
-            out += TvBrowseShelf("acclaimed-tv", "Critically Acclaimed Series", "★ 8.0+", acclaimedTv.map { toCard("acctv", it) })
+            out += TvBrowseShelf("acclaimed-tv", "Critically Acclaimed Series", "★ 7.8+", acclaimedTv.map { toCard("acctv", it) })
         }
 
-        val comfortComedy = shows.filter { s ->
-            s.genres.any { it.equals("Comedy", true) || it.equals("Animation", true) } && (s.rating ?: 0.0) >= 7.2
-        }.sortedByDescending { it.rating ?: 0.0 }.take(18)
+        val comfortComedy = pickUniqueShows(
+            shows.filter { s ->
+                s.genres.any { it.equals("Comedy", true) || it.equals("Animation", true) } && (s.rating ?: 0.0) in 7.0..9.5 && s.hasPoster
+            }.sortedByDescending { showScore(it) },
+            18,
+        )
         if (comfortComedy.size >= 4) {
             out += TvBrowseShelf("comfort-tv", "Comfort & Comedy Binges", "Easy-watching laughs", comfortComedy.map { toCard("comf", it) })
         }
 
-        val mindBending = shows.filter { s ->
-            s.genres.any { it.contains("Sci-Fi", true) || it.equals("Mystery", true) || it.equals("Crime", true) || it.equals("Drama", true) } &&
-                (s.rating ?: 0.0) >= 7.6
-        }.sortedByDescending { it.rating ?: 0.0 }.take(18)
+        val mindBending = pickUniqueShows(
+            shows.filter { s ->
+                s.genres.any { it.contains("Sci-Fi", true) || it.equals("Mystery", true) || it.equals("Crime", true) || it.equals("Drama", true) } &&
+                    (s.rating ?: 0.0) in 7.2..9.5 && s.hasPoster
+            }.sortedByDescending { showScore(it) },
+            18,
+        )
         if (mindBending.size >= 4) {
             out += TvBrowseShelf("prestige-tv", "Prestige Drama & Sci-Fi", "Gripping storytelling", mindBending.map { toCard("prest", it) })
         }
@@ -1253,20 +1352,20 @@ internal fun TvCinemaPillTab(
     var focused by remember { mutableStateOf(false) }
     val bg = when {
         focused -> Color.White
-        selected -> SoulSyncColors.Accent.copy(alpha = 0.34f)
-        else -> Color.Black.copy(alpha = 0.30f)
+        selected -> Color.White.copy(alpha = 0.20f)
+        else -> Color.Black.copy(alpha = 0.34f)
     }
     val fg = if (focused) Color(0xFF0B0D14) else Color.White
     val borderColor = when {
         focused -> Color.White
-        selected -> SoulSyncColors.AccentLight.copy(alpha = 0.80f)
+        selected -> Color.White.copy(alpha = 0.72f)
         else -> Color.White.copy(alpha = 0.14f)
     }
     Box(
         modifier = Modifier
             .clip(CircleShape)
             .background(bg)
-            .border(1.dp, borderColor, CircleShape)
+            .border(if (selected || focused) 1.2.dp else 1.dp, borderColor, CircleShape)
             .onFocusChanged { focused = it.isFocused || it.hasFocus }
             .clickable(onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 6.dp),
