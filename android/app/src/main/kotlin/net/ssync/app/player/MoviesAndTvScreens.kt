@@ -144,6 +144,63 @@ fun MovieDetailScreen(
         api = api,
     )
 
+    if (LocalIsTv.current) {
+        TvCinemaMovieDetail(
+            movie = movie,
+            extras = extras,
+            inWatchlist = inWatchlist,
+            api = api,
+            coordinator = coordinator,
+            onPlay = {
+                coordinator.playVideo(
+                    ActivePlayable(
+                        itemType = "movie",
+                        itemId = movie.id.toString(),
+                        title = movie.title,
+                        subtitle = movie.year?.toString().orEmpty(),
+                        artworkUrl = api.artwork.moviePoster(movie.id),
+                        streamUrl = api.streamUrl("movie", movie.id.toString()),
+                        isVideo = true,
+                    ),
+                )
+            },
+            onToggleWatchlist = {
+                scope.launch {
+                    if (inWatchlist) api.removeFromWatchlist("movie", movie.id.toString())
+                    else api.addToWatchlist("movie", movie.id.toString())
+                    inWatchlist = !inWatchlist
+                }
+            },
+            onStartWatchParty = {
+                onNavigate(
+                    PlayerDestination.StartWatchParty(
+                        itemType = "movie",
+                        itemId = movie.id.toString(),
+                        title = movie.title,
+                        artwork = api.artwork.moviePoster(movie.id),
+                        backdrop = api.artwork.movieBackdrop(movie.id),
+                    ),
+                )
+            },
+            onReportIssue = {
+                issueTarget = ReportIssueTarget(
+                    entityType = "movie",
+                    entityId = movie.id,
+                    title = movie.title,
+                )
+            },
+            onNavigate = onNavigate,
+            onRequestUnowned = { extra ->
+                pendingRequest = UnownedTitleTarget(
+                    kind = "movie",
+                    tmdbId = extra.tmdbId,
+                    title = extra.title,
+                    year = extra.yearText,
+                    posterUrl = api.artwork.resolve(extra.poster),
+                )
+            },
+        )
+    } else {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(bottom = 24.dp),
@@ -347,6 +404,7 @@ fun MovieDetailScreen(
                 },
             )
         }
+    }
     }
 
     if (pendingRequest != null) {
@@ -1276,6 +1334,53 @@ fun ShowDetailScreen(
         }
     }
 
+    if (isTv) {
+        TvCinemaShowDetail(
+            show = show,
+            extras = extras,
+            inWatchlist = inWatchlist,
+            initialSeason = initialSeason,
+            api = api,
+            coordinator = coordinator,
+            onPlayEpisode = { ep, sNum -> playEpisode(sNum, ep) },
+            onOpenEpisodeDetail = { epId -> onNavigate(PlayerDestination.EpisodeDetail(show.id, epId)) },
+            onToggleWatchlist = {
+                scope.launch {
+                    if (inWatchlist) api.removeFromWatchlist("show", show.id.toString())
+                    else api.addToWatchlist("show", show.id.toString())
+                    inWatchlist = !inWatchlist
+                }
+            },
+            onStartWatchParty = {
+                onNavigate(
+                    PlayerDestination.StartWatchParty(
+                        itemType = "show",
+                        itemId = show.id.toString(),
+                        title = show.title,
+                        artwork = api.artwork.showPoster(show.id),
+                        backdrop = api.artwork.showBackdrop(show.id),
+                    ),
+                )
+            },
+            onReportIssue = {
+                issueTarget = ReportIssueTarget(
+                    entityType = "show",
+                    entityId = show.id,
+                    title = show.title,
+                )
+            },
+            onNavigate = onNavigate,
+            onRequestUnowned = { extra ->
+                pendingRequest = UnownedTitleTarget(
+                    kind = "show",
+                    tmdbId = extra.tmdbId,
+                    title = extra.title,
+                    year = extra.yearText,
+                    posterUrl = api.artwork.resolve(extra.poster),
+                )
+            },
+        )
+    } else {
     LazyColumn(
         state = showListState,
         modifier = Modifier.fillMaxSize(),
@@ -1752,6 +1857,7 @@ fun ShowDetailScreen(
                 },
             )
         }
+    }
     }
 
     if (pendingRequest != null) {

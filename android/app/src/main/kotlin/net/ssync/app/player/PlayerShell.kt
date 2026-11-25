@@ -438,7 +438,14 @@ fun PlayerShell(
                 .background(SoulSyncColors.BgPrimary),
         ) {
             val usePermanentSidebar = maxWidth >= 700.dp
-            val tvIsSpotlightHome = isTv && (current is PlayerDestination.Home || current is PlayerDestination.Calendar)
+            val tvIsSpotlightHome = isTv && (
+                current is PlayerDestination.Home ||
+                    current is PlayerDestination.Calendar ||
+                    current is PlayerDestination.Movies ||
+                    current is PlayerDestination.Tv ||
+                    current is PlayerDestination.MovieDetail ||
+                    current is PlayerDestination.ShowDetail
+                )
             val tvSidebarExpanded = isTv && (sidebarHasFocus || tvSidebarForcedOpen)
             val tvShowSidebarRail = isTv && (!tvSidebarHidden || tvSidebarExpanded)
             val tvContentStartPadding by animateDpAsState(
@@ -1836,10 +1843,10 @@ private fun PlayerContent(
         PlayerDestination.Calendar -> CalendarScreen(api, onNavigate, onDeviceRevoked, coordinator = coordinator)
         PlayerDestination.Downloads -> DownloadsScreen(api, coordinator)
         PlayerDestination.AdminUsers -> AdminUsersScreen(api, coordinator, onDeviceRevoked)
-        PlayerDestination.Movies -> MoviesScreen(api, { onNavigate(PlayerDestination.MovieDetail(it)) }, onDeviceRevoked)
+        PlayerDestination.Movies -> MoviesScreen(api, { onNavigate(PlayerDestination.MovieDetail(it)) }, onDeviceRevoked, coordinator = coordinator, onNavigate = onNavigate)
         is PlayerDestination.MovieDetail -> MovieDetailScreen(current.movieId, api, coordinator, onNavigate, onDeviceRevoked)
         is PlayerDestination.CollectionDetail -> CollectionDetailScreen(current.collection, api, onNavigate, onDeviceRevoked)
-        PlayerDestination.Tv -> TvScreen(api, { onNavigate(PlayerDestination.ShowDetail(it)) }, onDeviceRevoked)
+        PlayerDestination.Tv -> TvScreen(api, { onNavigate(PlayerDestination.ShowDetail(it)) }, onDeviceRevoked, coordinator = coordinator, onNavigate = onNavigate)
         is PlayerDestination.ShowDetail -> ShowDetailScreen(
             showId = current.showId,
             api = api,

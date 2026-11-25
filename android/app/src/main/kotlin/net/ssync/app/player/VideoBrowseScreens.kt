@@ -77,6 +77,8 @@ fun MoviesScreen(
     api: PlayerApiClient,
     onMovieClick: (Int) -> Unit,
     onDeviceRevoked: () -> Unit,
+    coordinator: PlaybackCoordinator? = null,
+    onNavigate: ((PlayerDestination) -> Unit)? = null,
 ) {
     var movies by remember { mutableStateOf<List<CatalogMovie>>(emptyList()) }
     var studioCollections by remember { mutableStateOf<List<net.ssync.player.StudioCollection>>(emptyList()) }
@@ -108,6 +110,17 @@ fun MoviesScreen(
     }
     if (movies.isEmpty()) {
         EmptyBox("No movies in your SoulSync library yet.")
+        return
+    }
+
+    if (LocalIsTv.current && coordinator != null && onNavigate != null) {
+        TvCinemaMoviesHub(
+            api = api,
+            coordinator = coordinator,
+            movies = movies,
+            studioCollections = studioCollections,
+            onNavigate = onNavigate,
+        )
         return
     }
 
@@ -370,9 +383,12 @@ fun TvScreen(
     api: PlayerApiClient,
     onShowClick: (Int) -> Unit,
     onDeviceRevoked: () -> Unit,
+    coordinator: PlaybackCoordinator? = null,
+    onNavigate: ((PlayerDestination) -> Unit)? = null,
 ) {
     var shows by remember { mutableStateOf<List<CatalogShow>>(emptyList()) }
     var recentEpisodes by remember { mutableStateOf<List<CatalogRecentEpisode>>(emptyList()) }
+    var tvStudioCollections by remember { mutableStateOf<List<net.ssync.player.StudioCollection>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
     var tab by remember { mutableStateOf(VideoBrowseTab.FOR_YOU) }
     var sort by remember { mutableStateOf(VideoSort.ADDED) }
@@ -391,6 +407,9 @@ fun TvScreen(
             MusicApiResult.DeviceRevoked -> onDeviceRevoked()
             is MusicApiResult.Error -> Unit
         }
+        (api.fetchCollections() as? MusicApiResult.Success)?.let {
+            tvStudioCollections = it.data.filter { c -> c.mediaType != "movie" }
+        }
         isLoading = false
     }
 
@@ -400,6 +419,18 @@ fun TvScreen(
     }
     if (shows.isEmpty()) {
         EmptyBox("No TV shows in your SoulSync library yet.")
+        return
+    }
+
+    if (LocalIsTv.current && coordinator != null && onNavigate != null) {
+        TvCinemaTvHub(
+            api = api,
+            coordinator = coordinator,
+            shows = shows,
+            recentEpisodes = recentEpisodes,
+            studioCollections = tvStudioCollections,
+            onNavigate = onNavigate,
+        )
         return
     }
 
