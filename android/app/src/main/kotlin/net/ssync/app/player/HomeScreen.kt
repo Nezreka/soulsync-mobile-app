@@ -181,6 +181,7 @@ fun HomeScreen(
     val layoutIsTv = LocalIsTv.current
     val layoutDevice = remember { PlayerDevicePrefs.layoutDeviceId(layoutContext, layoutIsTv) }
     var layoutCatalog by remember(api.baseUrl) { mutableStateOf(LayoutCatalog()) }
+    var moreLikeRails by remember(api.baseUrl) { mutableStateOf<List<net.ssync.player.ExtraRail>>(emptyList()) }
 
     /**
      * this screen's Home rows. the first time an install asks, a layout saved
@@ -492,6 +493,27 @@ fun HomeScreen(
 
     val moviesById = remember(catalog.movies) { catalog.movies.associateBy { it.id } }
     val showsById = remember(catalog.shows) { catalog.shows.associateBy { it.id } }
+    // the rails of "because you have x": fetched once the row is on, narrowed to what is owned
+    val wantsBecause = homeLayout.rows.any { it.on && it.id == "because" }
+    LaunchedEffect(api.baseUrl, wantsBecause) {
+        if (wantsBecause && moreLikeRails.isEmpty()) {
+            (api.fetchDiscoverMoreLike() as? MusicApiResult.Success)?.let { moreLikeRails = it.data }
+        }
+    }
+    val becauseRails: List<Pair<String, List<Pair<String, Int>>>> = remember(moreLikeRails, catalog.movies, catalog.shows) {
+        val movieByTmdb = catalog.movies.mapNotNull { m -> m.tmdbId?.let { it to m.id } }.toMap()
+        val showByTmdb = catalog.shows.mapNotNull { sh -> sh.tmdbId?.let { it to sh.id } }.toMap()
+        moreLikeRails.map { rail ->
+            val cards = rail.items.mapNotNull { t ->
+                when (t.kind) {
+                    "movie" -> movieByTmdb[t.tmdbId]?.let { "movie" to it }
+                    "show" -> showByTmdb[t.tmdbId]?.let { "show" to it }
+                    else -> null
+                }
+            }.distinct()
+            rail.title.replaceFirst(Regex("^More like "), "Because you have ") to cards
+        }.filter { it.second.size >= 4 }.take(2)
+    }
     val sortedMovies = remember(catalog.movies) { catalog.movies.sortedByDescending { it.addedAt.orEmpty() } }
     val sortedShows = remember(catalog.shows) { catalog.shows.sortedByDescending { it.addedAt.orEmpty() } }
 
@@ -1024,6 +1046,37 @@ fun HomeScreen(
                                     width = cardWidth,
                                     onClick = { onNavigate(PlayerDestination.MovieDetail(m.id)) },
                                 )
+                            }
+                        }
+                    }
+                }
+                // "because you have x": tmdb's picks for a title you own, only the ones you also
+                // own, at most two rails of four or more (the web player's rule, row for row)
+                row.id == "because" -> {
+                    becauseRails.forEachIndexed { i, (title, cards) ->
+                        item(key = "row-because-$i") {
+                            MediaRail(title = title) {
+                                items(cards, key = { "because-$i-${it.first}-${it.second}" }) { (kind, id) ->
+                                    if (kind == "movie") {
+                                        val m = moviesById[id] ?: return@items
+                                        PosterCard(
+                                            title = m.title,
+                                            subtitle = m.year?.toString(),
+                                            artworkUrl = api.artwork.moviePoster(m.id),
+                                            width = cardWidth,
+                                            onClick = { onNavigate(PlayerDestination.MovieDetail(m.id)) },
+                                        )
+                                    } else {
+                                        val sh = showsById[id] ?: return@items
+                                        PosterCard(
+                                            title = sh.title,
+                                            subtitle = "${sh.episodeCount} episodes",
+                                            artworkUrl = api.artwork.showPoster(sh.id),
+                                            width = cardWidth,
+                                            onClick = { onNavigate(PlayerDestination.ShowDetail(sh.id)) },
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
