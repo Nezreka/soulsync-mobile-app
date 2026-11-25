@@ -326,24 +326,38 @@ fun PlayerShell(
         }
     }
 
+    var showExitConfirm by remember { mutableStateOf(false) }
+    val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
+    val activityContext = androidx.compose.ui.platform.LocalContext.current
+
+    // Guarantee TV sidebar collapses immediately whenever destination changes
+    LaunchedEffect(current) {
+        if (isTv) {
+            tvSidebarForcedOpen = false
+            sidebarHasFocus = false
+        }
+    }
+
     BackHandler(
-        enabled = drawerState.isOpen ||
+        enabled = showExitConfirm ||
+            drawerState.isOpen ||
             (coordinator.showVideoOverlay && !isTv) ||
             coordinator.showAudioSheet ||
-            tvSidebarForcedOpen ||
+            (isTv && (sidebarHasFocus || tvSidebarForcedOpen)) ||
             backStack.size > 1 ||
-            (isTv && !sidebarHasFocus && !coordinator.showVideoOverlay),
+            (isTv && !coordinator.showVideoOverlay),
     ) {
         when {
+            showExitConfirm -> showExitConfirm = false
             drawerState.isOpen -> scope.launch { drawerState.close() }
             coordinator.showVideoOverlay && !isTv -> coordinator.minimizeVideo(coordinator.positionMs, coordinator.durationMs)
             coordinator.showAudioSheet -> coordinator.showAudioSheet = false
-            tvSidebarForcedOpen && sidebarHasFocus -> {
-                tvSidebarForcedOpen = false
-                runCatching { contentFocusRequester.requestFocus() }
+            isTv && (sidebarHasFocus || tvSidebarForcedOpen) -> {
+                // Pressing Back while on the TV sidebar prompts to verify exiting the app
+                showExitConfirm = true
             }
             backStack.size > 1 -> popBack()
-            isTv && !sidebarHasFocus -> {
+            isTv -> {
                 // Standard Android TV root Back: focus & glide open the navigation sidebar
                 tvSidebarForcedOpen = true
                 runCatching { sidebarFocusRequester.requestFocus() }
@@ -608,6 +622,8 @@ fun PlayerShell(
                                     avatarUrl = activeAvatarUrl ?: api.artwork.profileAvatar(currentRecord.profileId),
                                     onProfileClick = {
                                         tvSidebarForcedOpen = false
+                                        sidebarHasFocus = false
+                                        focusManager.clearFocus(force = true)
                                         showProfileSheet = true
                                     },
                                     firstItemFocusRequester = sidebarFocusRequester,
@@ -617,17 +633,25 @@ fun PlayerShell(
                                     },
                                     onNavigate = { dest ->
                                         tvSidebarForcedOpen = false
+                                        sidebarHasFocus = false
+                                        focusManager.clearFocus(force = true)
                                         navigateTo(dest, clearToRoot = true)
                                         scope.launch {
-                                            delay(60L)
+                                            delay(90L)
                                             runCatching { contentFocusRequester.requestFocus() }
+                                            delay(200L)
+                                            if (!sidebarHasFocus) {
+                                                runCatching { contentFocusRequester.requestFocus() }
+                                            }
                                         }
                                     },
                                     onToggleCollapse = {
                                         tvSidebarHidden = !tvSidebarHidden
                                         tvSidebarForcedOpen = false
+                                        sidebarHasFocus = false
+                                        focusManager.clearFocus(force = true)
                                         scope.launch {
-                                            delay(40L)
+                                            delay(60L)
                                             runCatching { contentFocusRequester.requestFocus() }
                                         }
                                     },
@@ -682,6 +706,16 @@ fun PlayerShell(
                         }
                     },
                     content = mainScaffold,
+                )
+            }
+
+            if (showExitConfirm) {
+                TvCinemaExitConfirmDialog(
+                    onStay = { showExitConfirm = false },
+                    onExit = {
+                        showExitConfirm = false
+                        (activityContext as? android.app.Activity)?.finish()
+                    },
                 )
             }
 
@@ -1101,20 +1135,32 @@ private fun ProfileMenuSheet(
 
     AdaptiveTvSheet(
         onDismissRequest = onDismiss,
-        containerColor = SoulSyncColors.Surface,
-        contentColor = SoulSyncColors.TextPrimary,
+        containerColor = Color(0xF60C101E),
+        contentColor = Color.White,
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp)
-                .padding(bottom = 28.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+                .background(
+                    Brush.radialGradient(
+                        listOf(SoulSyncColors.Accent.copy(alpha = 0.14f), Color.Transparent),
+                        radius = 650f,
+                    ),
+                )
+                .padding(horizontal = 24.dp)
+                .padding(top = 6.dp, bottom = 28.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            // Current profile header
+            // AAA Cinema Profile Hero Header
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                horizontalArrangement = Arrangement.spacedBy(14.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(Color.White.copy(alpha = 0.06f))
+                    .border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(18.dp))
+                    .padding(14.dp),
             ) {
                 val currentProfileAvatar = activeAvatarUrl
                     ?: profiles
@@ -1122,23 +1168,55 @@ private fun ProfileMenuSheet(
                         ?.avatarUrl
                         ?.let { api.artwork.resolve(it) }
                     ?: api.artwork.profileAvatar(record.profileId)
-                ProfileAvatarCircle(
-                    avatarUrl = currentProfileAvatar,
-                    name = record.profileName,
-                    size = 44.dp,
-                    fontSize = 18.sp,
-                )
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = record.profileName,
-                        color = Color.White,
-                        fontSize = 17.sp,
-                        fontWeight = FontWeight.Bold,
+                Box(
+                    modifier = Modifier
+                        .size(54.dp)
+                        .clip(CircleShape)
+                        .border(2.dp, Color.White.copy(alpha = 0.65f), CircleShape)
+                        .padding(2.dp),
+                ) {
+                    ProfileAvatarCircle(
+                        avatarUrl = currentProfileAvatar,
+                        name = record.profileName,
+                        size = 50.dp,
+                        fontSize = 19.sp,
                     )
+                }
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text(
+                            text = record.profileName,
+                            color = Color.White,
+                            fontSize = 19.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Box(
+                            modifier = Modifier
+                                .clip(CircleShape)
+                                .background(Color(0x2E34D399))
+                                .border(0.75.dp, Color(0x6634D399), CircleShape)
+                                .padding(horizontal = 7.dp, vertical = 2.dp),
+                        ) {
+                            Text(
+                                text = "ACTIVE",
+                                color = Color(0xFF6EE7B7),
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                letterSpacing = 0.7.sp,
+                            )
+                        }
+                    }
                     Text(
                         text = "${record.serverName ?: "SoulSync"} · ${record.formattedFingerprint}",
-                        color = SoulSyncColors.TextSecondary,
+                        color = Color.White.copy(alpha = 0.58f),
                         fontSize = 12.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
                 }
             }
@@ -1146,25 +1224,37 @@ private fun ProfileMenuSheet(
             // Switch profile section
             val others = profiles.filter { it.id.toString() != record.profileId }
             if (others.isNotEmpty()) {
-                HorizontalDivider(color = SoulSyncColors.Line)
                 Text(
                     text = "SWITCH PROFILE",
-                    color = SoulSyncColors.TextSecondary,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 0.8.sp,
+                    color = Color.White.copy(alpha = 0.52f),
+                    fontSize = 10.5.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    letterSpacing = 1.1.sp,
                 )
                 others.forEach { p ->
+                    var pFocused by remember(p.id) { mutableStateOf(false) }
+                    val isPending = pendingAuthProfile?.id == p.id
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(Color.White.copy(alpha = 0.04f))
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(
+                                when {
+                                    pFocused -> Color.White
+                                    isPending -> Color.White.copy(alpha = 0.14f)
+                                    else -> Color.White.copy(alpha = 0.05f)
+                                },
+                            )
                             .border(
                                 1.dp,
-                                if (pendingAuthProfile?.id == p.id) SoulSyncColors.Accent else SoulSyncColors.Line,
-                                RoundedCornerShape(12.dp),
+                                when {
+                                    pFocused -> Color.White
+                                    isPending -> Color.White.copy(alpha = 0.55f)
+                                    else -> Color.White.copy(alpha = 0.10f)
+                                },
+                                RoundedCornerShape(14.dp),
                             )
+                            .onFocusChanged { pFocused = it.isFocused || it.hasFocus }
                             .clickable(enabled = !switching) {
                                 switchError = null
                                 if (p.needs != null) {
@@ -1181,23 +1271,23 @@ private fun ProfileMenuSheet(
                         ProfileAvatarCircle(
                             avatarUrl = api.artwork.resolve(p.avatarUrl) ?: api.artwork.profileAvatar(p.id.toString()),
                             name = p.name,
-                            size = 34.dp,
-                            fontSize = 14.sp,
-                            containerColor = SoulSyncColors.Accent.copy(alpha = 0.25f),
-                            initialColor = SoulSyncColors.AccentLight,
+                            size = 38.dp,
+                            fontSize = 15.sp,
+                            containerColor = Color.White.copy(alpha = 0.14f),
+                            initialColor = Color.White,
                         )
                         Text(
                             text = p.name,
-                            color = Color.White,
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.SemiBold,
+                            color = if (pFocused) Color(0xFF0A0C14) else Color.White,
+                            fontSize = 15.5.sp,
+                            fontWeight = FontWeight.Bold,
                             modifier = Modifier.weight(1f),
                         )
                         if (p.needs != null) {
                             Icon(
                                 imageVector = Icons.Default.Lock,
                                 contentDescription = "Requires ${p.needs}",
-                                tint = SoulSyncColors.TextSecondary,
+                                tint = if (pFocused) Color(0xFF475569) else Color.White.copy(alpha = 0.58f),
                                 modifier = Modifier.size(16.dp),
                             )
                         }
@@ -1210,23 +1300,24 @@ private fun ProfileMenuSheet(
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(Color.White.copy(alpha = 0.05f))
-                            .border(1.dp, SoulSyncColors.Accent.copy(alpha = 0.5f), RoundedCornerShape(12.dp))
-                            .padding(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(Color.White.copy(alpha = 0.06f))
+                            .border(1.dp, Color.White.copy(alpha = 0.28f), RoundedCornerShape(16.dp))
+                            .padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
                         Text(
                             text = "Enter ${if (isPassword) "password" else "PIN"} for ${authTarget.name}",
                             color = Color.White,
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 13.5.sp,
+                            fontWeight = FontWeight.Bold,
                         )
                         OutlinedTextField(
                             value = credentialInput,
                             onValueChange = { credentialInput = it },
                             placeholder = { Text(if (isPassword) "Password" else "PIN") },
                             singleLine = true,
+                            shape = RoundedCornerShape(12.dp),
                             modifier = Modifier.fillMaxWidth(),
                         )
                         Button(
@@ -1235,13 +1326,14 @@ private fun ProfileMenuSheet(
                                 else submitSwitch(authTarget, pin = credentialInput)
                             },
                             enabled = !switching && credentialInput.isNotBlank(),
-                            modifier = Modifier.fillMaxWidth().dpadFocusable(androidx.compose.foundation.shape.RoundedCornerShape(999.dp)),
+                            shape = CircleShape,
+                            modifier = Modifier.fillMaxWidth().height(46.dp),
                             colors = ButtonDefaults.buttonColors(
-                                containerColor = SoulSyncColors.Accent,
-                                contentColor = SoulSyncColors.OnAccent,
+                                containerColor = Color.White,
+                                contentColor = Color(0xFF0A0C14),
                             ),
                         ) {
-                            Text(if (switching) "Switching…" else "Switch to ${authTarget.name}", fontWeight = FontWeight.SemiBold)
+                            Text(if (switching) "Switching…" else "Switch to ${authTarget.name}", fontWeight = FontWeight.ExtraBold)
                         }
                     }
                 }
@@ -1252,12 +1344,12 @@ private fun ProfileMenuSheet(
             } else if (!loading && profiles.size <= 1) {
                 Text(
                     text = "Signed in as the only profile available on this device.",
-                    color = SoulSyncColors.TextSecondary,
+                    color = Color.White.copy(alpha = 0.54f),
                     fontSize = 12.sp,
                 )
             }
 
-            HorizontalDivider(color = SoulSyncColors.Line)
+            HorizontalDivider(color = Color.White.copy(alpha = 0.10f))
 
             ProfileSheetAction(
                 icon = Icons.Default.Tune,
@@ -1274,20 +1366,124 @@ private fun ProfileMenuSheet(
 }
 
 @Composable
+private fun TvCinemaExitConfirmDialog(
+    onStay: () -> Unit,
+    onExit: () -> Unit,
+) {
+    val stayFocus = remember { FocusRequester() }
+    LaunchedEffect(Unit) {
+        delay(60L)
+        runCatching { stayFocus.requestFocus() }
+    }
+    androidx.compose.ui.window.Dialog(onDismissRequest = onStay) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(24.dp))
+                .background(
+                    Brush.verticalGradient(listOf(Color(0xFA141828), Color(0xFA0B0E18))),
+                )
+                .border(1.dp, Color.White.copy(alpha = 0.16f), RoundedCornerShape(24.dp))
+                .padding(horizontal = 28.dp, vertical = 26.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            SoulSyncAnimatedBrandMark(size = 46.dp)
+            Text(
+                text = "Exit SoulSync?",
+                color = Color.White,
+                fontSize = 22.sp,
+                fontWeight = FontWeight.ExtraBold,
+            )
+            Text(
+                text = "Are you sure you want to close the app?",
+                color = Color.White.copy(alpha = 0.68f),
+                fontSize = 13.5.sp,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                var stayFocused by remember { mutableStateOf(false) }
+                var exitFocused by remember { mutableStateOf(false) }
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(CircleShape)
+                        .background(if (stayFocused) Color.White else Color.White.copy(alpha = 0.14f))
+                        .border(1.2.dp, if (stayFocused) Color.White else Color.White.copy(alpha = 0.28f), CircleShape)
+                        .focusRequester(stayFocus)
+                        .onFocusChanged { stayFocused = it.isFocused || it.hasFocus }
+                        .clickable(onClick = onStay)
+                        .padding(vertical = 12.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = "Stay",
+                        color = if (stayFocused) Color(0xFF0A0C14) else Color.White,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(CircleShape)
+                        .background(if (exitFocused) Color(0xFFEF4444) else Color(0x28EF4444))
+                        .border(1.2.dp, if (exitFocused) Color(0xFFFCA5A5) else Color(0x66EF4444), CircleShape)
+                        .onFocusChanged { exitFocused = it.isFocused || it.hasFocus }
+                        .clickable(onClick = onExit)
+                        .padding(vertical = 12.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = "Exit App",
+                        color = Color.White,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun ProfileSheetAction(icon: ImageVector, label: String, onClick: () -> Unit) {
+    var focused by remember { mutableStateOf(false) }
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .dpadFocusable(RoundedCornerShape(12.dp))
+            .clip(RoundedCornerShape(14.dp))
+            .background(if (focused) Color.White else Color.White.copy(alpha = 0.04f))
+            .border(1.dp, if (focused) Color.White else Color.White.copy(alpha = 0.08f), RoundedCornerShape(14.dp))
+            .onFocusChanged { focused = it.isFocused || it.hasFocus }
             .clickable(onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 12.dp),
+            .padding(horizontal = 14.dp, vertical = 13.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        Icon(icon, contentDescription = null, tint = SoulSyncColors.TextSoft, modifier = Modifier.size(20.dp))
-        Text(text = label, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-        Icon(Icons.Default.ChevronRight, contentDescription = null, tint = SoulSyncColors.TextSecondary, modifier = Modifier.size(18.dp))
+        Icon(
+            icon,
+            contentDescription = null,
+            tint = if (focused) Color(0xFF0A0C14) else Color.White.copy(alpha = 0.80f),
+            modifier = Modifier.size(20.dp),
+        )
+        Text(
+            text = label,
+            color = if (focused) Color(0xFF0A0C14) else Color.White,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.weight(1f),
+        )
+        Icon(
+            Icons.Default.ChevronRight,
+            contentDescription = null,
+            tint = if (focused) Color(0xFF475569) else Color.White.copy(alpha = 0.45f),
+            modifier = Modifier.size(18.dp),
+        )
     }
 }
 

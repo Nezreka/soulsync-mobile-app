@@ -207,21 +207,21 @@ private fun OnboardingStepIndicator(activeIndex: Int) {
                     .clip(RoundedCornerShape(999.dp))
                     .background(
                         when {
-                            isCurrent -> SoulSyncColors.Accent.copy(alpha = 0.24f)
-                            isDone -> Color.White.copy(alpha = 0.08f)
-                            else -> Color.Transparent
+                            isCurrent -> Color.White
+                            isDone -> Color.White.copy(alpha = 0.12f)
+                            else -> Color.White.copy(alpha = 0.04f)
                         },
                     )
                     .border(
                         1.dp,
                         when {
-                            isCurrent -> SoulSyncColors.AccentLight.copy(alpha = 0.7f)
-                            isDone -> Color.White.copy(alpha = 0.16f)
-                            else -> Color.White.copy(alpha = 0.08f)
+                            isCurrent -> Color.White
+                            isDone -> Color.White.copy(alpha = 0.24f)
+                            else -> Color.White.copy(alpha = 0.10f)
                         },
                         RoundedCornerShape(999.dp),
                     )
-                    .padding(horizontal = 10.dp, vertical = 4.dp),
+                    .padding(horizontal = 12.dp, vertical = 5.dp),
             ) {
                 Box(
                     modifier = Modifier
@@ -229,9 +229,9 @@ private fun OnboardingStepIndicator(activeIndex: Int) {
                         .clip(CircleShape)
                         .background(
                             when {
-                                isCurrent -> SoulSyncColors.AccentLight
+                                isCurrent -> Color(0xFF0A0C14)
                                 isDone -> Color(0xFF22C55E)
-                                else -> Color.White.copy(alpha = 0.14f)
+                                else -> Color.White.copy(alpha = 0.16f)
                             },
                         ),
                     contentAlignment = Alignment.Center,
@@ -246,7 +246,7 @@ private fun OnboardingStepIndicator(activeIndex: Int) {
                     } else {
                         Text(
                             text = "${idx + 1}",
-                            color = if (isCurrent) Color.Black else SoulSyncColors.TextSecondary,
+                            color = if (isCurrent) Color.White else SoulSyncColors.TextSecondary,
                             fontSize = 10.sp,
                             fontWeight = FontWeight.ExtraBold,
                         )
@@ -254,9 +254,9 @@ private fun OnboardingStepIndicator(activeIndex: Int) {
                 }
                 Text(
                     text = label,
-                    color = if (isCurrent) Color.White else SoulSyncColors.TextSecondary,
+                    color = if (isCurrent) Color(0xFF0A0C14) else Color.White.copy(alpha = if (isDone) 0.85f else 0.55f),
                     fontSize = 11.5.sp,
-                    fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Medium,
+                    fontWeight = if (isCurrent) FontWeight.ExtraBold else FontWeight.SemiBold,
                 )
             }
         }
@@ -426,10 +426,10 @@ private fun CodeEntryCard(
                 enabled = !state.isBusy && state.codeInput.isNotBlank(),
                 shape = RoundedCornerShape(999.dp),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = SoulSyncColors.Accent,
-                    contentColor = SoulSyncColors.OnAccent,
-                    disabledContainerColor = Color.White.copy(alpha = 0.1f),
-                    disabledContentColor = Color.White.copy(alpha = 0.35f),
+                    containerColor = Color.White,
+                    contentColor = Color(0xFF0A0C14),
+                    disabledContainerColor = Color.White.copy(alpha = 0.12f),
+                    disabledContentColor = Color.White.copy(alpha = 0.38f),
                 ),
                 modifier = Modifier
                     .fillMaxWidth()
@@ -439,11 +439,11 @@ private fun CodeEntryCard(
                 if (state.isBusy) {
                     CircularProgressIndicator(
                         modifier = Modifier.size(22.dp),
-                        color = SoulSyncColors.OnAccent,
+                        color = Color(0xFF0A0C14),
                         strokeWidth = 2.5.dp,
                     )
                 } else {
-                    Text("Continue", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                    Text("Continue", fontSize = 16.sp, fontWeight = FontWeight.ExtraBold)
                 }
             }
         }
