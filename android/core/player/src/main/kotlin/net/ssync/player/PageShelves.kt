@@ -36,6 +36,37 @@ object PageShelves {
             .sortedWith(compareByDescending<Map.Entry<String, Int>> { it.value }.thenBy { it.key })
             .take(n).map { it.key }
 
+    /** the YouTube page's rows that are cut from the videos themselves, with the
+     *  web player's numbers (webui/src/routes/player/youtube/index.tsx).
+     *  [nowMs] is the clock; null for a row that isn't one of these. */
+    fun youtube(rowId: String, videos: List<YtVideo>, nowMs: Long): Shelf<YtVideo>? {
+        val unique = videos.distinctBy { it.id }
+        fun length(v: YtVideo) = v.durationSeconds ?: 0
+        val picked = when (rowId) {
+            "this-week" -> "This week" to unique.filter { v ->
+                val at = publishedMs(v.publishedAt)
+                at != null && at >= nowMs - 7 * 86_400_000L
+            }
+            "quick" -> "Quick watches · under 10 minutes" to unique.filter { length(it) in 1..599 }
+            "sit-down" -> "Sit-down watches · 10 to 30 minutes" to unique.filter { length(it) in 600..1799 }
+            "long" -> "Long watches · 30 minutes or more" to unique.filter { length(it) >= 1800 }
+            "most-viewed" -> "Most viewed" to unique.filter { (it.views ?: 0) > 0 }.sortedByDescending { it.views ?: 0 }
+            else -> return null
+        }
+        return Shelf(rowId, picked.first, picked.second.take(SHELF_SIZE))
+    }
+
+    /** an upload date as the server sends it (a full timestamp or just the day) */
+    private fun publishedMs(text: String?): Long? {
+        val t = text?.trim().orEmpty()
+        if (t.length < 10) return null
+        return runCatching { java.time.Instant.parse(t).toEpochMilli() }.getOrNull()
+            ?: runCatching { java.time.OffsetDateTime.parse(t).toInstant().toEpochMilli() }.getOrNull()
+            ?: runCatching {
+                java.time.LocalDate.parse(t.take(10)).atStartOfDay(java.time.ZoneOffset.UTC).toInstant().toEpochMilli()
+            }.getOrNull()
+    }
+
     private fun genreOfRow(rowId: String, kind: String): String? =
         rowId.removePrefix("genre:$kind:").takeIf { rowId.startsWith("genre:$kind:") && it.isNotBlank() }
 

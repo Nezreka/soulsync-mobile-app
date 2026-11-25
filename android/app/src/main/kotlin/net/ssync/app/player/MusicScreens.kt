@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
@@ -128,6 +129,7 @@ fun MusicScreen(
     startOnPlaylists: Boolean = false,
 ) {
     val scope = rememberCoroutineScope()
+    val pageRows = rememberPageRows(api, "music")
     var tab by remember(startOnPlaylists) {
         mutableStateOf(if (startOnPlaylists) MusicSubTab.PLAYLISTS else MusicSubTab.FOR_YOU)
     }
@@ -821,10 +823,9 @@ fun MusicScreen(
                     statsAll.topAlbums.filter { it.id == null || it.id !in monthIds }.ifEmpty { statsAll.topAlbums }.take(18)
                 }
 
-                LazyColumn(
-                    contentPadding = PaddingValues(top = 8.dp, bottom = 40.dp),
-                    verticalArrangement = Arrangement.spacedBy(24.dp),
-                ) {
+                // each row of the page as its own piece, so the page's layout (the same one
+                // the web player's Music page draws from) decides which show and in what order
+                val recentRows: LazyListScope.() -> Unit = {
                     // 1. Recently Played (REAL listening history from /api/stats/recent + in-app resume!)
                     if (dedupedRecent.isNotEmpty() || recentMusic.isNotEmpty()) {
                         item(key = "music-recently-played") {
@@ -886,7 +887,8 @@ fun MusicScreen(
                             }
                         }
                     }
-
+                }
+                val topAlbumsRows: LazyListScope.() -> Unit = {
                     // 2. Most Played Last Month · Albums (REAL 30-day listening stats!)
                     if (topAlbumsMonth.isNotEmpty()) {
                         item(key = "music-top-albums-month") {
@@ -918,7 +920,8 @@ fun MusicScreen(
                             }
                         }
                     }
-
+                }
+                val topTracksRows: LazyListScope.() -> Unit = {
                     // 3. Heavy Rotation · Most Played Tracks (REAL 30-day top tracks with play counts!)
                     if (topTracksMonth.isNotEmpty()) {
                         item(key = "music-heavy-rotation-tracks") {
@@ -984,7 +987,8 @@ fun MusicScreen(
                             }
                         }
                     }
-
+                }
+                val recentAlbumsRows: LazyListScope.() -> Unit = {
                     // 4. Recently Added Albums
                     if (albums.isNotEmpty()) {
                         item(key = "music-recently-added") {
@@ -1018,7 +1022,8 @@ fun MusicScreen(
                             }
                         }
                     }
-
+                }
+                val moreByRows: LazyListScope.() -> Unit = {
                     // 5. More by [Top Listened Artists] (owned albums from artists you actually play!)
                     moreByArtistRails.forEach { (artistName, artistAlbums) ->
                         item(key = "music-more-by-$artistName") {
@@ -1039,7 +1044,8 @@ fun MusicScreen(
                             }
                         }
                     }
-
+                }
+                val albumsLikeRows: LazyListScope.() -> Unit = {
                     // 6. Albums Like [Top Artist] (from similar artists owned in your library!)
                     similarAlbumsRail?.let { (seedArtist, simAlbums) ->
                         item(key = "music-albums-like-$seedArtist") {
@@ -1060,7 +1066,8 @@ fun MusicScreen(
                             }
                         }
                     }
-
+                }
+                val genresRows: LazyListScope.() -> Unit = {
                     // 7. More in [Genres You've Been Listening To]
                     genreRails.forEach { (genreName, gAlbums) ->
                         item(key = "music-genre-$genreName") {
@@ -1081,7 +1088,8 @@ fun MusicScreen(
                             }
                         }
                     }
-
+                }
+                val eraRows: LazyListScope.() -> Unit = {
                     // 8. Top Albums of the [Decade]s
                     eraRail?.let { (eraTitle, eraAlbums) ->
                         item(key = "music-era-$eraTitle") {
@@ -1102,7 +1110,8 @@ fun MusicScreen(
                             }
                         }
                     }
-
+                }
+                val allTimeRows: LazyListScope.() -> Unit = {
                     // 9. Most Played Albums · All Time
                     if (topAlbumsAllTime.isNotEmpty()) {
                         item(key = "music-most-played-alltime") {
@@ -1134,7 +1143,8 @@ fun MusicScreen(
                             }
                         }
                     }
-
+                }
+                val stationsRows: LazyListScope.() -> Unit = {
                     // 10. Stations & Artist Mixes (Redesigned Cinema wide radio cards!)
                     item(key = "music-stations-mixes") {
                         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -1209,7 +1219,8 @@ fun MusicScreen(
                             }
                         }
                     }
-
+                }
+                val discoveryRows: LazyListScope.() -> Unit = {
                     // 11. Made for you (Discover mixes)
                     if (discoverPlaylists.isNotEmpty()) {
                         item(key = "music-discover-playlists") {
@@ -1250,7 +1261,8 @@ fun MusicScreen(
                             }
                         }
                     }
-
+                }
+                val playlistsRows: LazyListScope.() -> Unit = {
                     // 12. Your playlists
                     if (playlists.isNotEmpty()) {
                         item(key = "music-your-playlists") {
@@ -1276,6 +1288,33 @@ fun MusicScreen(
                         }
                     }
                 }
+                val sections: Map<String, List<LazyListScope.() -> Unit>> = mapOf(
+                    "recently-played" to listOf(recentRows),
+                    "stations" to listOf(stationsRows),
+                    "discovery" to listOf(discoveryRows),
+                    "heavy-rotation" to listOf(topTracksRows),
+                    "recent-albums" to listOf(recentAlbumsRows),
+                    "artists" to listOf(moreByRows, albumsLikeRows),
+                    "playlists" to listOf(playlistsRows),
+                    "top-albums" to listOf(topAlbumsRows),
+                    "top-tracks" to listOf(topTracksRows),
+                    "all-time-artists" to listOf(allTimeRows),
+                )
+                LazyColumn(
+                    contentPadding = PaddingValues(top = 8.dp, bottom = 40.dp),
+                    verticalArrangement = Arrangement.spacedBy(24.dp),
+                ) {
+                    // a piece two rows share (heavy rotation and most played tracks) draws once
+                    val drawn = mutableSetOf<LazyListScope.() -> Unit>()
+                    pageRows.rows.forEach { row ->
+                        sections[row.id]?.forEach { piece -> if (drawn.add(piece)) piece() }
+                    }
+                    // from your library, after the rows you arranged
+                    genresRows()
+                    eraRows()
+                    item(key = "customize") { CustomizePageButton { pageRows.editing = true } }
+                }
+                PageRowsEditor(pageRows, "Music")
             }
         }
         if (playlistPickerSong != null) {

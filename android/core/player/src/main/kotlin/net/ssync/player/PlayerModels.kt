@@ -845,6 +845,7 @@ data class YtVideo(
     @SerialName("published_at")
     val publishedAt: String? = null,
     val downloaded: Boolean = false,
+    val views: Long? = null,
 )
 
 @Serializable

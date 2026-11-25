@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -51,6 +52,7 @@ import androidx.compose.ui.unit.sp
 import net.ssync.pairing.theme.SoulSyncColors
 import net.ssync.pairing.ui.LocalIsTv
 import net.ssync.pairing.ui.dpadFocusable
+import net.ssync.player.PageShelves
 import net.ssync.player.MusicApiResult
 import net.ssync.player.OwnedBook
 import net.ssync.player.PlayerApiClient
@@ -80,6 +82,7 @@ fun YouTubeScreen(
     var latest by remember(api.baseUrl) { mutableStateOf(if (warmHit) HomeWarmCache.ytLatest else emptyList()) }
     var isLoading by remember(api.baseUrl) { mutableStateOf(!warmHit) }
     var tab by remember { mutableStateOf(YtTab.FOR_YOU) }
+    val pageRows = rememberPageRows(api, "youtube")
 
     LaunchedEffect(api) {
         if (!warmHit) isLoading = true
@@ -154,18 +157,9 @@ fun YouTubeScreen(
                         if (chVids.isNotEmpty()) ch to chVids else null
                     }.take(10)
                 }
-                LazyColumn(contentPadding = PaddingValues(bottom = 28.dp), modifier = Modifier.fillMaxSize()) {
-                    if (lead != null) {
-                        item(key = "yt-lead") {
-                            HeroSpotlight(
-                                title = lead.title,
-                                subtitle = lead.channelTitle.orEmpty(),
-                                backdropUrl = thumbOf(lead),
-                                eyebrow = "Latest Video",
-                                onPlay = { playYt(lead) },
-                            )
-                        }
-                    }
+                // each row as its own piece: the page's layout (the web player's YouTube page
+                // draws from the same one) decides which show and in what order
+                val downloadedRows: LazyListScope.() -> Unit = {
                     if (downloads.isNotEmpty()) {
                         item(key = "yt-downloads") {
                             MediaRail(
@@ -184,6 +178,8 @@ fun YouTubeScreen(
                             }
                         }
                     }
+                }
+                val latestRows: LazyListScope.() -> Unit = {
                     if (latest.isNotEmpty()) {
                         item(key = "yt-latest") {
                             MediaRail(title = "New From Followed Channels") {
@@ -207,6 +203,8 @@ fun YouTubeScreen(
                             }
                         }
                     }
+                }
+                val channelsRows: LazyListScope.() -> Unit = {
                     if (channels.isNotEmpty()) {
                         item(key = "yt-ch") {
                             MediaRail(
@@ -226,6 +224,8 @@ fun YouTubeScreen(
                             }
                         }
                     }
+                }
+                val byChannelRows: LazyListScope.() -> Unit = {
                     byChannel.forEach { (ch, chVids) ->
                         item(key = "yt-ch-${ch.id}") {
                             MediaRail(
@@ -245,6 +245,49 @@ fun YouTubeScreen(
                         }
                     }
                 }
+                val nowMs = remember { System.currentTimeMillis() }
+                val sections: Map<String, LazyListScope.() -> Unit> = mapOf(
+                    "downloaded" to downloadedRows, "latest" to latestRows,
+                    "channels" to channelsRows, "by-channel" to byChannelRows,
+                )
+                LazyColumn(contentPadding = PaddingValues(bottom = 28.dp), modifier = Modifier.fillMaxSize()) {
+                    if (lead != null) {
+                        item(key = "yt-lead") {
+                            HeroSpotlight(
+                                title = lead.title,
+                                subtitle = lead.channelTitle.orEmpty(),
+                                backdropUrl = thumbOf(lead),
+                                eyebrow = "Latest Video",
+                                onPlay = { playYt(lead) },
+                            )
+                        }
+                    }
+                    pageRows.rows.forEach { row ->
+                        val piece = sections[row.id]
+                        if (piece != null) {
+                            piece()
+                        } else {
+                            // the rows cut from the videos themselves: this week, by length, most viewed
+                            val shelf = PageShelves.youtube(row.id, videos, nowMs)
+                            if (shelf != null && shelf.items.isNotEmpty()) {
+                                item(key = "yt-${shelf.key}") {
+                                    MediaRail(title = shelf.title) {
+                                        items(shelf.items, key = { "${shelf.key}-${it.id}" }) { v ->
+                                            WideMediaCard(
+                                                title = v.title,
+                                                subtitle = v.channelTitle,
+                                                artworkUrl = thumbOf(v),
+                                                onClick = { playYt(v) },
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    item(key = "customize") { CustomizePageButton { pageRows.editing = true } }
+                }
+                PageRowsEditor(pageRows, "YouTube")
             }
 
             YtTab.DOWNLOADED -> {

@@ -127,4 +127,37 @@ class PageShelvesTest {
         assertEquals(setOf("movies", "tv", "music", "youtube"), PageShelves.DEFAULT_ROWS.keys)
         assertTrue(PageShelves.DEFAULT_ROWS.values.all { rows -> rows.isNotEmpty() && rows.all { it.on } })
     }
+
+    // the YouTube page's rows cut from the videos themselves
+
+    private fun yt(id: String, seconds: Int? = null, published: String? = null, views: Long? = null) =
+        YtVideo(id = id, title = "Video $id", durationSeconds = seconds, publishedAt = published, views = views)
+
+    private val now = java.time.Instant.parse("2026-11-25T12:00:00Z").toEpochMilli()
+
+    @Test
+    fun `youtube rows are cut by length with the web's numbers`() {
+        val videos = listOf(yt("a", 0), yt("b", 1), yt("c", 599), yt("d", 600), yt("e", 1799), yt("f", 1800), yt("g"))
+        assertEquals(listOf("b", "c"), PageShelves.youtube("quick", videos, now)!!.items.map { it.id })
+        assertEquals(listOf("d", "e"), PageShelves.youtube("sit-down", videos, now)!!.items.map { it.id })
+        assertEquals(listOf("f"), PageShelves.youtube("long", videos, now)!!.items.map { it.id })
+    }
+
+    @Test
+    fun `this week is the last seven days, whatever shape the date came in`() {
+        val videos = listOf(
+            yt("new", published = "2026-11-24T08:00:00Z"), yt("day", published = "2026-11-20"),
+            yt("offset", published = "2026-11-23T08:00:00+00:00"), yt("old", published = "2026-11-10T00:00:00Z"),
+            yt("none"), yt("junk", published = "yesterday"),
+        )
+        assertEquals(listOf("new", "day", "offset"), PageShelves.youtube("this-week", videos, now)!!.items.map { it.id })
+    }
+
+    @Test
+    fun `most viewed is biggest first, a video listed twice counts once, and other rows are not ours`() {
+        val videos = listOf(yt("a", views = 5), yt("b", views = 900), yt("c"), yt("a", views = 5), yt("d", views = 0))
+        assertEquals(listOf("b", "a"), PageShelves.youtube("most-viewed", videos, now)!!.items.map { it.id })
+        assertEquals(null, PageShelves.youtube("latest", videos, now))
+        assertTrue(PageShelves.youtube("long", emptyList(), now)!!.items.isEmpty())
+    }
 }
