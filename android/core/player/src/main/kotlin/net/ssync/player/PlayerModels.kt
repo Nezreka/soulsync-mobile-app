@@ -1827,6 +1827,45 @@ internal data class MusicChannelsEnvelope(val channels: List<MusicChannel> = emp
 @Serializable
 internal data class PlayerSettingsEnvelope(val server: ServerPrefs = ServerPrefs(), val settings: PlayerSettings = PlayerSettings())
 
+/**
+ * What an admin told this screen, carried back on the presence heartbeat's
+ * answer: stop the stream (with their words), or a message without stopping.
+ * Server Activity on SoulSync sends these, the way Plex shows a stopped stream.
+ */
+data class ServerOrder(
+    val stop: Boolean,
+    val header: String,
+    val text: String,
+)
+
+object ServerOrders {
+    private val _current = kotlinx.coroutines.flow.MutableStateFlow<ServerOrder?>(null)
+    val current: kotlinx.coroutines.flow.StateFlow<ServerOrder?> = _current
+
+    fun post(order: ServerOrder) { _current.value = order }
+    fun dismiss() { _current.value = null }
+
+    /** the beat's answer: {stop: {message}} or {message: {header, text}}; anything else is nothing */
+    fun parse(body: String): ServerOrder? = runCatching {
+        val root = kotlinx.serialization.json.Json.parseToJsonElement(body)
+            as? kotlinx.serialization.json.JsonObject ?: return null
+        fun str(o: kotlinx.serialization.json.JsonObject?, key: String): String =
+            (o?.get(key) as? kotlinx.serialization.json.JsonPrimitive)?.takeIf { it.isString }?.content.orEmpty()
+        val stop = root["stop"] as? kotlinx.serialization.json.JsonObject
+        if (stop != null) {
+            return ServerOrder(
+                stop = true,
+                header = "Stream stopped",
+                text = str(stop, "message").ifBlank { "The server administrator ended this stream." },
+            )
+        }
+        val msg = root["message"] as? kotlinx.serialization.json.JsonObject ?: return null
+        val text = str(msg, "text")
+        if (text.isBlank()) return null
+        ServerOrder(stop = false, header = str(msg, "header").ifBlank { "A message from the server" }, text = text)
+    }.getOrNull()
+}
+
 @Serializable
 internal data class PresenceHeartbeatRequest(
     val session: String,

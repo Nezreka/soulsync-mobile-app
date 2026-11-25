@@ -624,7 +624,12 @@ class PlayerApiClient(
             .url("$base/api/player/presence")
             .post(json.encodeToString(PresenceHeartbeatRequest.serializer(), payload).toRequestBody(JSON_MEDIA_TYPE))
             .build()
-        execute(req) { }
+        // the answer can carry an admin's order for this screen (stop, or a
+        // message): handed to the app through ServerOrders
+        execute(req) { body ->
+            ServerOrders.parse(body)?.let(ServerOrders::post)
+            Unit
+        }
     }
 
     suspend fun clearPresence(): MusicApiResult<Unit> = withContext(Dispatchers.IO) {

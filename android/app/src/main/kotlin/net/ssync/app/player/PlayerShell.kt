@@ -84,6 +84,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberDrawerState
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
@@ -884,6 +885,25 @@ fun PlayerShell(
                         )
                     }
                 }
+            }
+
+            // an admin stopped this stream, or sent a message, from Server
+            // Activity: the answer to the last heartbeat carried it
+            val serverOrder by net.ssync.player.ServerOrders.current.collectAsState()
+            LaunchedEffect(serverOrder) {
+                if (serverOrder?.stop == true) coordinator.stopPlayback()
+            }
+            serverOrder?.let { order ->
+                androidx.compose.material3.AlertDialog(
+                    onDismissRequest = { net.ssync.player.ServerOrders.dismiss() },
+                    confirmButton = {
+                        androidx.compose.material3.TextButton(
+                            onClick = { net.ssync.player.ServerOrders.dismiss() },
+                        ) { Text("OK") }
+                    },
+                    title = { Text(order.header) },
+                    text = { Text(order.text) },
+                )
             }
 
             contextMenuItem?.let { item ->
