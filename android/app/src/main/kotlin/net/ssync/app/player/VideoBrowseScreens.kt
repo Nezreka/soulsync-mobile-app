@@ -38,6 +38,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -80,9 +82,17 @@ fun MoviesScreen(
     coordinator: PlaybackCoordinator? = null,
     onNavigate: ((PlayerDestination) -> Unit)? = null,
 ) {
-    var movies by remember { mutableStateOf<List<CatalogMovie>>(emptyList()) }
-    var studioCollections by remember { mutableStateOf<List<net.ssync.player.StudioCollection>>(emptyList()) }
-    var isLoading by remember { mutableStateOf(true) }
+    val warmHit = HomeWarmCache.baseUrl == api.baseUrl && HomeWarmCache.catalog.movies.isNotEmpty()
+    var movies by remember(api.baseUrl) {
+        mutableStateOf(if (warmHit) HomeWarmCache.catalog.movies else emptyList())
+    }
+    var studioCollections by remember(api.baseUrl) {
+        mutableStateOf(
+            if (warmHit) HomeWarmCache.studioCollections.filter { it.mediaType == "movie" }
+            else emptyList(),
+        )
+    }
+    var isLoading by remember(api.baseUrl) { mutableStateOf(!warmHit) }
     var tab by remember { mutableStateOf(VideoBrowseTab.FOR_YOU) }
     var sort by remember { mutableStateOf(VideoSort.ADDED) }
     var selectedGenre by remember { mutableStateOf<String?>(null) }
@@ -92,14 +102,29 @@ fun MoviesScreen(
     var gridView by remember { mutableStateOf(true) }
 
     LaunchedEffect(api) {
-        isLoading = true
-        when (val res = api.fetchVideoCatalog()) {
-            is MusicApiResult.Success -> movies = res.data.movies
-            MusicApiResult.DeviceRevoked -> onDeviceRevoked()
-            is MusicApiResult.Error -> Unit
+        if (HomeWarmCache.isCatalogFresh(api.baseUrl) && HomeWarmCache.studioCollections.isNotEmpty()) {
+            isLoading = false
+            return@LaunchedEffect
         }
-        (api.fetchCollections() as? MusicApiResult.Success)?.let {
-            studioCollections = it.data.filter { c -> c.mediaType == "movie" }
+        if (movies.isEmpty()) isLoading = true
+        coroutineScope {
+            val catDef = async { api.fetchVideoCatalog() }
+            val colDef = async { api.fetchCollections() }
+            when (val res = catDef.await()) {
+                is MusicApiResult.Success -> {
+                    movies = res.data.movies
+                    HomeWarmCache.baseUrl = api.baseUrl
+                    HomeWarmCache.catalog = res.data
+                    HomeWarmCache.catalogFetchedAtMs = System.currentTimeMillis()
+                    isLoading = false
+                }
+                MusicApiResult.DeviceRevoked -> onDeviceRevoked()
+                is MusicApiResult.Error -> Unit
+            }
+            (colDef.await() as? MusicApiResult.Success)?.let {
+                HomeWarmCache.studioCollections = it.data
+                studioCollections = it.data.filter { c -> c.mediaType == "movie" }
+            }
         }
         isLoading = false
     }
@@ -386,10 +411,20 @@ fun TvScreen(
     coordinator: PlaybackCoordinator? = null,
     onNavigate: ((PlayerDestination) -> Unit)? = null,
 ) {
-    var shows by remember { mutableStateOf<List<CatalogShow>>(emptyList()) }
-    var recentEpisodes by remember { mutableStateOf<List<CatalogRecentEpisode>>(emptyList()) }
-    var tvStudioCollections by remember { mutableStateOf<List<net.ssync.player.StudioCollection>>(emptyList()) }
-    var isLoading by remember { mutableStateOf(true) }
+    val warmHit = HomeWarmCache.baseUrl == api.baseUrl && HomeWarmCache.catalog.shows.isNotEmpty()
+    var shows by remember(api.baseUrl) {
+        mutableStateOf(if (warmHit) HomeWarmCache.catalog.shows else emptyList())
+    }
+    var recentEpisodes by remember(api.baseUrl) {
+        mutableStateOf(if (warmHit) HomeWarmCache.catalog.recentEpisodes else emptyList())
+    }
+    var tvStudioCollections by remember(api.baseUrl) {
+        mutableStateOf(
+            if (warmHit) HomeWarmCache.studioCollections.filter { it.mediaType != "movie" }
+            else emptyList(),
+        )
+    }
+    var isLoading by remember(api.baseUrl) { mutableStateOf(!warmHit) }
     var tab by remember { mutableStateOf(VideoBrowseTab.FOR_YOU) }
     var sort by remember { mutableStateOf(VideoSort.ADDED) }
     var selectedGenre by remember { mutableStateOf<String?>(null) }
@@ -398,17 +433,30 @@ fun TvScreen(
     var gridView by remember { mutableStateOf(true) }
 
     LaunchedEffect(api) {
-        isLoading = true
-        when (val res = api.fetchVideoCatalog()) {
-            is MusicApiResult.Success -> {
-                shows = res.data.shows
-                recentEpisodes = res.data.recentEpisodes
-            }
-            MusicApiResult.DeviceRevoked -> onDeviceRevoked()
-            is MusicApiResult.Error -> Unit
+        if (HomeWarmCache.isCatalogFresh(api.baseUrl) && HomeWarmCache.studioCollections.isNotEmpty()) {
+            isLoading = false
+            return@LaunchedEffect
         }
-        (api.fetchCollections() as? MusicApiResult.Success)?.let {
-            tvStudioCollections = it.data.filter { c -> c.mediaType != "movie" }
+        if (shows.isEmpty()) isLoading = true
+        coroutineScope {
+            val catDef = async { api.fetchVideoCatalog() }
+            val colDef = async { api.fetchCollections() }
+            when (val res = catDef.await()) {
+                is MusicApiResult.Success -> {
+                    shows = res.data.shows
+                    recentEpisodes = res.data.recentEpisodes
+                    HomeWarmCache.baseUrl = api.baseUrl
+                    HomeWarmCache.catalog = res.data
+                    HomeWarmCache.catalogFetchedAtMs = System.currentTimeMillis()
+                    isLoading = false
+                }
+                MusicApiResult.DeviceRevoked -> onDeviceRevoked()
+                is MusicApiResult.Error -> Unit
+            }
+            (colDef.await() as? MusicApiResult.Success)?.let {
+                HomeWarmCache.studioCollections = it.data
+                tvStudioCollections = it.data.filter { c -> c.mediaType != "movie" }
+            }
         }
         isLoading = false
     }

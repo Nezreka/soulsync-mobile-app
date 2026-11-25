@@ -171,164 +171,112 @@ internal fun TvCinemaMoviesHub(
         )
     }
 
-    val genres = remember(movies) {
-        movies.flatMap { it.genres }.groupingBy { it }.eachCount()
-            .entries.sortedByDescending { it.value }.map { it.key to it.value }
-    }
+    // Build the 8,930-movie curated shelves OFF the main thread (Dispatchers.Default)
+    // and stream them in progressively: New Releases + Recently Added paint first in <15ms,
+    // followed seamlessly by Top 10, Collections, Acclaimed, Quick Watches, Epics, Genres & Classics!
+    var genres by remember { mutableStateOf<List<Pair<String, Int>>>(emptyList()) }
+    var discoverShelves by remember { mutableStateOf<List<TvBrowseShelf>>(emptyList()) }
+    var tmdbCollections by remember { mutableStateOf<List<Map.Entry<String, List<CatalogMovie>>>>(emptyList()) }
 
-    val discoverShelves = remember(movies, studioCollections, currentYear) {
-        val out = mutableListOf<TvBrowseShelf>()
-
-        // 1. New Releases (current & previous year)
-        val newReleases = movies
-            .filter { (it.year ?: 0) >= currentYear - 1 }
-            .sortedWith(compareByDescending<CatalogMovie> { it.year ?: 0 }.thenByDescending { it.addedAt.orEmpty() })
-            .take(20)
-        if (newReleases.size >= 3) {
-            out += TvBrowseShelf(
-                id = "new-releases",
-                title = "New Releases",
-                subtitle = "${currentYear - 1}–$currentYear",
-                items = newReleases.map { toCard("new", it) },
-            )
+    LaunchedEffect(movies, studioCollections, currentYear) {
+        // Phase 1 (instant, <10ms on Default dispatcher): first 2 visible rows
+        val phase1 = withContext(Dispatchers.Default) {
+            val firstRows = mutableListOf<TvBrowseShelf>()
+            val newReleases = movies
+                .filter { (it.year ?: 0) >= currentYear - 1 }
+                .sortedWith(compareByDescending<CatalogMovie> { it.year ?: 0 }.thenByDescending { it.addedAt.orEmpty() })
+                .take(20)
+            if (newReleases.size >= 3) {
+                firstRows += TvBrowseShelf("new-releases", "New Releases", "${currentYear - 1}–$currentYear", newReleases.map { toCard("new", it) })
+            }
+            val recent = movies.sortedByDescending { it.addedAt.orEmpty() }.take(20)
+            if (recent.isNotEmpty()) {
+                firstRows += TvBrowseShelf("recent", "Recently Added", items = recent.map { toCard("rec", it) })
+            }
+            firstRows
         }
+        discoverShelves = phase1
 
-        // 2. Recently Added
-        val recent = movies.sortedByDescending { it.addedAt.orEmpty() }.take(20)
-        if (recent.isNotEmpty()) {
-            out += TvBrowseShelf(
-                id = "recent",
-                title = "Recently Added",
-                items = recent.map { toCard("rec", it) },
-            )
-        }
+        // Phase 2 (background off main thread): all remaining curated rows, genres, & franchise groups
+        val (computedGenres, fullShelves, computedCols) = withContext(Dispatchers.Default) {
+            val gList = movies.flatMap { it.genres }.groupingBy { it }.eachCount()
+                .entries.sortedByDescending { it.value }.map { it.key to it.value }
+            val out = phase1.toMutableList()
 
-        // 3. Top 10 Highest Rated
-        val top10 = movies.filter { (it.rating ?: 0.0) > 0.0 }.sortedByDescending { it.rating ?: 0.0 }.take(10)
-        if (top10.size >= 3) {
-            out += TvBrowseShelf(
-                id = "top-10",
-                title = "Top 10 Highest Rated",
-                items = top10.mapIndexed { i, m -> toCard("top10", m, rank = i + 1) },
-            )
-        }
+            val top10 = movies.filter { (it.rating ?: 0.0) > 0.0 }.sortedByDescending { it.rating ?: 0.0 }.take(10)
+            if (top10.size >= 3) {
+                out += TvBrowseShelf("top-10", "Top 10 Highest Rated", items = top10.mapIndexed { i, m -> toCard("top10", m, rank = i + 1) })
+            }
 
-        // 4. Studio Collections
-        val colCards = studioCollections.mapNotNull { c ->
-            val mem = c.members.filter { moviesById.containsKey(it) }
-            if (mem.isEmpty()) return@mapNotNull null
-            val safePoster = c.poster?.takeIf { !it.startsWith("/api/video/collections/") }
-            val art = api.artwork.resolve(safePoster ?: c.memberPosters.firstOrNull())
-                ?: api.artwork.moviePoster(mem.first(), width = 500)
-            val backdrop = api.artwork.movieBackdrop(mem.first(), width = 1280)
-            TvBrowseCard(
-                key = "col-${c.id}",
-                title = c.name,
-                subtitle = "${mem.size} ${if (mem.size == 1) "film" else "films"} · SoulSync Collection",
-                metaChips = listOf("Collection", "${mem.size} films"),
-                ratingText = null,
-                contentRating = null,
-                overview = c.summary,
-                posterUrl = art,
-                backdropUrl = backdrop,
-                badge = if (c.pinned) "★" else null,
-                onClick = { onNavigate(PlayerDestination.CollectionDetail(c)) },
-            )
-        }
-        if (colCards.isNotEmpty()) {
-            out += TvBrowseShelf(
-                id = "collections",
-                title = "Curated Collections",
-                subtitle = "${colCards.size} collections",
-                items = colCards,
-            )
-        }
-
-        // 5. Critically Acclaimed (7.6+)
-        val acclaimed = movies
-            .filter { (it.rating ?: 0.0) >= 7.6 }
-            .sortedByDescending { it.rating ?: 0.0 }
-            .drop(4)
-            .take(20)
-        if (acclaimed.size >= 4) {
-            out += TvBrowseShelf(
-                id = "acclaimed",
-                title = "Critically Acclaimed",
-                subtitle = "★ 7.6+",
-                items = acclaimed.map { toCard("acc", it) },
-            )
-        }
-
-        // 6. Quick Watches (Under 100 min)
-        val quickWatches = movies
-            .filter { (it.runtimeSeconds ?: 0) in 3600..6000 }
-            .sortedByDescending { it.rating ?: 0.0 }
-            .take(18)
-        if (quickWatches.size >= 4) {
-            out += TvBrowseShelf(
-                id = "quick",
-                title = "Quick Watches",
-                subtitle = "Under 100 minutes",
-                items = quickWatches.map { toCard("quick", it) },
-            )
-        }
-
-        // 7. Epic Cinema (2h 15m+)
-        val epics = movies
-            .filter { (it.runtimeSeconds ?: 0) >= 8100 }
-            .sortedByDescending { it.rating ?: 0.0 }
-            .take(18)
-        if (epics.size >= 4) {
-            out += TvBrowseShelf(
-                id = "epics",
-                title = "Epic Cinema",
-                subtitle = "2h 15m+",
-                items = epics.map { toCard("epic", it) },
-            )
-        }
-
-        // 8. Top 6 Curated Genres (sorted by rating so the best films lead!)
-        genres.take(6).forEach { (g, _) ->
-            val list = movies
-                .filter { it.genres.any { mg -> mg.equals(g, ignoreCase = true) } }
-                .sortedByDescending { it.rating ?: 0.0 }
-                .take(18)
-            if (list.size >= 4) {
-                out += TvBrowseShelf(
-                    id = "genre-$g",
-                    title = g,
-                    items = list.map { toCard("g-$g", it) },
+            val colCards = studioCollections.mapNotNull { c ->
+                val mem = c.members.filter { moviesById.containsKey(it) }
+                if (mem.isEmpty()) return@mapNotNull null
+                val safePoster = c.poster?.takeIf { !it.startsWith("/api/video/collections/") }
+                val art = api.artwork.resolve(safePoster ?: c.memberPosters.firstOrNull())
+                    ?: api.artwork.moviePoster(mem.first(), width = 500)
+                val backdrop = api.artwork.movieBackdrop(mem.first(), width = 1280)
+                TvBrowseCard(
+                    key = "col-${c.id}",
+                    title = c.name,
+                    subtitle = "${mem.size} ${if (mem.size == 1) "film" else "films"} · SoulSync Collection",
+                    metaChips = listOf("Collection", "${mem.size} films"),
+                    ratingText = null,
+                    contentRating = null,
+                    overview = c.summary,
+                    posterUrl = art,
+                    backdropUrl = backdrop,
+                    badge = if (c.pinned) "★" else null,
+                    onClick = { onNavigate(PlayerDestination.CollectionDetail(c)) },
                 )
             }
-        }
+            if (colCards.isNotEmpty()) {
+                out += TvBrowseShelf("collections", "Curated Collections", "${colCards.size} collections", colCards)
+            }
 
-        // 9. 90s & Classic Throwbacks
-        val classics = movies
-            .filter { (it.year ?: 9999) in 1970..2004 }
-            .sortedByDescending { it.rating ?: 0.0 }
-            .take(18)
-        if (classics.size >= 4) {
-            out += TvBrowseShelf(
-                id = "classics",
-                title = "Timeless Classics",
-                subtitle = "1970–2004",
-                items = classics.map { toCard("cls", it) },
-            )
-        }
+            val acclaimed = movies.filter { (it.rating ?: 0.0) >= 7.6 }.sortedByDescending { it.rating ?: 0.0 }.drop(4).take(20)
+            if (acclaimed.size >= 4) {
+                out += TvBrowseShelf("acclaimed", "Critically Acclaimed", "★ 7.6+", acclaimed.map { toCard("acc", it) })
+            }
 
-        out
+            val quickWatches = movies.filter { (it.runtimeSeconds ?: 0) in 3600..6000 }.sortedByDescending { it.rating ?: 0.0 }.take(18)
+            if (quickWatches.size >= 4) {
+                out += TvBrowseShelf("quick", "Quick Watches", "Under 100 minutes", quickWatches.map { toCard("quick", it) })
+            }
+
+            val epics = movies.filter { (it.runtimeSeconds ?: 0) >= 8100 }.sortedByDescending { it.rating ?: 0.0 }.take(18)
+            if (epics.size >= 4) {
+                out += TvBrowseShelf("epics", "Epic Cinema", "2h 15m+", epics.map { toCard("epic", it) })
+            }
+
+            gList.take(6).forEach { (g, _) ->
+                val list = movies.filter { it.genres.any { mg -> mg.equals(g, ignoreCase = true) } }
+                    .sortedByDescending { it.rating ?: 0.0 }
+                    .take(18)
+                if (list.size >= 4) {
+                    out += TvBrowseShelf("genre-$g", g, items = list.map { toCard("g-$g", it) })
+                }
+            }
+
+            val classics = movies.filter { (it.year ?: 9999) in 1970..2004 }.sortedByDescending { it.rating ?: 0.0 }.take(18)
+            if (classics.size >= 4) {
+                out += TvBrowseShelf("classics", "Timeless Classics", "1970–2004", classics.map { toCard("cls", it) })
+            }
+
+            val cols = movies.filter { !it.collection.isNullOrBlank() }
+                .groupBy { it.collection!! }
+                .filter { it.value.size >= 2 }
+                .entries
+                .sortedByDescending { it.value.size }
+
+            Triple(gList, out.toList(), cols)
+        }
+        genres = computedGenres
+        discoverShelves = fullShelves
+        tmdbCollections = computedCols
     }
 
     val allLibraryCards = remember(movies) {
         movies.map { m -> m to toCard("lib", m) }
-    }
-
-    val tmdbCollections = remember(movies) {
-        movies.filter { !it.collection.isNullOrBlank() }
-            .groupBy { it.collection!! }
-            .filter { it.value.size >= 2 }
-            .entries
-            .sortedByDescending { it.value.size }
     }
 
     TvCinemaBrowseScaffold(
@@ -603,16 +551,22 @@ private fun TvCinemaBrowseScaffold(
     val colorCache = remember { mutableStateMapOf<String, Color>() }
     var targetAmbient by remember { mutableStateOf(Color(0xFF151326)) }
 
-    // Batch-prefetch official TMDB wordmark logos for all visible Discover cards
+    // Batch-prefetch official TMDB wordmark logos for all visible Discover cards (shared app-wide via HomeWarmCache!)
     LaunchedEffect(discoverShelves, api) {
         val keys = discoverShelves
             .flatMap { it.items }
             .mapNotNull { c -> if (c.detailKind != null && c.tmdbId != null) "${c.detailKind}:${c.tmdbId}" else null }
             .distinct()
-            .filter { !prefetchedLogos.containsKey(it) }
-        keys.chunked(30).forEach { batch ->
+        keys.forEach { k ->
+            HomeWarmCache.resolvedLogos[k]?.let { prefetchedLogos[k] = it }
+        }
+        val missing = keys.filter { !prefetchedLogos.containsKey(it) }
+        missing.chunked(30).forEach { batch ->
             (api.fetchLogos(batch) as? MusicApiResult.Success)?.data?.forEach { (k, raw) ->
-                api.artwork.resolve(raw)?.let { resolved -> prefetchedLogos[k] = resolved }
+                api.artwork.resolve(raw)?.let { resolved ->
+                    prefetchedLogos[k] = resolved
+                    HomeWarmCache.resolvedLogos[k] = resolved
+                }
             }
         }
     }

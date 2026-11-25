@@ -99,25 +99,49 @@ fun MovieDetailScreen(
     onDeviceRevoked: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
-    var detail by remember { mutableStateOf<MovieDetail?>(null) }
-    var extras by remember { mutableStateOf<TitleExtras?>(null) }
-    var notes by remember { mutableStateOf<List<PlayerNote>>(emptyList()) }
-    var noteDraft by remember { mutableStateOf("") }
-    var inWatchlist by remember { mutableStateOf(false) }
-    var isLoading by remember { mutableStateOf(true) }
+    val cachedDetail = remember(movieId) { HomeWarmCache.movieDetails[movieId] }
+    val cachedExtras = remember(movieId) { HomeWarmCache.titleExtras["movie:$movieId"] }
+    var detail by remember(movieId) { mutableStateOf(cachedDetail) }
+    var extras by remember(movieId) { mutableStateOf(cachedExtras) }
+    var notes by remember(movieId) { mutableStateOf<List<PlayerNote>>(emptyList()) }
+    var noteDraft by remember(movieId) { mutableStateOf("") }
+    var inWatchlist by remember(movieId) {
+        mutableStateOf(HomeWarmCache.watchlist.any { it.itemType == "movie" && it.itemId == movieId.toString() })
+    }
+    var isLoading by remember(movieId) { mutableStateOf(cachedDetail == null) }
 
     LaunchedEffect(movieId, api) {
-        isLoading = true
-        when (val res = api.fetchMovieDetail(movieId)) {
-            is MusicApiResult.Success -> detail = res.data
-            MusicApiResult.DeviceRevoked -> onDeviceRevoked()
-            is MusicApiResult.Error -> Unit
+        if (detail == null) isLoading = true
+        kotlinx.coroutines.coroutineScope {
+            // Stream primary detail first -> render Hero/Cast immediately!
+            launch {
+                when (val res = api.fetchMovieDetail(movieId)) {
+                    is MusicApiResult.Success -> {
+                        detail = res.data
+                        HomeWarmCache.movieDetails[movieId] = res.data
+                    }
+                    MusicApiResult.DeviceRevoked -> onDeviceRevoked()
+                    is MusicApiResult.Error -> Unit
+                }
+                isLoading = false
+            }
+            // Stream secondary metadata in parallel without blocking initial render!
+            launch {
+                (api.fetchWatchlist() as? MusicApiResult.Success)?.let { list ->
+                    HomeWarmCache.watchlist = list.data
+                    inWatchlist = list.data.any { it.itemType == "movie" && it.itemId == movieId.toString() }
+                }
+            }
+            launch {
+                (api.fetchTitleExtras("movie", movieId) as? MusicApiResult.Success)?.let {
+                    extras = it.data
+                    HomeWarmCache.titleExtras["movie:$movieId"] = it.data
+                }
+            }
+            launch {
+                (api.fetchNotes("movie", movieId.toString()) as? MusicApiResult.Success)?.let { notes = it.data }
+            }
         }
-        (api.fetchWatchlist() as? MusicApiResult.Success)?.let { list ->
-            inWatchlist = list.data.any { it.itemType == "movie" && it.itemId == movieId.toString() }
-        }
-        (api.fetchTitleExtras("movie", movieId) as? MusicApiResult.Success)?.let { extras = it.data }
-        (api.fetchNotes("movie", movieId.toString()) as? MusicApiResult.Success)?.let { notes = it.data }
         isLoading = false
     }
 
@@ -1216,38 +1240,63 @@ fun ShowDetailScreen(
     highlightEpisode: Int? = null,
 ) {
     val scope = rememberCoroutineScope()
-    var detail by remember { mutableStateOf<ShowDetail?>(null) }
-    var extras by remember { mutableStateOf<TitleExtras?>(null) }
-    var notes by remember { mutableStateOf<List<PlayerNote>>(emptyList()) }
-    var noteDraft by remember { mutableStateOf("") }
-    var inWatchlist by remember { mutableStateOf(false) }
-    var isLoading by remember { mutableStateOf(true) }
+    val cachedShow = remember(showId) { HomeWarmCache.showDetails[showId] }
+    val cachedShowExtras = remember(showId) { HomeWarmCache.titleExtras["show:$showId"] }
+    var detail by remember(showId) { mutableStateOf(cachedShow) }
+    var extras by remember(showId) { mutableStateOf(cachedShowExtras) }
+    var notes by remember(showId) { mutableStateOf<List<PlayerNote>>(emptyList()) }
+    var noteDraft by remember(showId) { mutableStateOf("") }
+    var inWatchlist by remember(showId) {
+        mutableStateOf(HomeWarmCache.watchlist.any { it.itemType == "show" && it.itemId == showId.toString() })
+    }
+    var isLoading by remember(showId) { mutableStateOf(cachedShow == null) }
     var selectedSeasonIndex by remember { mutableIntStateOf(0) }
     var ownedOnly by remember { mutableStateOf(false) }
     var overviewExpanded by remember { mutableStateOf(false) }
     var pendingRequest by remember { mutableStateOf<UnownedTitleTarget?>(null) }
     var issueTarget by remember { mutableStateOf<ReportIssueTarget?>(null) }
-    var showTmdbId by remember { mutableStateOf<Int?>(null) }
+    var showTmdbId by remember(showId) {
+        mutableStateOf(HomeWarmCache.catalog.shows.firstOrNull { it.id == showId }?.tmdbId)
+    }
     var showRequestMode by remember { mutableStateOf("ask") }
 
     LaunchedEffect(showId, api) {
-        isLoading = true
-        when (val res = api.fetchShowDetail(showId)) {
-            is MusicApiResult.Success -> detail = res.data
-            MusicApiResult.DeviceRevoked -> onDeviceRevoked()
-            is MusicApiResult.Error -> Unit
+        if (detail == null) isLoading = true
+        kotlinx.coroutines.coroutineScope {
+            // Stream primary ShowDetail first -> render Hero/Seasons/Episodes immediately!
+            launch {
+                when (val res = api.fetchShowDetail(showId)) {
+                    is MusicApiResult.Success -> {
+                        detail = res.data
+                        HomeWarmCache.showDetails[showId] = res.data
+                    }
+                    MusicApiResult.DeviceRevoked -> onDeviceRevoked()
+                    is MusicApiResult.Error -> Unit
+                }
+                isLoading = false
+            }
+            // Stream all secondary metadata in parallel (never re-fetch 8930-movie catalog!)
+            launch {
+                (api.fetchVideoRequestOptions() as? MusicApiResult.Success)?.let { opts ->
+                    showRequestMode = opts.data.show
+                }
+            }
+            launch {
+                (api.fetchWatchlist() as? MusicApiResult.Success)?.let { list ->
+                    HomeWarmCache.watchlist = list.data
+                    inWatchlist = list.data.any { it.itemType == "show" && it.itemId == showId.toString() }
+                }
+            }
+            launch {
+                (api.fetchTitleExtras("show", showId) as? MusicApiResult.Success)?.let {
+                    extras = it.data
+                    HomeWarmCache.titleExtras["show:$showId"] = it.data
+                }
+            }
+            launch {
+                (api.fetchNotes("show", showId.toString()) as? MusicApiResult.Success)?.let { notes = it.data }
+            }
         }
-        (api.fetchVideoCatalog() as? MusicApiResult.Success)?.let { cat ->
-            showTmdbId = cat.data.shows.firstOrNull { it.id == showId }?.tmdbId
-        }
-        (api.fetchVideoRequestOptions() as? MusicApiResult.Success)?.let { opts ->
-            showRequestMode = opts.data.show
-        }
-        (api.fetchWatchlist() as? MusicApiResult.Success)?.let { list ->
-            inWatchlist = list.data.any { it.itemType == "show" && it.itemId == showId.toString() }
-        }
-        (api.fetchTitleExtras("show", showId) as? MusicApiResult.Success)?.let { extras = it.data }
-        (api.fetchNotes("show", showId.toString()) as? MusicApiResult.Success)?.let { notes = it.data }
         isLoading = false
     }
 

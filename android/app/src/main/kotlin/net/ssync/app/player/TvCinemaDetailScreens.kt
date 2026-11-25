@@ -140,12 +140,20 @@ internal fun TvCinemaMovieDetail(
         }
         if (extracted != null) targetAmbient = extracted
 
-        // Fetch TMDB wordmark logo if we have tmdbId in catalog
+        // Check app-wide logo cache first (0ms), fallback to API
         val tmdbId = HomeWarmCache.catalog.movies.firstOrNull { it.id == movie.id }?.tmdbId
         if (tmdbId != null) {
             val lk = "movie:$tmdbId"
-            (api.fetchLogos(listOf(lk)) as? MusicApiResult.Success)?.data?.get(lk)?.let { raw ->
-                logoUrl = api.artwork.resolve(raw)
+            val cached = HomeWarmCache.resolvedLogos[lk]
+            if (cached != null) {
+                logoUrl = cached
+            } else {
+                (api.fetchLogos(listOf(lk)) as? MusicApiResult.Success)?.data?.get(lk)?.let { raw ->
+                    api.artwork.resolve(raw)?.let { resolved ->
+                        HomeWarmCache.resolvedLogos[lk] = resolved
+                        logoUrl = resolved
+                    }
+                }
             }
         }
     }
@@ -641,8 +649,16 @@ internal fun TvCinemaShowDetail(
         val tmdbId = HomeWarmCache.catalog.shows.firstOrNull { it.id == show.id }?.tmdbId
         if (tmdbId != null) {
             val lk = "show:$tmdbId"
-            (api.fetchLogos(listOf(lk)) as? MusicApiResult.Success)?.data?.get(lk)?.let { raw ->
-                logoUrl = api.artwork.resolve(raw)
+            val cached = HomeWarmCache.resolvedLogos[lk]
+            if (cached != null) {
+                logoUrl = cached
+            } else {
+                (api.fetchLogos(listOf(lk)) as? MusicApiResult.Success)?.data?.get(lk)?.let { raw ->
+                    api.artwork.resolve(raw)?.let { resolved ->
+                        HomeWarmCache.resolvedLogos[lk] = resolved
+                        logoUrl = resolved
+                    }
+                }
             }
         }
     }

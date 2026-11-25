@@ -112,6 +112,7 @@ internal object HomeWarmCache {
     var baseUrl: String? = null
     var continueItems: List<ProgressRow> = emptyList()
     var catalog: VideoCatalog = VideoCatalog()
+    var catalogFetchedAtMs: Long = 0L
     var watchlist: List<WatchlistItem> = emptyList()
     var studioCollections: List<net.ssync.player.StudioCollection> = emptyList()
     var discoverPlaylists: List<net.ssync.player.DiscoverPlaylistSummary> = emptyList()
@@ -122,6 +123,15 @@ internal object HomeWarmCache {
     var layoutShared: Boolean = true
     var liveGuideHighlights: List<HomeLiveHighlight> = emptyList()
     var hasLoadedOnce: Boolean = false
+    val movieDetails: MutableMap<Int, net.ssync.player.MovieDetail> = java.util.Collections.synchronizedMap(LinkedHashMap(32, 0.75f, true))
+    val showDetails: MutableMap<Int, net.ssync.player.ShowDetail> = java.util.Collections.synchronizedMap(LinkedHashMap(32, 0.75f, true))
+    val titleExtras: MutableMap<String, net.ssync.player.TitleExtras> = java.util.Collections.synchronizedMap(LinkedHashMap(48, 0.75f, true))
+    val resolvedLogos: MutableMap<String, String> = java.util.Collections.synchronizedMap(HashMap())
+
+    fun isCatalogFresh(url: String, maxAgeMs: Long = 90_000L): Boolean =
+        baseUrl == url &&
+            (catalog.movies.isNotEmpty() || catalog.shows.isNotEmpty()) &&
+            (System.currentTimeMillis() - catalogFetchedAtMs) < maxAgeMs
 }
 
 @kotlin.OptIn(
@@ -202,6 +212,7 @@ fun HomeScreen(
             HomeWarmCache.hasLoadedOnce = true
             isLoading = false
 
+            HomeWarmCache.catalogFetchedAtMs = System.currentTimeMillis()
             // Persist lightweight cold-start snapshot to disk so next app launch renders instantaneously
             launch(Dispatchers.IO) {
                 net.ssync.player.HomeDiskSnapshot.write(

@@ -254,11 +254,12 @@ fun SearchScreen(
     onDeviceRevoked: () -> Unit,
     initialQuery: String = "",
 ) {
+    val warmHit = HomeWarmCache.baseUrl == api.baseUrl
     var query by remember(initialQuery) { mutableStateOf(initialQuery) }
     var filter by remember { mutableStateOf("all") }
-    var catalog by remember { mutableStateOf(VideoCatalog()) }
-    var podcasts by remember { mutableStateOf<List<net.ssync.player.PodcastSub>>(emptyList()) }
-    var books by remember { mutableStateOf<List<net.ssync.player.OwnedBook>>(emptyList()) }
+    var catalog by remember(api.baseUrl) { mutableStateOf(if (warmHit) HomeWarmCache.catalog else VideoCatalog()) }
+    var podcasts by remember(api.baseUrl) { mutableStateOf(if (warmHit) HomeWarmCache.podcasts else emptyList()) }
+    var books by remember(api.baseUrl) { mutableStateOf(if (warmHit) HomeWarmCache.books else emptyList()) }
     var artists by remember { mutableStateOf<List<net.ssync.player.LibArtist>>(emptyList()) }
     var albums by remember { mutableStateOf<List<net.ssync.player.LibAlbum>>(emptyList()) }
     var songs by remember { mutableStateOf<List<net.ssync.player.LibSong>>(emptyList()) }
