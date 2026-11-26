@@ -447,24 +447,41 @@ fun YouTubeChannelScreen(
     LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         item { Text(channelName, style = MaterialTheme.typography.headlineMedium) }
         items(videos, key = { it.id }) { v ->
-            SimpleTrackRow(
-                title = v.title,
-                subtitle = v.publishedAt.orEmpty(),
-                artworkUrl = api.artwork.resolve(v.thumbnail),
-                onClick = {
-                    coordinator.playVideo(
-                        ActivePlayable(
-                            itemType = "youtube",
-                            itemId = v.id,
-                            title = v.title,
-                            subtitle = channelName,
-                            artworkUrl = api.artwork.resolve(v.thumbnail),
-                            streamUrl = api.streamUrl("youtube", v.id),
-                            isVideo = true,
-                        ),
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Box(modifier = Modifier.weight(1f)) {
+                    SimpleTrackRow(
+                        title = v.title,
+                        subtitle = v.publishedAt.orEmpty(),
+                        artworkUrl = api.artwork.resolve(v.thumbnail),
+                        onClick = {
+                            coordinator.playVideo(
+                                ActivePlayable(
+                                    itemType = "youtube",
+                                    itemId = v.id,
+                                    title = v.title,
+                                    subtitle = channelName,
+                                    artworkUrl = api.artwork.resolve(v.thumbnail),
+                                    streamUrl = api.streamUrl("youtube", v.id),
+                                    isVideo = true,
+                                ),
+                            )
+                        },
                     )
-                },
-            )
+                }
+                OfflineDownloadButton(
+                    api = api,
+                    itemType = "youtube",
+                    itemId = v.id,
+                    title = v.title,
+                    subtitle = channelName,
+                    artworkUrl = api.artwork.resolve(v.thumbnail),
+                    isVideo = true,
+                    compact = true,
+                    groupType = "youtube",
+                    groupId = channelId,
+                    groupTitle = channelName,
+                )
+            }
         }
     }
 }
@@ -582,6 +599,19 @@ fun PodcastDetailScreen(
                 }
             }
             Spacer(modifier = Modifier.height(10.dp))
+            // the newest episodes on the phone, and smart downloads that keep them coming
+            GroupDownloadButton(
+                api = api,
+                target = DownloadTarget(
+                    type = "podcast",
+                    id = sub.id.toString(),
+                    title = sub.title,
+                    subtitle = sub.author.orEmpty(),
+                    artwork = relativeArt(show?.artworkUrl ?: sub.artworkUrl),
+                    groupTitle = sub.title,
+                ),
+            )
+            Spacer(modifier = Modifier.height(10.dp))
         }
         items(episodes) { ep ->
             // the episode's own audio: the server has no podcast stream to fall back on
@@ -611,6 +641,22 @@ fun PodcastDetailScreen(
                                 ),
                             )
                         },
+                    )
+                }
+                if (stream != null) {
+                    OfflineDownloadButton(
+                        api = api,
+                        itemType = "podcast_episode",
+                        itemId = "${sub.id}:$episodeKey",
+                        title = ep.title,
+                        subtitle = sub.title,
+                        artworkUrl = api.artwork.resolve(ep.artworkUrl ?: sub.artworkUrl),
+                        isVideo = false,
+                        parentId = sub.id.toString(),
+                        compact = true,
+                        groupType = "podcast",
+                        groupId = sub.id.toString(),
+                        groupTitle = sub.title,
                     )
                 }
                 androidx.compose.material3.IconButton(onClick = { showEpReport = true }) {
@@ -758,6 +804,18 @@ fun AudiobookDetailScreen(
             Spacer(modifier = Modifier.width(6.dp))
             Text("Listen")
         }
+        Spacer(modifier = Modifier.height(10.dp))
+        GroupDownloadButton(
+            api = api,
+            target = DownloadTarget(
+                type = "audiobook",
+                id = book.asin,
+                title = book.title,
+                subtitle = book.author.orEmpty(),
+                artwork = relativeArt(book.coverUrl),
+                groupTitle = book.title,
+            ),
+        )
         Spacer(modifier = Modifier.height(10.dp))
         var showBookReport by remember(book.asin) { mutableStateOf(false) }
         androidx.compose.material3.OutlinedButton(

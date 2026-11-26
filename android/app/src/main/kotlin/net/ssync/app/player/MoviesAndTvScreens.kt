@@ -1507,6 +1507,20 @@ fun ShowDetailScreen(
                         }
                     }
                 }
+                if (seasons.any { se -> se.episodes.any { it.owned } }) {
+                    item {
+                        GroupDownloadButton(
+                            api = api,
+                            target = DownloadTarget(
+                                type = "show",
+                                id = show.id.toString(),
+                                title = show.title,
+                                artwork = if (show.hasPoster) "/api/video/poster/show/${show.id}" else null,
+                                groupTitle = show.title,
+                            ),
+                        )
+                    }
+                }
                 item {
                     ReportIssuePillButton(
                         onClick = {
@@ -1760,6 +1774,35 @@ fun ShowDetailScreen(
                 }
             }
 
+            // the selected season in one go (or send it to a phone from a tv)
+            if (activeEpisodes.any { it.owned }) {
+                item(key = "season-download-${activeSeason.seasonNumber}") {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = if (activeSeason.seasonNumber == 0) "Specials" else "Season ${activeSeason.seasonNumber}",
+                            color = SoulSyncColors.TextSecondary,
+                            fontSize = 12.5.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.weight(1f),
+                        )
+                        GroupDownloadButton(
+                            api = api,
+                            target = DownloadTarget(
+                                type = "season",
+                                id = "${show.id}:${activeSeason.seasonNumber}",
+                                title = show.title,
+                                subtitle = if (activeSeason.seasonNumber == 0) "Specials" else "Season ${activeSeason.seasonNumber}",
+                                artwork = if (show.hasPoster) "/api/video/poster/show/${show.id}" else null,
+                                groupTitle = show.title,
+                            ),
+                        )
+                    }
+                }
+            }
+
             // 5. Apple TV+ / Infuse-Grade Expandable Episode Cards
             items(activeEpisodes, key = { it.id }) { ep ->
                 val epCode = "S${activeSeason.seasonNumber.toString().padStart(2, '0')}E${ep.episodeNumber.toString().padStart(2, '0')}"
@@ -1768,6 +1811,7 @@ fun ShowDetailScreen(
                     (initialSeason == null || activeSeason.seasonNumber == initialSeason)
                 ShowEpisodeCard(
                     episode = ep,
+                    showId = show.id,
                     showTitle = show.title,
                     seasonNumber = activeSeason.seasonNumber,
                     showTmdbId = showTmdbId,
@@ -1934,6 +1978,7 @@ fun ShowDetailScreen(
 @Composable
 private fun ShowEpisodeCard(
     episode: net.ssync.player.DetailEpisode,
+    showId: Int,
     showTitle: String,
     seasonNumber: Int,
     showTmdbId: Int?,
@@ -2313,8 +2358,10 @@ private fun ShowEpisodeCard(
                             artworkUrl = api.artwork.episodeStill(episode.id),
                             streamUrl = api.streamUrl("episode", episode.id.toString()),
                             isVideo = true,
-                            parentId = showTmdbId?.toString(),
+                            parentId = showId.toString(),
                             compact = true,
+                            groupTitle = showTitle,
+                            sortIndex = seasonNumber * 1000 + episode.episodeNumber,
                         )
                     } else if (canRequest) {
                         Button(
@@ -2567,6 +2614,22 @@ fun EpisodeDetailScreen(
                         ),
                         modifier = Modifier.dpadFocusable(),
                     )
+                }
+                if (ep.owned) {
+                    item {
+                        OfflineDownloadButton(
+                            api = api,
+                            itemType = "episode",
+                            itemId = ep.id.toString(),
+                            title = ep.title ?: "$code",
+                            subtitle = "${show.title} · $code",
+                            artworkUrl = api.artwork.episodeStill(ep.id),
+                            isVideo = true,
+                            parentId = show.id.toString(),
+                            groupTitle = show.title,
+                            sortIndex = season.seasonNumber * 1000 + ep.episodeNumber,
+                        )
+                    }
                 }
                 if (prev != null) {
                     item {

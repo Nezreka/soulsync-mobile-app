@@ -3094,6 +3094,21 @@ fun PlaylistDetailScreen(
                         Text("Shuffle", fontWeight = FontWeight.SemiBold)
                     }
                 }
+                if (playable.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    // the playlist on the phone, kept in step if wanted (send to a phone on a tv)
+                    GroupDownloadButton(
+                        api = api,
+                        target = DownloadTarget(
+                            type = "playlist",
+                            id = (if (pl.kind == "yours") "user:" else "mirror:") + pl.id,
+                            title = pl.name,
+                            subtitle = "${playable.size} songs",
+                            artwork = relativeArt(pl.imageUrl),
+                            groupTitle = pl.name,
+                        ),
+                    )
+                }
                 Spacer(modifier = Modifier.height(8.dp))
             }
         }

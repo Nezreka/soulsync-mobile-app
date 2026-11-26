@@ -85,9 +85,66 @@ class PlaybackCoordinator(
         liveChannelSurfer?.invoke(currentCh, delta)
     }
 
+    /**
+     * a downloaded item plays from its file. offline, it also resumes where
+     * it was left (the server's position can't be asked) and its play is
+     * kept to send when the connection is back
+     */
     private fun resolveOffline(item: ActivePlayable): ActivePlayable {
-        val local = OfflineDownloadManager.localUriIfDownloaded(item.itemType, item.itemId)
-        return if (local != null) item.copy(streamUrl = local) else item
+        val local = OfflineDownloads.localUri(item.itemType, item.itemId) ?: return item
+        val task = OfflineDownloads.task(item.itemType, item.itemId)
+        val resume = if (item.resumePositionMs <= 0L && task != null && !task.watched && task.positionS > 10) {
+            (task.positionS * 1000).toLong()
+        } else {
+            item.resumePositionMs
+        }
+        return item.copy(streamUrl = local, resumePositionMs = resume)
+    }
+
+    private fun isLocalFile(item: ActivePlayable): Boolean = item.streamUrl.startsWith("file:")
+
+    /** a play of a downloaded item while offline counts once the server is back */
+    private fun notePlayStart(item: ActivePlayable) {
+        if (isLocalFile(item) && !OfflineSync.online.value) {
+            OfflineSync.queueEvent("play", item.itemType, item.itemId)
+        }
+    }
+
+    /**
+     * save a position (and watched mark) on the server, or keep it for later
+     * when the server can't be reached; downloads also remember it locally
+     */
+    private suspend fun saveOrQueue(
+        item: ActivePlayable,
+        positionMs: Long,
+        durationMs: Long,
+        finished: Boolean,
+        markWatched: Boolean,
+    ) {
+        val pos = positionMs / 1000.0
+        val dur = durationMs.takeIf { it > 0 }?.let { it / 1000.0 } ?: 0.0
+        OfflineSync.noteLocal(item.itemType, item.itemId, pos, dur, markWatched || finished)
+        val saved = if (OfflineSync.online.value || !isLocalFile(item)) {
+            api.saveProgress(
+                itemType = item.itemType,
+                itemId = item.itemId,
+                positionSeconds = pos,
+                durationSeconds = dur.takeIf { it > 0 },
+                finished = finished,
+                meta = buildProgressMeta(item),
+            )
+        } else {
+            MusicApiResult.Error("offline")
+        }
+        if (saved is MusicApiResult.Error) {
+            if (isLocalFile(item) || !OfflineSync.online.value) OfflineSync.queueEvent("progress", item.itemType, item.itemId, pos, dur)
+        }
+        if (markWatched) {
+            val w = if (saved is MusicApiResult.Success) api.markWatched(itemType = item.itemType, itemId = item.itemId) else saved
+            if (w is MusicApiResult.Error && (isLocalFile(item) || !OfflineSync.online.value)) {
+                OfflineSync.queueEvent("watched", item.itemType, item.itemId, pos, dur)
+            }
+        }
     }
 
     fun playAudio(item: ActivePlayable, upcoming: List<ActivePlayable> = emptyList()) {
@@ -97,6 +154,7 @@ class PlaybackCoordinator(
         isVideoMinimized = false
         activeItem = resolvedItem
         queue = listOf(resolvedItem) + resolvedUpcoming
+        notePlayStart(resolvedItem)
         // an earlier video session's queue mustn't start on the tv when this ends
         videoQueue = emptyList()
         lyricsText = null
@@ -159,6 +217,7 @@ class PlaybackCoordinator(
         isVideoMinimized = false
         val videoItem = resolveOffline(item).copy(isVideo = true)
         val resolvedUpcoming = upcoming.map { resolveOffline(it).copy(isVideo = true) }
+        notePlayStart(videoItem)
         videoQueue = listOf(videoItem) + resolvedUpcoming
         activeItem = videoItem
         positionMs = videoItem.resumePositionMs.coerceAtLeast(0L)
@@ -367,17 +426,13 @@ class PlaybackCoordinator(
                         api.markWatched(itemType = "movie", itemId = current.itemId)
                     }
                 } else {
-                    api.saveProgress(
-                        itemType = current.itemType,
-                        itemId = current.itemId,
-                        positionSeconds = lastPositionMs / 1000.0,
-                        durationSeconds = totalDurationMs.takeIf { it > 0 }?.let { it / 1000.0 },
+                    saveOrQueue(
+                        item = current,
+                        positionMs = lastPositionMs,
+                        durationMs = totalDurationMs,
                         finished = reachedCredits,
-                        meta = buildProgressMeta(current),
+                        markWatched = reachedCredits && (current.itemType == "movie" || current.itemType == "episode" || current.itemType == "youtube"),
                     )
-                    if (reachedCredits && (current.itemType == "movie" || current.itemType == "episode")) {
-                        api.markWatched(itemType = current.itemType, itemId = current.itemId)
-                    }
                 }
                 if (stillActive && !toCast) api.clearPresence()
             }
@@ -558,6 +613,7 @@ class PlaybackCoordinator(
             activeItem = next
             item = next
             lyricsText = null
+            notePlayStart(next)
             if (next.itemType == "track") {
                 scope.launch {
                     val res = api.fetchTrackLyrics(next.itemId)
@@ -591,13 +647,8 @@ class PlaybackCoordinator(
             val at = positionMs
             val length = durationMs
             scope.launch {
-                api.saveProgress(
-                    itemType = saving.itemType,
-                    itemId = saving.itemId,
-                    positionSeconds = at / 1000.0,
-                    durationSeconds = length.takeIf { it > 0 }?.let { it / 1000.0 },
-                    meta = buildProgressMeta(saving),
-                )
+                val finished = length > 0 && at >= length * 0.95
+                saveOrQueue(saving, at, length, finished = finished, markWatched = false)
             }
         }
     }

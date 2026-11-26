@@ -621,6 +621,25 @@ fun CinemaArtistDetailScreen(
                     }
                 }
 
+                // the artist's albums in one go (send to a phone on a tv)
+                item(key = "artist-download") {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(start = sideStart, end = sideEnd),
+                        horizontalArrangement = if (isTv) Arrangement.Start else Arrangement.Center,
+                    ) {
+                        GroupDownloadButton(
+                            api = api,
+                            target = DownloadTarget(
+                                type = "artist",
+                                id = a.id.toString(),
+                                title = a.name,
+                                artwork = relativeArt(heroUrl),
+                                groupTitle = a.name,
+                            ),
+                        )
+                    }
+                }
+
                 // 2. "You & [Artist]" Personal Listening Card (beats Plexamp!)
                 yourPlays?.takeIf { it.playCount > 0 }?.let { stats ->
                     item(key = "artist-your-plays") {
@@ -1504,8 +1523,33 @@ fun CinemaAlbumDetailScreen(
                     }
                 }
 
-                // 2. Tracklist Header
+                // 2. Tracklist Header (with the whole album's download, or send to a phone on a tv)
                 item(key = "album-tracks-head") {
+                    if (playableTracks.isNotEmpty()) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(start = sideStart, end = sideEnd, top = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = "${playableTracks.size} ${if (playableTracks.size == 1) "song" else "songs"}",
+                                color = Color.White.copy(alpha = 0.6f),
+                                fontSize = 12.5.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.weight(1f),
+                            )
+                            GroupDownloadButton(
+                                api = api,
+                                target = DownloadTarget(
+                                    type = "album",
+                                    id = al.id.toString(),
+                                    title = al.title,
+                                    subtitle = al.primaryArtist?.name.orEmpty(),
+                                    artwork = relativeArt(coverUrl),
+                                    groupTitle = al.title,
+                                ),
+                            )
+                        }
+                    }
                     HorizontalDivider(
                         modifier = Modifier.padding(start = sideStart, end = sideEnd, top = 6.dp, bottom = 6.dp),
                         thickness = 0.75.dp,

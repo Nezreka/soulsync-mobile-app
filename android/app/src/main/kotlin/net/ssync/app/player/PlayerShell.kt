@@ -129,6 +129,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.media3.session.MediaController
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
@@ -200,14 +201,27 @@ fun PlayerShell(
         }
     }
 
-    // Initialize Offline Downloads manager, sync any offline deletions, and check admin role
+    // downloads: the store, the server's client for them, and the admin role
     var isAdminUser by remember { mutableStateOf(false) }
     LaunchedEffect(api, context) {
-        OfflineDownloadManager.init(context)
-        OfflineDownloadManager.syncPendingRemovals(api)
+        OfflineDownloads.init(context)
+        OfflineSync.attach(context, api)
         val dlMeta = (api.fetchMyDownloads(includeRemoved = false) as? MusicApiResult.Success)?.data
         if (dlMeta != null) isAdminUser = dlMeta.isAdmin
     }
+    // the reconcile loop (phones only: a tv keeps no downloads). it also
+    // notices when the server can't be reached, and the app goes offline
+    if (!LocalIsTv.current) {
+        // only while the app is on screen: in the background it would poll for nothing
+        val dlLifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+        LaunchedEffect(dlLifecycle) {
+            dlLifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.STARTED) {
+                OfflineSync.runWhileOpen(context)
+            }
+        }
+        LaunchedEffect(networkEpoch) { if (networkEpoch > 0) OfflineSync.onNetworkChanged(context) }
+    }
+    val serverOnline by OfflineSync.online.collectAsState()
 
     // Refresh live LAN + WAN candidate addresses from /api/devices/me (picks up UPnP port changes without re-pairing)
     LaunchedEffect(api, currentRecord.lookupId) {
@@ -444,10 +458,12 @@ fun PlayerShell(
         }
     }
 
-    val hasFullBleedHero = (current is PlayerDestination.Home && homeHasHero) ||
-        current is PlayerDestination.MovieDetail ||
-        current is PlayerDestination.ShowDetail ||
-        current is PlayerDestination.EpisodeDetail
+    val hasFullBleedHero = serverOnline && (
+        (current is PlayerDestination.Home && homeHasHero) ||
+            current is PlayerDestination.MovieDetail ||
+            current is PlayerDestination.ShowDetail ||
+            current is PlayerDestination.EpisodeDetail
+        )
 
     CompositionLocalProvider(
         LocalSoulSyncImageLoader provides imageLoader,
@@ -578,7 +594,10 @@ fun PlayerShell(
                                             },
                                             label = "playerPageTransition",
                                         ) { targetDest ->
-                                            PlayerContent(
+                                            // no connection: only what's on the phone (settings stays reachable)
+                                            if (!serverOnline && !isTv && targetDest != PlayerDestination.Settings) {
+                                                DownloadsScreen(api, coordinator, offlineMode = true)
+                                            } else PlayerContent(
                                                 current = targetDest,
                                                 record = currentRecord,
                                                 api = api,

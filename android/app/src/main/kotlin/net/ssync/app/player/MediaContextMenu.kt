@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.BookmarkAdd
 import androidx.compose.material.icons.filled.BookmarkRemove
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.SendToMobile
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -87,9 +88,11 @@ fun MediaContextMenuSheet(
     onDismiss: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
-    val downloads by OfflineDownloadManager.items.collectAsState()
-    val dlKey = OfflineDownloadManager.keyOf(item.itemType, item.itemId)
+    val downloads by OfflineDownloads.tasks.collectAsState()
+    val dlKey = net.ssync.player.offlineKey(item.itemType, item.itemId)
     val savedDownload = downloads.firstOrNull { it.key == dlKey }
+    val isTv = net.ssync.pairing.ui.LocalIsTv.current
+    var dlSheet by remember { mutableStateOf(false) }
     var statusBanner by remember { mutableStateOf<String?>(null) }
     var showPlaylistSheet by remember { mutableStateOf(false) }
 
@@ -106,11 +109,11 @@ fun MediaContextMenuSheet(
         else -> "Media"
     }
 
+    // single items and whole groups; a tv sends them to a phone instead
     val canDownload = item.owned &&
-        item.itemType in setOf("movie", "episode", "track", "youtube", "audiobook", "podcast") &&
-        !item.streamUrl.isNullOrBlank()
+        item.itemType in setOf("movie", "episode", "track", "youtube", "audiobook", "podcast", "podcast_episode", "show", "season", "album", "artist", "playlist")
 
-    AdaptiveTvSheet(
+    if (!dlSheet) AdaptiveTvSheet(
         onDismissRequest = onDismiss,
         containerColor = Color(0xFF131520),
         contentColor = Color.White,
@@ -319,36 +322,33 @@ fun MediaContextMenuSheet(
                 )
             }
 
-            // 6. Download / Remove Offline Download
+            // 6. Download (sheet with sizes) / remove, or send to a phone on a tv
             if (canDownload) {
-                if (savedDownload != null) {
+                if (!isTv && savedDownload != null && savedDownload.state == net.ssync.player.TaskState.DOWNLOADED) {
                     ContextMenuRow(
                         icon = Icons.Default.DeleteOutline,
-                        label = "Remove offline download",
+                        label = "Remove from this phone",
                         tint = Color(0xFFFDA4AF),
                         onClick = {
-                            OfflineDownloadManager.deleteDownload(api, savedDownload)
+                            OfflineDownloads.remove(listOf(savedDownload.key))
+                            onDismiss()
+                        },
+                    )
+                } else if (!isTv && savedDownload != null) {
+                    ContextMenuRow(
+                        icon = Icons.Default.DeleteOutline,
+                        label = "Cancel download",
+                        tint = Color(0xFFFDA4AF),
+                        onClick = {
+                            OfflineDownloads.remove(listOf(savedDownload.key))
                             onDismiss()
                         },
                     )
                 } else {
                     ContextMenuRow(
-                        icon = Icons.Default.Download,
-                        label = "Download for offline",
-                        onClick = {
-                            OfflineDownloadManager.enqueueDownload(
-                                api = api,
-                                itemType = item.itemType,
-                                itemId = item.itemId,
-                                title = item.title,
-                                subtitle = item.subtitle,
-                                artworkUrl = item.artworkUrl,
-                                streamUrl = item.streamUrl!!,
-                                isVideo = item.isVideo,
-                                parentId = item.parentId,
-                            )
-                            onDismiss()
-                        },
+                        icon = if (isTv) Icons.Default.SendToMobile else Icons.Default.Download,
+                        label = if (isTv) "Send to a phone" else "Download",
+                        onClick = { dlSheet = true },
                     )
                 }
             }
@@ -382,6 +382,31 @@ fun MediaContextMenuSheet(
                 }
             }
         }
+    }
+
+    if (dlSheet) {
+        DownloadSheet(
+            api = api,
+            target = DownloadTarget(
+                type = item.itemType,
+                id = item.itemId,
+                title = item.title,
+                subtitle = item.subtitle,
+                artwork = relativeArt(item.artworkUrl),
+                groupType = when (item.itemType) {
+                    "episode" -> if (item.parentId != null) "show" else ""
+                    "track" -> if (item.parentId != null) "album" else ""
+                    else -> ""
+                },
+                groupId = if (item.itemType == "episode" || item.itemType == "track") item.parentId.orEmpty() else "",
+                parentId = item.parentId,
+            ),
+            sendMode = isTv,
+            onDismiss = {
+                dlSheet = false
+                onDismiss()
+            },
+        )
     }
 
     if (showPlaylistSheet && item.songRef != null) {

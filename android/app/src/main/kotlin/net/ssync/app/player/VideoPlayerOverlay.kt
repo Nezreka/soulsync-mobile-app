@@ -429,8 +429,15 @@ fun VideoPlayerOverlay(
                     (item.itemType == "movie" || (!item.isLiveGuide && item.itemType == "episode"))
                 ) {
                     watchedMarked = true
+                    val atS = positionMs / 1000.0
+                    val lenS = durationMs / 1000.0
                     scope.launch {
-                        api.markWatched(itemType = item.itemType, itemId = item.itemId)
+                        val r = api.markWatched(itemType = item.itemType, itemId = item.itemId)
+                        // a download remembers it; offline, the mark waits for the connection
+                        OfflineSync.noteLocal(item.itemType, item.itemId, atS, lenS, watched = true)
+                        if (r is MusicApiResult.Error && item.streamUrl.startsWith("file:")) {
+                            OfflineSync.queueEvent("watched", item.itemType, item.itemId, atS, lenS)
+                        }
                     }
                 }
             }
