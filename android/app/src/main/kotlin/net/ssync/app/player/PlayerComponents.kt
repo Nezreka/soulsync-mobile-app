@@ -31,6 +31,7 @@ import androidx.compose.material.icons.filled.BookmarkAdd
 import androidx.compose.material.icons.filled.BookmarkAdded
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Theaters
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PlayArrow
@@ -151,6 +152,8 @@ fun HeroSpotlight(
     onToggleWatchlist: (() -> Unit)? = null,
     backgroundVideo: (@Composable () -> Unit)? = null,
     playButtonModifier: Modifier = Modifier,
+    // shown only when the title has a trailer: plays it whole, with sound, in youtube
+    onTrailer: (() -> Unit)? = null,
 ) {
     val isTv = LocalIsTv.current
     val chips = subtitle.split("•").map { it.trim() }.filter { it.isNotEmpty() }
@@ -317,51 +320,11 @@ fun HeroSpotlight(
                     Spacer(modifier = Modifier.width(5.dp))
                     Text("Play", color = playFg, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                 }
+                if (onTrailer != null) {
+                    HeroPillButton(label = "Trailer", icon = Icons.Default.Theaters, onClick = onTrailer)
+                }
                 if (onDetails != null) {
-                    var detailsFocused by remember { mutableStateOf(false) }
-                    val detailsScale by androidx.compose.animation.core.animateFloatAsState(
-                        targetValue = if (detailsFocused) 1.05f else 1f,
-                        animationSpec = androidx.compose.animation.core.tween(180),
-                        label = "heroDetailsScale",
-                    )
-                    val detailsBg by androidx.compose.animation.animateColorAsState(
-                        targetValue = if (detailsFocused) Color.White else SoulSyncColors.PanelGlass,
-                        animationSpec = androidx.compose.animation.core.tween(160),
-                        label = "heroDetailsBg",
-                    )
-                    val detailsFg by androidx.compose.animation.animateColorAsState(
-                        targetValue = if (detailsFocused) Color.Black else SoulSyncColors.TextPrimary,
-                        animationSpec = androidx.compose.animation.core.tween(160),
-                        label = "heroDetailsFg",
-                    )
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Center,
-                        modifier = Modifier
-                            .height(40.dp)
-                            .graphicsLayer {
-                                scaleX = detailsScale
-                                scaleY = detailsScale
-                            }
-                            .clip(RoundedCornerShape(999.dp))
-                            .background(detailsBg)
-                            .then(
-                                if (detailsFocused) Modifier
-                                else Modifier.border(1.dp, SoulSyncColors.LineStrong, RoundedCornerShape(999.dp)),
-                            )
-                            .onFocusChanged { detailsFocused = it.isFocused }
-                            .clickable(onClick = onDetails)
-                            .padding(horizontal = 16.dp),
-                    ) {
-                        Icon(
-                            Icons.Default.Info,
-                            contentDescription = null,
-                            tint = detailsFg,
-                            modifier = Modifier.size(16.dp),
-                        )
-                        Spacer(modifier = Modifier.width(5.dp))
-                        Text("Details", color = detailsFg, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-                    }
+                    HeroPillButton(label = "Details", icon = Icons.Default.Info, onClick = onDetails)
                 }
                 if (onToggleWatchlist != null) {
                     var watchlistFocused by remember { mutableStateOf(false) }
@@ -421,6 +384,50 @@ fun HeroSpotlight(
                 }
             }
         }
+    }
+}
+
+/** a glass pill beside the hero's Play button (Trailer, Details), d-pad focusable */
+@Composable
+private fun HeroPillButton(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, onClick: () -> Unit) {
+    var focused by remember { mutableStateOf(false) }
+    val scale by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = if (focused) 1.05f else 1f,
+        animationSpec = androidx.compose.animation.core.tween(180),
+        label = "heroPillScale",
+    )
+    val bg by androidx.compose.animation.animateColorAsState(
+        targetValue = if (focused) Color.White else SoulSyncColors.PanelGlass,
+        animationSpec = androidx.compose.animation.core.tween(160),
+        label = "heroPillBg",
+    )
+    val fg by androidx.compose.animation.animateColorAsState(
+        targetValue = if (focused) Color.Black else SoulSyncColors.TextPrimary,
+        animationSpec = androidx.compose.animation.core.tween(160),
+        label = "heroPillFg",
+    )
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center,
+        modifier = Modifier
+            .height(40.dp)
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
+            .clip(RoundedCornerShape(999.dp))
+            .background(bg)
+            .then(
+                if (focused) Modifier
+                else Modifier.border(1.dp, SoulSyncColors.LineStrong, RoundedCornerShape(999.dp)),
+            )
+            .onFocusChanged { focused = it.isFocused }
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp),
+    ) {
+        Icon(icon, contentDescription = null, tint = fg, modifier = Modifier.size(16.dp))
+        Spacer(modifier = Modifier.width(5.dp))
+        Text(label, color = fg, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
     }
 }
 

@@ -242,6 +242,7 @@ fun MovieDetailScreen(
                 ).joinToString("  •  "),
                 backdropUrl = api.artwork.movieBackdrop(movie.id),
                 inWatchlist = inWatchlist,
+                onTrailer = rememberTrailerAction(extras?.trailer?.key),
                 onPlay = {
                     coordinator.playVideo(
                         ActivePlayable(
@@ -1457,6 +1458,7 @@ fun ShowDetailScreen(
                 backdropUrl = api.artwork.showBackdrop(show.id),
                 eyebrow = upNextLabel,
                 inWatchlist = inWatchlist,
+                onTrailer = rememberTrailerAction(extras?.trailer?.key),
                 onPlay = {
                     upNext?.let { (se, ep) -> playEpisode(se.seasonNumber, ep) }
                 },

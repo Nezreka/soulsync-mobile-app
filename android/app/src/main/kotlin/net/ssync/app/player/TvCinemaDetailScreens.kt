@@ -41,6 +41,7 @@ import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Theaters
 import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -119,6 +120,7 @@ internal fun TvCinemaMovieDetail(
     val context = LocalContext.current
     val imageLoader = LocalSoulSyncImageLoader.current
     val density = LocalDensity.current
+    val trailerAction = rememberTrailerAction(extras?.trailer?.key)
 
     val posterUrl = api.artwork.moviePoster(movie.id, width = 600)
     val backdropUrl = if (movie.hasBackdrop) api.artwork.movieBackdrop(movie.id, width = 1920) else posterUrl
@@ -458,6 +460,9 @@ internal fun TvCinemaMovieDetail(
                                 active = inWatchlist,
                                 onClick = onToggleWatchlist,
                             )
+                            trailerAction?.let { play ->
+                                TvDetailActionButton(label = "Trailer", icon = Icons.Default.Theaters, onClick = play)
+                            }
                             TvDetailActionButton(
                                 label = "Watch Party",
                                 icon = Icons.Default.Group,
@@ -608,6 +613,7 @@ internal fun TvCinemaShowDetail(
     val context = LocalContext.current
     val imageLoader = LocalSoulSyncImageLoader.current
     val density = LocalDensity.current
+    val trailerAction = rememberTrailerAction(extras?.trailer?.key)
 
     val posterUrl = api.artwork.showPoster(show.id, width = 600)
     val backdropUrl = if (show.hasBackdrop) api.artwork.showBackdrop(show.id, width = 1920) else posterUrl
@@ -940,6 +946,9 @@ internal fun TvCinemaShowDetail(
                                 modifier = if (firstPlayable == null) Modifier.focusRequester(playFocus) else Modifier,
                                 onClick = onToggleWatchlist,
                             )
+                            trailerAction?.let { play ->
+                                TvDetailActionButton(label = "Trailer", icon = Icons.Default.Theaters, onClick = play)
+                            }
                             TvDetailActionButton(
                                 label = "Watch Party",
                                 icon = Icons.Default.Group,
