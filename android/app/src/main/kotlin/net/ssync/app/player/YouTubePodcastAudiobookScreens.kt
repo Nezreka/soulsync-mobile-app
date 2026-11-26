@@ -24,6 +24,7 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Podcasts
@@ -115,6 +116,19 @@ fun YouTubeScreen(
     fun thumbOf(v: YtVideo): String? =
         api.artwork.resolve(v.thumbnail) ?: api.artwork.forItem("youtube", v.id)
 
+    // long-press: play, download, info
+    fun ytContext(v: YtVideo, owned: Boolean = true) = MediaContextItem(
+        itemType = "youtube",
+        itemId = v.id,
+        title = v.title,
+        subtitle = v.channelTitle.orEmpty(),
+        artworkUrl = thumbOf(v),
+        streamUrl = api.streamUrl("youtube", v.id),
+        isVideo = true,
+        parentId = v.channelId,
+        owned = owned,
+    )
+
     fun playYt(v: YtVideo) {
         coordinator.playVideo(
             ActivePlayable(
@@ -172,6 +186,7 @@ fun YouTubeScreen(
                                         title = v.title,
                                         subtitle = v.channelTitle,
                                         artworkUrl = thumbOf(v),
+                                        contextItem = ytContext(v),
                                         onClick = { playYt(v) },
                                     )
                                 }
@@ -188,6 +203,7 @@ fun YouTubeScreen(
                                         title = v.title,
                                         subtitle = v.channelTitle,
                                         artworkUrl = thumbOf(v),
+                                        contextItem = ytContext(v, owned = v.downloaded),
                                         onClick = {
                                             val cid = v.channelId
                                             if (v.downloaded) {
@@ -238,6 +254,7 @@ fun YouTubeScreen(
                                         title = v.title,
                                         subtitle = ch.title,
                                         artworkUrl = thumbOf(v),
+                                        contextItem = ytContext(v),
                                         onClick = { playYt(v) },
                                     )
                                 }
@@ -277,6 +294,7 @@ fun YouTubeScreen(
                                                 title = v.title,
                                                 subtitle = v.channelTitle,
                                                 artworkUrl = thumbOf(v),
+                                                contextItem = ytContext(v),
                                                 onClick = { playYt(v) },
                                             )
                                         }
@@ -317,6 +335,16 @@ fun YouTubeScreen(
                                         Text(v.title, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
                                         Text(v.channelTitle.orEmpty(), style = MaterialTheme.typography.bodyMedium, maxLines = 1)
                                     }
+                                    ItemInfoIconButton(
+                                        api = api,
+                                        itemType = "youtube",
+                                        itemId = v.id,
+                                        title = v.title,
+                                        subtitle = v.channelTitle.orEmpty(),
+                                        artworkUrl = thumbOf(v),
+                                        size = 40.dp,
+                                        iconSize = 20.dp,
+                                    )
                                 }
                             }
                         }
@@ -360,6 +388,7 @@ fun YouTubeScreen(
                                         title = v.title,
                                         subtitle = v.channelTitle,
                                         artworkUrl = thumbOf(v),
+                                        contextItem = ytContext(v),
                                         onClick = { playYt(v) },
                                     )
                                 }
@@ -374,6 +403,7 @@ fun YouTubeScreen(
                                         title = v.title,
                                         subtitle = v.channelTitle,
                                         artworkUrl = thumbOf(v),
+                                        contextItem = ytContext(v),
                                         onClick = { playYt(v) },
                                     )
                                 }
@@ -388,6 +418,7 @@ fun YouTubeScreen(
                                         title = v.title,
                                         subtitle = v.channelTitle,
                                         artworkUrl = thumbOf(v),
+                                        contextItem = ytContext(v),
                                         onClick = { playYt(v) },
                                     )
                                 }
@@ -402,6 +433,7 @@ fun YouTubeScreen(
                                         title = v.title,
                                         subtitle = v.channelTitle,
                                         artworkUrl = thumbOf(v),
+                                        contextItem = ytContext(v),
                                         onClick = { playYt(v) },
                                     )
                                 }
@@ -480,6 +512,16 @@ fun YouTubeChannelScreen(
                     groupType = "youtube",
                     groupId = channelId,
                     groupTitle = channelName,
+                )
+                ItemInfoIconButton(
+                    api = api,
+                    itemType = "youtube",
+                    itemId = v.id,
+                    title = v.title,
+                    subtitle = channelName,
+                    artworkUrl = api.artwork.resolve(v.thumbnail),
+                    size = 40.dp,
+                    iconSize = 20.dp,
                 )
             }
         }
@@ -659,6 +701,16 @@ fun PodcastDetailScreen(
                         groupTitle = sub.title,
                     )
                 }
+                ItemInfoIconButton(
+                    api = api,
+                    itemType = "podcast_episode",
+                    itemId = "${sub.id}:$episodeKey",
+                    title = ep.title,
+                    subtitle = sub.title,
+                    artworkUrl = api.artwork.resolve(ep.artworkUrl ?: sub.artworkUrl),
+                    size = 40.dp,
+                    iconSize = 22.dp,
+                )
                 androidx.compose.material3.IconButton(onClick = { showEpReport = true }) {
                     Icon(
                         imageVector = Icons.Default.Flag,
@@ -816,6 +868,31 @@ fun AudiobookDetailScreen(
                 groupTitle = book.title,
             ),
         )
+        Spacer(modifier = Modifier.height(10.dp))
+        var showBookInfo by remember(book.asin) { mutableStateOf(false) }
+        androidx.compose.material3.OutlinedButton(
+            onClick = { showBookInfo = true },
+            modifier = Modifier.fillMaxWidth().height(46.dp).dpadFocusable(),
+        ) {
+            Icon(
+                imageVector = Icons.Outlined.Info,
+                contentDescription = null,
+                tint = SoulSyncColors.TextSecondary,
+            )
+            Spacer(modifier = Modifier.width(6.dp))
+            Text("Info", color = SoulSyncColors.TextPrimary)
+        }
+        if (showBookInfo) {
+            ItemInfoSheet(
+                api = api,
+                itemType = "audiobook",
+                itemId = book.asin,
+                fallbackTitle = book.title,
+                fallbackSubtitle = book.author.orEmpty(),
+                fallbackArtwork = api.artwork.resolve(book.coverUrl),
+                onDismiss = { showBookInfo = false },
+            )
+        }
         Spacer(modifier = Modifier.height(10.dp))
         var showBookReport by remember(book.asin) { mutableStateOf(false) }
         androidx.compose.material3.OutlinedButton(

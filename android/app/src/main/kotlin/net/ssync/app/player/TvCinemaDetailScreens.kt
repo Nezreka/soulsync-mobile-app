@@ -9,6 +9,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.BringIntoViewSpec
 import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.foundation.layout.Arrangement
@@ -33,6 +34,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.filled.BookmarkAdd
 import androidx.compose.material.icons.filled.BookmarkAdded
 import androidx.compose.material.icons.filled.Check
@@ -468,6 +470,23 @@ internal fun TvCinemaMovieDetail(
                                 icon = Icons.Default.Group,
                                 onClick = onStartWatchParty,
                             )
+                            var showInfo by remember(movie.id) { mutableStateOf(false) }
+                            TvDetailIconAction(
+                                icon = Icons.Outlined.Info,
+                                contentDescription = "Info",
+                                onClick = { showInfo = true },
+                            )
+                            if (showInfo) {
+                                ItemInfoSheet(
+                                    api = api,
+                                    itemType = "movie",
+                                    itemId = movie.id.toString(),
+                                    fallbackTitle = movie.title,
+                                    fallbackSubtitle = movie.year?.toString() ?: "",
+                                    fallbackArtwork = posterUrl,
+                                    onDismiss = { showInfo = false },
+                                )
+                            }
                             TvDetailIconAction(
                                 icon = Icons.Default.Flag,
                                 contentDescription = "Report issue",
@@ -619,6 +638,18 @@ internal fun TvCinemaShowDetail(
     val backdropUrl = if (show.hasBackdrop) api.artwork.showBackdrop(show.id, width = 1920) else posterUrl
 
     var logoUrl by remember(show.id) { mutableStateOf(api.artwork.resolve(show.logo)) }
+    var infoEpisode by remember(show.id) { mutableStateOf<Pair<DetailEpisode, Int>?>(null) }
+    infoEpisode?.let { (ep, seasonNum) ->
+        ItemInfoSheet(
+            api = api,
+            itemType = "episode",
+            itemId = ep.id.toString(),
+            fallbackTitle = ep.title ?: "Episode ${ep.episodeNumber}",
+            fallbackSubtitle = "${show.title} · S${seasonNum}E${ep.episodeNumber}",
+            fallbackArtwork = if (ep.hasStill) api.artwork.episodeStill(ep.id) else null,
+            onDismiss = { infoEpisode = null },
+        )
+    }
     var targetAmbient by remember(show.id) { mutableStateOf(Color(0xFF151326)) }
 
     val orderedSeasons = remember(show.seasons) {
@@ -1019,6 +1050,8 @@ internal fun TvCinemaShowDetail(
                                                 if (ep.owned) onPlayEpisode(ep, activeSeason?.seasonNumber ?: 1)
                                                 else onOpenEpisodeDetail(ep.id)
                                             },
+                                            // hold select for the episode's info
+                                            onLongClick = { infoEpisode = ep to (activeSeason?.seasonNumber ?: 1) },
                                         )
                                     }
                                 }
@@ -1242,12 +1275,14 @@ private fun TvDetailIconAction(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun TvDetailEpisodeCard(
     ep: DetailEpisode,
     seasonNum: Int,
     stillUrl: String?,
     onClick: () -> Unit,
+    onLongClick: (() -> Unit)? = null,
 ) {
     var focused by remember { mutableStateOf(false) }
     val scale by animateFloatAsState(
@@ -1264,7 +1299,7 @@ private fun TvDetailEpisodeCard(
                 scaleY = scale
             }
             .onFocusChanged { focused = it.isFocused || it.hasFocus }
-            .clickable(onClick = onClick),
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
         verticalArrangement = Arrangement.spacedBy(7.dp),
     ) {
         Box(

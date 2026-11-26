@@ -43,6 +43,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AspectRatio
 import androidx.compose.material.icons.filled.Brightness6
@@ -958,7 +959,19 @@ fun VideoPlayerOverlay(
             }
         }
 
+        var showTvInfo by remember(item.itemId) { mutableStateOf(false) }
         var showTvReportDialog by remember(item.itemId) { mutableStateOf(false) }
+        if (showTvInfo) {
+            ItemInfoSheet(
+                api = api,
+                itemType = item.itemType,
+                itemId = item.itemId,
+                fallbackTitle = item.title,
+                fallbackSubtitle = item.subtitle,
+                fallbackArtwork = item.artworkUrl,
+                onDismiss = { showTvInfo = false },
+            )
+        }
         if (showTvReportDialog) {
             ReportIssueDialog(
                 api = api,
@@ -1331,6 +1344,16 @@ fun VideoPlayerOverlay(
                                         hudPoke++
                                     },
                                 )
+                                if (net.ssync.player.ItemInfoTypes.supports(item.itemType)) {
+                                    CinemaPill(
+                                        icon = Icons.Outlined.Info,
+                                        label = "Info",
+                                        onClick = {
+                                            showTvInfo = true
+                                            hudPoke++
+                                        },
+                                    )
+                                }
                                 CinemaPill(
                                     icon = Icons.Default.Flag,
                                     label = "Report",
@@ -1481,6 +1504,21 @@ fun VideoPlayerOverlay(
                                     .padding(horizontal = 8.dp, vertical = 6.dp),
                             )
                         }
+                        Spacer(modifier = Modifier.width(8.dp))
+                    }
+                    if (!isTv) {
+                        ItemInfoIconButton(
+                            api = api,
+                            itemType = item.itemType,
+                            itemId = item.itemId,
+                            title = item.title,
+                            subtitle = item.subtitle,
+                            artworkUrl = item.artworkUrl,
+                            size = 40.dp,
+                            iconSize = 20.dp,
+                            tint = Color.White,
+                            background = Color.White.copy(alpha = 0.12f),
+                        )
                         Spacer(modifier = Modifier.width(8.dp))
                     }
                     var showReportDialog by remember(item.itemId) { mutableStateOf(false) }

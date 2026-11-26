@@ -5,6 +5,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -112,6 +113,19 @@ internal fun TvHomeVideos(
         else -> months.firstOrNull()?.let { "m:${it.month}" }
     }
     var currentRow by remember { mutableStateOf(firstKey) }
+    // hold select on a clip for its info
+    var infoFor by remember { mutableStateOf<HomeVideo?>(null) }
+    infoFor?.let { v ->
+        ItemInfoSheet(
+            api = api,
+            itemType = "home",
+            itemId = v.id,
+            fallbackTitle = HomeVideoText.title(v),
+            fallbackSubtitle = HomeVideoText.date(v),
+            fallbackArtwork = home.thumbUrl(v.id),
+            onDismiss = { infoFor = null },
+        )
+    }
 
     LaunchedEffect(o) {
         // land on the first card when the page opens (not when coming back to a place)
@@ -169,6 +183,7 @@ internal fun TvHomeVideos(
                                     hero = true,
                                     modifier = if (v.id == o.onThisDay.first().id) Modifier.focusRequester(req("day")) else Modifier,
                                     onFocused = { currentRow = "day" },
+                                    onLongClick = { infoFor = v },
                                     onClick = { playHomeClip(context, api, home, coordinator, v, o.onThisDay) },
                                 )
                             }
@@ -207,6 +222,7 @@ internal fun TvHomeVideos(
                     firstFocus = req(key),
                     onFocused = { currentRow = key },
                     onPlay = { v, list -> playHomeClip(context, api, home, coordinator, v, list) },
+                    onLongPress = { infoFor = it },
                 )
             }
             state.pageError?.let { msg -> item(key = "page-error") { RetryLine(msg) { state.pageError = null; state.retryEpoch++ } } }
@@ -304,6 +320,7 @@ private fun TvMonthRow(
     firstFocus: FocusRequester,
     onFocused: () -> Unit,
     onPlay: (HomeVideo, List<HomeVideo?>) -> Unit,
+    onLongPress: (HomeVideo) -> Unit = {},
 ) {
     val list = HomeList.month(m)
     val slots = state.slots[list.key]
@@ -327,6 +344,7 @@ private fun TvMonthRow(
                     width = TV_CLIP_W,
                     modifier = if (i == 0) Modifier.focusRequester(firstFocus) else Modifier,
                     onFocused = onFocused,
+                    onLongClick = { v?.let(onLongPress) },
                     onClick = { v?.let { onPlay(it, state.slots[list.key].orEmpty()) } },
                 )
             }
@@ -339,6 +357,7 @@ private fun TvMonthRow(
  * length; the name sits under it. a card still loading is focusable too, so
  * the row can be crossed quickly.
  */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun TvClipCard(
     v: HomeVideo?,
@@ -348,6 +367,7 @@ private fun TvClipCard(
     hero: Boolean = false,
     fill: Boolean = false,
     onFocused: () -> Unit = {},
+    onLongClick: (() -> Unit)? = null,
     onClick: () -> Unit,
 ) {
     var focused by remember { mutableStateOf(false) }
@@ -372,7 +392,12 @@ private fun TvClipCard(
                     focused = it.isFocused
                     if (it.isFocused) onFocused()
                 }
-                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onClick),
+                .combinedClickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onLongClick = onLongClick,
+                    onClick = onClick,
+                ),
         ) {
             if (v != null) {
                 HomeThumb(v, home, Modifier.fillMaxSize(), maxPx = if (hero) 720 else 480)
@@ -462,6 +487,19 @@ internal fun TvHomeAlbum(
     val slots = state.slots[list.key]
     val count = slots?.size ?: a.count
     val first = remember { FocusRequester() }
+    // hold select on a clip for its info
+    var infoFor by remember { mutableStateOf<HomeVideo?>(null) }
+    infoFor?.let { v ->
+        ItemInfoSheet(
+            api = api,
+            itemType = "home",
+            itemId = v.id,
+            fallbackTitle = HomeVideoText.title(v),
+            fallbackSubtitle = HomeVideoText.date(v),
+            fallbackArtwork = home.thumbUrl(v.id),
+            onDismiss = { infoFor = null },
+        )
+    }
     if (slots == null) LaunchedEffect(list.key, state.retryEpoch) { state.ensure(home, list, 0) }
     LaunchedEffect(slots != null) {
         if (slots != null && slots.isNotEmpty()) {
@@ -501,6 +539,7 @@ internal fun TvHomeAlbum(
                     width = TV_CLIP_W,
                     fill = true,
                     modifier = if (i == 0) Modifier.focusRequester(first) else Modifier,
+                    onLongClick = { v?.let { infoFor = it } },
                     onClick = { v?.let { playHomeClip(context, api, home, coordinator, it, state.slots[list.key].orEmpty()) } },
                 )
             }

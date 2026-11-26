@@ -327,6 +327,16 @@ fun MovieDetailScreen(
                     )
                 }
                 item {
+                    ItemInfoPillButton(
+                        api = api,
+                        itemType = "movie",
+                        itemId = movie.id.toString(),
+                        title = movie.title,
+                        subtitle = movie.year?.toString() ?: "",
+                        artworkUrl = api.artwork.moviePoster(movie.id),
+                    )
+                }
+                item {
                     ReportIssuePillButton(
                         onClick = {
                             issueTarget = ReportIssueTarget(
@@ -2386,6 +2396,15 @@ private fun ShowEpisodeCard(
                             Text(reqLabel, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1)
                         }
                     }
+                    ItemInfoIconButton(
+                        api = api,
+                        itemType = "episode",
+                        itemId = episode.id.toString(),
+                        title = "$showTitle · S${seasonNumber}E${episode.episodeNumber}",
+                        subtitle = episode.title ?: "",
+                        artworkUrl = api.artwork.episodeStill(episode.id),
+                        size = 38.dp,
+                    )
                     ReportIssuePillButton(
                         onClick = onReportIssue,
                         compact = true,
@@ -2632,6 +2651,16 @@ fun EpisodeDetailScreen(
                             sortIndex = season.seasonNumber * 1000 + ep.episodeNumber,
                         )
                     }
+                }
+                item {
+                    ItemInfoPillButton(
+                        api = api,
+                        itemType = "episode",
+                        itemId = ep.id.toString(),
+                        title = ep.title ?: "$code",
+                        subtitle = "${show.title} · $code",
+                        artworkUrl = api.artwork.episodeStill(ep.id),
+                    )
                 }
                 if (prev != null) {
                     item {

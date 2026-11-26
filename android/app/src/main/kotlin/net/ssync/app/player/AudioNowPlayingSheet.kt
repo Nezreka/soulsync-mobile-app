@@ -107,6 +107,7 @@ import kotlinx.coroutines.launch
 import net.ssync.pairing.theme.SoulSyncColors
 import net.ssync.pairing.ui.LocalIsTv
 import net.ssync.pairing.ui.dpadFocusable
+import net.ssync.player.ItemInfoTypes
 import net.ssync.player.PlayerApiClient
 import net.ssync.player.SongRefPayload
 import kotlin.math.PI
@@ -454,6 +455,17 @@ fun AudioNowPlayingSheet(
                                 )
                             }
                         }
+                        ItemInfoIconButton(
+                            api = api,
+                            itemType = item.itemType,
+                            itemId = item.itemId,
+                            title = item.title,
+                            subtitle = item.subtitle,
+                            artworkUrl = item.artworkUrl,
+                            size = 40.dp,
+                            iconSize = 20.dp,
+                            tint = Color.White.copy(alpha = 0.78f),
+                        )
                         IconButton(
                             onClick = { showReportIssue = true },
                             modifier = Modifier.size(40.dp).clip(CircleShape).dpadFocusable(CircleShape),
@@ -737,6 +749,20 @@ fun AudioNowPlayingSheet(
                         }
                     }
 
+                    if (ItemInfoTypes.supports(item.itemType)) {
+                        ItemInfoIconButton(
+                            api = api,
+                            itemType = item.itemType,
+                            itemId = item.itemId,
+                            title = item.title,
+                            subtitle = item.subtitle,
+                            artworkUrl = item.artworkUrl,
+                            size = 38.dp,
+                            tint = Color.White.copy(alpha = 0.85f),
+                            background = Color.White.copy(alpha = 0.08f),
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                    }
                     IconButton(
                         onClick = { showReportIssue = true },
                         modifier = Modifier

@@ -225,6 +225,18 @@ internal fun HomeVideoSheet(
                         groupTitle = HomeVideoText.albumName(HomeAlbum(v.albumKey, v.album)),
                     )
                 }
+                ItemInfoIconButton(
+                    api = api,
+                    itemType = "home",
+                    itemId = v.id,
+                    title = title,
+                    subtitle = HomeVideoText.date(v),
+                    artworkUrl = thumb,
+                    size = 40.dp,
+                    iconSize = 20.dp,
+                    tint = Color.White.copy(alpha = 0.85f),
+                    background = Color.White.copy(alpha = 0.08f),
+                )
             }
             loadError?.let { Text(it, color = DlColors.Bad, fontSize = 12.5.sp) }
 

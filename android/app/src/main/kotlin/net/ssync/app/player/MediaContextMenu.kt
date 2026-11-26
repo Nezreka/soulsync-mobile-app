@@ -29,6 +29,7 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.SendToMobile
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Shuffle
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -95,6 +96,7 @@ fun MediaContextMenuSheet(
     var dlSheet by remember { mutableStateOf(false) }
     var statusBanner by remember { mutableStateOf<String?>(null) }
     var showPlaylistSheet by remember { mutableStateOf(false) }
+    var infoSheet by remember { mutableStateOf(false) }
 
     val kindLabel = when (item.itemType) {
         "movie" -> "Movie"
@@ -114,7 +116,7 @@ fun MediaContextMenuSheet(
     val canDownload = item.owned &&
         item.itemType in setOf("movie", "episode", "track", "youtube", "home", "audiobook", "podcast", "podcast_episode", "show", "season", "album", "artist", "playlist")
 
-    if (!dlSheet) AdaptiveTvSheet(
+    if (!dlSheet && !infoSheet) AdaptiveTvSheet(
         onDismissRequest = onDismiss,
         containerColor = Color(0xFF131520),
         contentColor = Color.White,
@@ -366,6 +368,15 @@ fun MediaContextMenuSheet(
                 )
             }
 
+            // 8. Info: metadata and file details
+            if (net.ssync.player.ItemInfoTypes.supports(item.itemType)) {
+                ContextMenuRow(
+                    icon = Icons.Outlined.Info,
+                    label = "Info",
+                    onClick = { infoSheet = true },
+                )
+            }
+
             if (statusBanner != null) {
                 Spacer(modifier = Modifier.height(6.dp))
                 Surface(
@@ -405,6 +416,21 @@ fun MediaContextMenuSheet(
             sendMode = isTv,
             onDismiss = {
                 dlSheet = false
+                onDismiss()
+            },
+        )
+    }
+
+    if (infoSheet) {
+        ItemInfoSheet(
+            api = api,
+            itemType = item.itemType,
+            itemId = item.itemId,
+            fallbackTitle = item.title,
+            fallbackSubtitle = item.subtitle,
+            fallbackArtwork = item.artworkUrl,
+            onDismiss = {
+                infoSheet = false
                 onDismiss()
             },
         )

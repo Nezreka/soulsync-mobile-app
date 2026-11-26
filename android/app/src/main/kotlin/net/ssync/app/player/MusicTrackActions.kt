@@ -178,6 +178,16 @@ internal fun TrackRowActionIcons(
                 parentId = playable.parentId,
                 compact = true,
             )
+            ItemInfoIconButton(
+                api = likedState.api,
+                itemType = playable.itemType,
+                itemId = playable.itemId,
+                title = playable.title,
+                subtitle = playable.subtitle,
+                artworkUrl = playable.artworkUrl,
+                size = 32.dp,
+                iconSize = 17.dp,
+            )
             IconButton(
                 onClick = { showReport = true },
                 modifier = Modifier.size(32.dp).dpadFocusable(androidx.compose.foundation.shape.CircleShape),
