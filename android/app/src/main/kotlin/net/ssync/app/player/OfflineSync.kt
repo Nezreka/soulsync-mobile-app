@@ -38,6 +38,21 @@ object OfflineSync {
     /** false once the server can't be reached; the app then shows only downloads */
     val online: StateFlow<Boolean> = _online.asStateFlow()
 
+    private val checkLock = Mutex()
+    private val onlineCheck = OnlineCheck(strikesToOffline = 2)
+
+    private val _checking = MutableStateFlow(false)
+    /** a look at the server is under way (the try again spinner) */
+    val checking: StateFlow<Boolean> = _checking.asStateFlow()
+
+    private val _lastChecked = MutableStateFlow(0L)
+    /** when the server was last asked, 0 before the first look */
+    val lastChecked: StateFlow<Long> = _lastChecked.asStateFlow()
+
+    private val _preferredBaseUrl = MutableStateFlow<String?>(null)
+    /** another of the server's addresses answered when the current one didn't: the shell moves to it */
+    val preferredBaseUrl: StateFlow<String?> = _preferredBaseUrl.asStateFlow()
+
     private val _lastSync = MutableStateFlow(0L)
     val lastSync: StateFlow<Long> = _lastSync.asStateFlow()
 
@@ -78,17 +93,64 @@ object OfflineSync {
         _online.value = value
     }
 
-    suspend fun checkOnline(context: Context): Boolean {
-        val api = client(context)
-        val ok = api?.reachable() == true
-        _online.value = ok
-        return ok
+    /**
+     * ask the server. the current address first, then every address it gave us
+     * (the lan one stops answering the moment you leave home). offline only
+     * after two misses in a row; one answer and it's back
+     */
+    suspend fun checkOnline(context: Context): Boolean = checkLock.withLock {
+        _checking.value = true
+        try {
+            val api = client(context)
+            val record = runCatching { KeystoreServerVault(context.applicationContext).load() }.getOrNull()
+            val http = api?.http
+            val found = onlineCheck.look(
+                currentBase = api?.base,
+                probeCurrent = { api?.reachable() == true },
+                raceAll = {
+                    val cands = record?.candidateAddresses.orEmpty()
+                    if (http == null || cands.isEmpty()) null
+                    else runCatching { CandidateAddressRacer(http).selectBestBaseUrl(cands) }.getOrNull()
+                },
+            )
+            val switchTo = found.switchTo
+            if (switchTo != null && http != null) {
+                attached = OfflineApiClient(switchTo, http)
+                if (record != null && record.lastWorkingBaseUrl != switchTo) {
+                    runCatching { KeystoreServerVault(context.applicationContext).save(record.copy(lastWorkingBaseUrl = switchTo)) }
+                }
+                _preferredBaseUrl.value = switchTo
+            }
+            val ok = onlineCheck.decide(found.reached, _online.value)
+            _online.value = ok
+            _lastChecked.value = System.currentTimeMillis()
+            found.reached
+        } finally {
+            _checking.value = false
+        }
+    }
+
+    /** the shell moved to [preferredBaseUrl]: clear it so the same address can be offered again later */
+    fun preferredTaken() {
+        _preferredBaseUrl.value = null
+    }
+
+    /** the try again button: look now, and catch up if the server's back */
+    fun retryNow(context: Context) {
+        if (_checking.value) return
+        scope.launch {
+            val ok = checkOnline(context)
+            if (ok) {
+                reconcile(context)
+                DownloadService.start(context)
+            }
+        }
     }
 
     /**
      * the loop the shell runs while the app is open (phones only): on start,
      * on reconnect and every 15 minutes it reconciles; it checks the server
-     * every minute, every 15 seconds while offline
+     * every minute, every 15 seconds after a miss
      */
     suspend fun runWhileOpen(context: Context) {
         OfflineDownloads.init(context)
@@ -102,6 +164,7 @@ object OfflineSync {
                 reconcile(context)
             }
             wasOnline = ok
+            // a miss is looked at again soon: offline needs two in a row
             delay(if (ok) 60_000L else 15_000L)
         }
     }

@@ -254,23 +254,7 @@ fun DownloadsScreen(
         }
         if (offlineMode || !online) {
             item {
-                Row(
-                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
-                        .background(Brush.horizontalGradient(listOf(SoulSyncColors.Accent.copy(alpha = 0.14f), SoulSyncColors.Accent.copy(alpha = 0.03f))))
-                        .border(1.dp, SoulSyncColors.Accent.copy(alpha = 0.25f), RoundedCornerShape(12.dp))
-                        .padding(horizontal = 12.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    Icon(Icons.Default.AirplanemodeActive, contentDescription = null, tint = SoulSyncColors.AccentLight, modifier = Modifier.size(18.dp))
-                    Text(
-                        buildString {
-                            append("Offline. ")
-                            append("Showing what's on this phone. Plays and positions sync when you're back.")
-                        },
-                        color = Color.White, fontSize = 13.sp,
-                    )
-                }
+                OfflineBanner()
             }
         }
 
@@ -1059,5 +1043,59 @@ internal fun RemoteDeviceCard(api: PlayerApiClient, offline: OfflineApiClient, d
     }
     sheetFor?.let { t ->
         DownloadSheet(api = api, target = t, sendMode = LocalIsTv.current, initialDeviceId = d.deviceId, onDismiss = { sheetFor = null; onChanged() })
+    }
+}
+
+/** offline: which server, when it was last asked, and a way to ask again now */
+@Composable
+private fun OfflineBanner() {
+    val context = LocalContext.current
+    val checking by OfflineSync.checking.collectAsState()
+    val lastChecked by OfflineSync.lastChecked.collectAsState()
+    val name = PlayerNavPrefs.serverName.value
+    var now by remember { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(lastChecked) {
+        while (true) {
+            now = System.currentTimeMillis()
+            kotlinx.coroutines.delay(15_000L)
+        }
+    }
+    Row(
+        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+            .background(Brush.horizontalGradient(listOf(SoulSyncColors.Accent.copy(alpha = 0.14f), SoulSyncColors.Accent.copy(alpha = 0.03f))))
+            .border(1.dp, SoulSyncColors.Accent.copy(alpha = 0.25f), RoundedCornerShape(12.dp))
+            .padding(start = 12.dp, end = 4.dp, top = 10.dp, bottom = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Icon(Icons.Default.AirplanemodeActive, contentDescription = null, tint = SoulSyncColors.AccentLight, modifier = Modifier.size(18.dp))
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text("Can't reach $name right now. Showing what's on this phone.", color = Color.White, fontSize = 13.sp)
+            Text(
+                listOfNotNull(
+                    if (lastChecked > 0) "Checked ${checkedAgo(now - lastChecked)}" else null,
+                    "plays and positions sync when you're back",
+                ).joinToString(" · ").replaceFirstChar { it.uppercase() },
+                color = DlColors.Muted, fontSize = 12.sp,
+            )
+        }
+        if (checking) {
+            Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(color = SoulSyncColors.AccentLight, strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
+            }
+        } else {
+            TextButton(onClick = { OfflineSync.retryNow(context) }) {
+                Text("Try again", color = SoulSyncColors.AccentLight, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+            }
+        }
+    }
+}
+
+internal fun checkedAgo(ms: Long): String {
+    val s = (ms / 1000).coerceAtLeast(0)
+    return when {
+        s < 60 -> "just now"
+        s < 3600 -> "${s / 60} min ago"
+        else -> "${s / 3600} h ago"
     }
 }

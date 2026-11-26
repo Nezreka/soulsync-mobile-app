@@ -225,6 +225,16 @@ fun PlayerShell(
         LaunchedEffect(networkEpoch) { if (networkEpoch > 0) OfflineSync.onNetworkChanged(context) }
     }
     val serverOnline by OfflineSync.online.collectAsState()
+    // the offline check found the server at another of its addresses (left home: lan to wan)
+    val preferredBase by OfflineSync.preferredBaseUrl.collectAsState()
+    LaunchedEffect(preferredBase) {
+        val best = preferredBase ?: return@LaunchedEffect
+        OfflineSync.preferredTaken()
+        if (best != activeBaseUrl) {
+            activeBaseUrl = best
+            currentRecord = currentRecord.copy(lastWorkingBaseUrl = best)
+        }
+    }
 
     // Refresh live LAN + WAN candidate addresses from /api/devices/me (picks up UPnP port changes without re-pairing)
     LaunchedEffect(api, currentRecord.lookupId) {
@@ -339,6 +349,12 @@ fun PlayerShell(
     }
 
     fun navigateTo(dest: PlayerDestination, clearToRoot: Boolean = false) {
+        // offline: say why the page won't open rather than quietly showing downloads again
+        if (!serverOnline && !isTv && dest != PlayerDestination.Settings && dest != PlayerDestination.Downloads) {
+            val name = currentRecord.serverName?.ifBlank { null } ?: PlayerNavPrefs.serverName.value
+            android.widget.Toast.makeText(context, "That needs $name. You're offline, so only downloads are here.", android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
         backStack = if (clearToRoot) listOf(dest) else backStack + dest
     }
 
