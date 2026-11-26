@@ -55,6 +55,8 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Forward10
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Replay10
@@ -588,7 +590,7 @@ fun VideoPlayerOverlay(
                                 if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
                             }
                         },
-                        modifier = Modifier.size(36.dp).clip(CircleShape).dpadFocusable(CircleShape),
+                        modifier = Modifier.size(48.dp).clip(CircleShape).dpadFocusable(CircleShape),
                     ) {
                         Icon(
                             imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
@@ -597,24 +599,27 @@ fun VideoPlayerOverlay(
                         )
                     }
 
+                    // the next queued video, when there is one
                     IconButton(
-                        onClick = { onExpand?.invoke() },
-                        modifier = Modifier.size(34.dp).clip(CircleShape).dpadFocusable(CircleShape),
+                        onClick = { onVideoEnded?.invoke() },
+                        enabled = onVideoEnded != null && !nextVideoTitle.isNullOrBlank(),
+                        modifier = Modifier.size(48.dp).clip(CircleShape).dpadFocusable(CircleShape),
                     ) {
                         Icon(
-                            imageVector = Icons.Default.KeyboardArrowUp,
-                            contentDescription = "Expand video",
-                            tint = Color.White,
+                            imageVector = Icons.Default.SkipNext,
+                            contentDescription = "Next",
+                            tint = if (!nextVideoTitle.isNullOrBlank()) Color.White else Color.White.copy(alpha = 0.3f),
                         )
                     }
 
+                    // stop: saves the spot and closes the mini player
                     IconButton(
                         onClick = { onClose(effectivePositionMs(), effectiveDurationMs()) },
-                        modifier = Modifier.size(34.dp).clip(CircleShape).dpadFocusable(CircleShape),
+                        modifier = Modifier.size(48.dp).clip(CircleShape).dpadFocusable(CircleShape),
                     ) {
                         Icon(
-                            imageVector = Icons.Default.Close,
-                            contentDescription = "Close video",
+                            imageVector = Icons.Default.Stop,
+                            contentDescription = "Stop",
                             tint = SoulSyncColors.TextSecondary,
                         )
                     }

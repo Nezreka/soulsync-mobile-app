@@ -68,6 +68,7 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.SmartDisplay
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Tv
@@ -2418,7 +2419,7 @@ internal fun TvTopRightMiniPlayer(
                     strong = true,
                 ) { coordinator.togglePlayPause() }
                 TvMiniButton(Icons.Default.SkipNext, "Next") { coordinator.skipNext() }
-                TvMiniButton(Icons.Default.Close, "Stop music", quiet = true) { coordinator.stopPlayback() }
+                TvMiniButton(Icons.Default.Stop, "Stop", quiet = true) { coordinator.stopPlayback() }
             }
         }
     }
@@ -2534,24 +2535,29 @@ private fun MiniTransportBar(
                         )
                     }
                 }
+                Spacer(modifier = Modifier.width(4.dp))
+                // play/pause, next, stop: 48dp targets that never shrink, the title gives way
                 IconButton(
                     onClick = onTogglePlayPause,
-                    modifier = Modifier
-                        .size(38.dp)
-                        .clip(CircleShape)
-                        .background(Color.White)
-                        .dpadFocusable(CircleShape),
+                    modifier = Modifier.size(48.dp).dpadFocusable(CircleShape),
                 ) {
-                    Icon(
-                        imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                        contentDescription = if (isPlaying) "Pause" else "Play",
-                        tint = Color.Black,
-                        modifier = Modifier.size(22.dp),
-                    )
+                    Box(
+                        modifier = Modifier.size(38.dp).clip(CircleShape).background(Color.White),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                            contentDescription = if (isPlaying) "Pause" else "Play",
+                            tint = Color.Black,
+                            modifier = Modifier.size(22.dp),
+                        )
+                    }
                 }
-                Spacer(modifier = Modifier.width(4.dp))
-                IconButton(onClick = onNext, modifier = Modifier.size(38.dp).dpadFocusable()) {
+                IconButton(onClick = onNext, modifier = Modifier.size(48.dp).dpadFocusable(CircleShape)) {
                     Icon(Icons.Default.SkipNext, contentDescription = "Next", tint = Color.White, modifier = Modifier.size(24.dp))
+                }
+                IconButton(onClick = onStop, modifier = Modifier.size(48.dp).dpadFocusable(CircleShape)) {
+                    Icon(Icons.Default.Stop, contentDescription = "Stop", tint = SoulSyncColors.TextSecondary, modifier = Modifier.size(22.dp))
                 }
             }
         }
