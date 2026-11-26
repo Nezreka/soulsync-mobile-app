@@ -166,6 +166,8 @@ data class OfflineReportItem(
     @SerialName("size_bytes") val sizeBytes: Long,
     val state: String,
     val progress: Double,
+    /** when it finished downloading (epoch ms): the downloads page lists newest first */
+    @SerialName("downloaded_at") val downloadedAt: Long? = null,
 )
 
 @Serializable
@@ -212,6 +214,8 @@ data class OfflineDeviceItem(
     @SerialName("position_s") @Serializable(with = FlexDoubleSerializer::class) val positionS: Double = 0.0,
     @SerialName("duration_s") @Serializable(with = FlexDoubleSerializer::class) val durationS: Double = 0.0,
     val kind: String? = null,
+    /** when it got there (iso), for newest first */
+    @SerialName("downloaded_at") val downloadedAt: String? = null,
 ) {
     val key: String get() = offlineKey(itemType, itemId)
 

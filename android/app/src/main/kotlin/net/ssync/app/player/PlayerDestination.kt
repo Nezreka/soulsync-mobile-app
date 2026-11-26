@@ -39,6 +39,8 @@ sealed interface PlayerDestination {
         val highlightTrackId: Int? = null,
     ) : PlayerDestination
     data class PlaylistDetail(val playlistId: Int) : PlayerDestination
+    /** one of soulsync's own playlists (daily mixes, moods, flow): its key and name */
+    data class DiscoverPlaylistDetail(val key: String, val title: String = "") : PlayerDestination
     data object YouTube : PlayerDestination
     data class YouTubeChannel(val channelId: String, val title: String) : PlayerDestination
     data object Podcasts : PlayerDestination

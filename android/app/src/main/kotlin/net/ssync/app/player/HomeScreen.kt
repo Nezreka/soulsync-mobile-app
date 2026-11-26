@@ -1296,23 +1296,8 @@ fun HomeScreen(
                                     tracksPresent = 0,
                                     trackCount = 0,
                                     modifier = Modifier.width(142.dp),
-                                    onClick = {
-                                        scope.launch {
-                                            (api.fetchDiscoverPlaylistDetail(dp.key) as? MusicApiResult.Success)?.let { res ->
-                                                val q = res.data.songs.filter { it.trackId != null }.map { t ->
-                                                    ActivePlayable(
-                                                        itemType = "track",
-                                                        itemId = t.trackId.toString(),
-                                                        title = t.title,
-                                                        subtitle = t.artist,
-                                                        artworkUrl = api.artwork.albumArtwork(t.albumId),
-                                                        streamUrl = api.streamUrl("track", t.trackId.toString()),
-                                                    )
-                                                }
-                                                if (q.isNotEmpty()) coordinator.playAudio(q.first(), q.drop(1))
-                                            }
-                                        }
-                                    },
+                                    // its own page: play, shuffle or download it
+                                    onClick = { onNavigate(PlayerDestination.DiscoverPlaylistDetail(dp.key, dp.title)) },
                                 )
                             }
                         }

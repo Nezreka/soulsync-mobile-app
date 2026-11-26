@@ -1811,7 +1811,8 @@ private fun PlayerSidebar(
         (current is PlayerDestination.CollectionDetail && current.collection.mediaType != "movie")
     val isYouTubeSel = current is PlayerDestination.YouTube || current is PlayerDestination.YouTubeChannel
     val isMusicSel = current is PlayerDestination.Music || current is PlayerDestination.AlbumDetail || current is PlayerDestination.ArtistDetail
-    val isPlaylistsSel = current is PlayerDestination.Playlists || current is PlayerDestination.PlaylistDetail
+    val isPlaylistsSel = current is PlayerDestination.Playlists || current is PlayerDestination.PlaylistDetail ||
+        current is PlayerDestination.DiscoverPlaylistDetail
     val isPodcastsSel = current is PlayerDestination.Podcasts || current is PlayerDestination.PodcastDetail
     val isAudiobooksSel = current is PlayerDestination.Audiobooks || current is PlayerDestination.AudiobookDetail
     val isAdminOrDownloadsSel = if (isAdmin) {
@@ -2288,6 +2289,8 @@ private fun PlayerContent(
             highlightTrackId = current.highlightTrackId,
         )
         is PlayerDestination.PlaylistDetail -> PlaylistDetailScreen(current.playlistId, api, coordinator, onDeviceRevoked)
+        is PlayerDestination.DiscoverPlaylistDetail ->
+            DiscoverPlaylistDetailScreen(current.key, current.title, api, coordinator, onDeviceRevoked)
         PlayerDestination.YouTube -> YouTubeScreen(api, coordinator, { id, title -> onNavigate(PlayerDestination.YouTubeChannel(id, title)) }, onDeviceRevoked)
         is PlayerDestination.YouTubeChannel -> YouTubeChannelScreen(current.channelId, current.title, api, coordinator, onDeviceRevoked)
         PlayerDestination.Podcasts -> PodcastsScreen(api, { onNavigate(PlayerDestination.PodcastDetail(it)) }, onDeviceRevoked)

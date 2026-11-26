@@ -295,6 +295,51 @@ class OfflineLogicTest {
     }
 
     @Test
+    fun sectionsFileByKindInTheScreensOrderWithLooseSongsTogether() {
+        val done = TaskState.DOWNLOADED
+        val tasks = listOf(
+            task("h", type = "home", state = done, completed = 1),
+            task("p1", type = "podcast_episode", state = done, completed = 1).copy(groupType = "podcast", groupId = "3", groupTitle = "Pod"),
+            task("b", type = "audiobook", state = done, completed = 1).copy(groupType = "audiobook", groupId = "b", groupTitle = "Dune"),
+            task("1", type = "track", state = done, completed = 50).copy(groupType = "playlist", groupId = "user:4", groupTitle = "Road Trip"),
+            task("2", type = "track", state = done, completed = 10).copy(groupType = "album", groupId = "9", groupTitle = "Abbey Road"),
+            task("3", type = "track", state = done, completed = 30).copy(groupType = "track", groupId = "3"),
+            task("4", type = "track", state = done, completed = 40),
+            task("y", type = "youtube", state = done, completed = 1),
+            task("9", type = "movie", state = done, completed = 1),
+            task("e1", state = done, completed = 1, group = "12").copy(groupType = "season", groupTitle = "Severance", sortIndex = 2001),
+            task("e2", state = done, completed = 1, group = "12").copy(groupType = "season", groupTitle = "Severance", sortIndex = 1003),
+            task("e3", state = done, completed = 1, group = "12").copy(groupType = "season", groupTitle = "Severance", sortIndex = 5),
+        )
+        val sections = OfflineGrouping.sections(tasks)
+        assertEquals(
+            listOf("TV shows", "Movies", "YouTube", "Music", "Audiobooks", "Podcasts", "Home videos"),
+            sections.map { it.label },
+        )
+        val music = sections.first { it.shelf == OfflineShelf.MUSIC }
+        // newest download first; songs on their own share one card, newest first inside
+        assertEquals(listOf("Road Trip", "Songs", "Abbey Road"), music.groups.map { it.title })
+        assertEquals(listOf("4", "3"), music.groups[1].tasks.map { it.itemId })
+        assertEquals(4, music.count)
+        assertEquals(listOf("Abbey Road", "Road Trip", "Songs"), OfflineGrouping.sections(tasks, OfflineSort.AZ).first { it.shelf == OfflineShelf.MUSIC }.groups.map { it.title })
+        val show = sections.first().groups.single()
+        assertEquals(listOf("Season 1", "Season 2", "Episodes"), OfflineGrouping.seasons(show).map { it.first })
+        assertEquals(listOf(OfflineShelf.MOVIES), OfflineGrouping.sections(listOf(task("9", type = "movie"))).map { it.shelf })
+    }
+
+    @Test
+    fun reportSaysWhenADownloadFinished() {
+        val items = OfflineReconcile.reportItems(
+            listOf(
+                task("1", type = "movie", state = TaskState.DOWNLOADED, completed = 1_790_000_000_000),
+                task("2", type = "movie", state = TaskState.QUEUED, completed = 0),
+            ),
+        )
+        assertEquals(1_790_000_000_000L, items[0].downloadedAt)
+        assertNull(items[1].downloadedAt)
+    }
+
+    @Test
     fun formatsBytesAndSpeeds() {
         assertEquals("4.1 GB", OfflineFormat.bytes((4.1 * gb).toLong()))
         assertEquals("690 MB", OfflineFormat.bytes(690L * 1024 * 1024))

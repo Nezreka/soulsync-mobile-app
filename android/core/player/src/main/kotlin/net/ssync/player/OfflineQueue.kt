@@ -221,6 +221,7 @@ object OfflineReconcile {
             sizeBytes = if (t.state == TaskState.DOWNLOADED) t.diskBytes else maxOf(t.totalBytes, t.expectedBytes),
             state = reportState(t.state),
             progress = (t.progress * 1000.0).toLong() / 1000.0,
+            downloadedAt = t.completedAtMs.takeIf { t.state == TaskState.DOWNLOADED && it > 0 },
         )
     }
 
@@ -360,6 +361,18 @@ data class OfflineGroup(
     val watchedBytes: Long get() = watched.sumOf { it.diskBytes }
 }
 
+enum class OfflineSort { RECENT, AZ }
+
+/** one kind on the downloads screen: its cards, how many things and how big */
+data class OfflineSection(
+    val shelf: OfflineShelf,
+    val label: String,
+    val groups: List<OfflineGroup>,
+) {
+    val count: Int get() = groups.sumOf { it.tasks.size }
+    val bytes: Long get() = groups.sumOf { it.bytes }
+}
+
 object OfflineGrouping {
     /** downloaded and pending items folded into cards, newest first in each shelf */
     fun groups(tasks: List<DownloadTask>): List<OfflineGroup> {
@@ -396,6 +409,60 @@ object OfflineGrouping {
         "season" -> "show"
         "" -> t.itemType
         else -> t.groupType
+    }
+
+    /** the downloads screen's kinds, in its order, with their headings */
+    val SECTIONS: List<Pair<OfflineShelf, String>> = listOf(
+        OfflineShelf.TV to "TV shows",
+        OfflineShelf.MOVIES to "Movies",
+        OfflineShelf.YOUTUBE to "YouTube",
+        OfflineShelf.MUSIC to "Music",
+        OfflineShelf.BOOKS to "Audiobooks",
+        OfflineShelf.PODCASTS to "Podcasts",
+        OfflineShelf.HOME to "Home videos",
+    )
+
+    /** the group loose songs share: a song downloaded on its own */
+    const val SONGS = "songs"
+
+    /**
+     * downloads filed by kind, in the screen's order, empty kinds left out.
+     * albums and playlists are cards; songs downloaded on their own share one
+     * "Songs" card. cards are newest download first, or by name.
+     */
+    fun sections(tasks: List<DownloadTask>, sort: OfflineSort = OfflineSort.RECENT): List<OfflineSection> {
+        val (loose, rest) = tasks.partition { it.itemType == "track" && (it.groupType == "track" || (it.groupType.isBlank() && it.parentId.isNullOrBlank())) }
+        val cards = groups(rest).toMutableList()
+        if (loose.isNotEmpty()) {
+            cards += OfflineGroup(
+                shelf = OfflineShelf.MUSIC, groupType = SONGS, groupId = "all", title = "Songs", artwork = null,
+                tasks = loose.sortedByDescending { newest(it) },
+            )
+        }
+        val byName = compareBy<OfflineGroup, String>(String.CASE_INSENSITIVE_ORDER) { it.title }
+        val order = when (sort) {
+            OfflineSort.AZ -> byName
+            OfflineSort.RECENT -> compareByDescending<OfflineGroup> { g -> g.tasks.maxOf { newest(it) } }.then(byName)
+        }
+        return SECTIONS.mapNotNull { (shelf, label) ->
+            val mine = cards.filter { it.shelf == shelf }.sortedWith(order)
+            if (mine.isEmpty()) null else OfflineSection(shelf, label, mine)
+        }
+    }
+
+    private fun newest(t: DownloadTask): Long = maxOf(t.completedAtMs, t.addedAtMs)
+
+    /** a show's episodes by season, in order (season 0 last, as specials) */
+    fun seasons(group: OfflineGroup): List<Pair<String, List<DownloadTask>>> {
+        val by = group.tasks.groupBy { if (it.sortIndex >= 1000) it.sortIndex / 1000 else -1 }
+        return by.keys.sortedWith(compareBy { if (it < 0) Int.MAX_VALUE else if (it == 0) Int.MAX_VALUE - 1 else it }).map { n ->
+            val label = when {
+                n < 0 -> "Episodes"
+                n == 0 -> "Specials"
+                else -> "Season $n"
+            }
+            label to by.getValue(n)
+        }
     }
 
     /** "S2 E5" from a sort index of season * 1000 + episode */

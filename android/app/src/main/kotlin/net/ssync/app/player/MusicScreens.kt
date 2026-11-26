@@ -78,6 +78,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import net.ssync.pairing.theme.SoulSyncColors
 import net.ssync.pairing.ui.dpadFocusable
+import net.ssync.player.DiscoverPlaylistDetail
 import net.ssync.player.DiscoverPlaylistSummary
 import net.ssync.player.LibAlbum
 import net.ssync.player.LibAlbumDetail
@@ -748,23 +749,8 @@ fun MusicScreen(
                                             tracksPresent = 0,
                                             trackCount = 0,
                                             modifier = Modifier.width(142.dp),
-                                            onClick = {
-                                                scope.launch {
-                                                    (api.fetchDiscoverPlaylistDetail(dp.key) as? MusicApiResult.Success)?.let { res ->
-                                                        val q = res.data.songs.filter { it.trackId != null }.map { t ->
-                                                            ActivePlayable(
-                                                                itemType = "track",
-                                                                itemId = t.trackId.toString(),
-                                                                title = t.title,
-                                                                subtitle = t.artist,
-                                                                artworkUrl = api.artwork.albumArtwork(t.albumId),
-                                                                streamUrl = api.streamUrl("track", t.trackId.toString()),
-                                                            )
-                                                        }
-                                                        if (q.isNotEmpty()) coordinator.playAudio(q.first(), q.drop(1))
-                                                    }
-                                                }
-                                            },
+                                            // its own page: play, shuffle or download it
+                                            onClick = { onNavigate(PlayerDestination.DiscoverPlaylistDetail(dp.key, dp.title)) },
                                         )
                                     }
                                 }
@@ -1239,23 +1225,8 @@ fun MusicScreen(
                                         tracksPresent = 0,
                                         trackCount = 0,
                                         modifier = Modifier.width(148.dp),
-                                        onClick = {
-                                            scope.launch {
-                                                (api.fetchDiscoverPlaylistDetail(dp.key) as? MusicApiResult.Success)?.let { res ->
-                                                    val q = res.data.songs.filter { it.trackId != null }.map { t ->
-                                                        ActivePlayable(
-                                                            itemType = "track",
-                                                            itemId = t.trackId.toString(),
-                                                            title = t.title,
-                                                            subtitle = t.artist,
-                                                            artworkUrl = api.artwork.albumArtwork(t.albumId),
-                                                            streamUrl = api.streamUrl("track", t.trackId.toString()),
-                                                        )
-                                                    }
-                                                    if (q.isNotEmpty()) coordinator.playAudio(q.first(), q.drop(1))
-                                                }
-                                            }
-                                        },
+                                        // its own page: play, shuffle or download it
+                                        onClick = { onNavigate(PlayerDestination.DiscoverPlaylistDetail(dp.key, dp.title)) },
                                     )
                                 }
                             }
@@ -3103,6 +3074,10 @@ fun PlaylistDetailScreen(
                         Text("Shuffle", fontWeight = FontWeight.SemiBold)
                     }
                 }
+                if (playable.isEmpty() && pl.tracks.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    NothingToDownload("None of these songs are in your library yet, so there is nothing to download.")
+                }
                 if (playable.isNotEmpty()) {
                     Spacer(modifier = Modifier.height(10.dp))
                     // the playlist on the phone, kept in step if wanted (send to a phone on a tv)
@@ -3172,6 +3147,184 @@ fun PlaylistDetailScreen(
             api = api,
             onDismiss = { playlistPickerSong = null },
         )
+    }
+}
+
+/**
+ * one of soulsync's own playlists (a daily mix, a mood, fresh tape, flow,
+ * listenbrainz): play it, shuffle it, or download it (send to a phone on a
+ * tv). the songs not in the library stay listed, dimmed.
+ */
+@Composable
+fun DiscoverPlaylistDetailScreen(
+    key: String,
+    title: String,
+    api: PlayerApiClient,
+    coordinator: PlaybackCoordinator,
+    onDeviceRevoked: () -> Unit,
+) {
+    var playlist by remember { mutableStateOf<DiscoverPlaylistDetail?>(null) }
+    var isLoading by remember { mutableStateOf(true) }
+    var playlistPickerSong by remember { mutableStateOf<SongRefPayload?>(null) }
+    val likedState = rememberLikedTracksState(api)
+
+    LaunchedEffect(key, api) {
+        isLoading = true
+        when (val r = api.fetchDiscoverPlaylistDetail(key)) {
+            is MusicApiResult.Success -> playlist = r.data
+            MusicApiResult.DeviceRevoked -> onDeviceRevoked()
+            is MusicApiResult.Error -> Unit
+        }
+        isLoading = false
+    }
+
+    val pl = playlist
+    if (isLoading) {
+        LoadingBox()
+        return
+    }
+    if (pl == null) {
+        EmptyBox("Playlist not found.")
+        return
+    }
+    val name = pl.name.ifBlank { title }
+    val activeTrackId = coordinator.activeItem?.takeIf { it.itemType == "track" }?.itemId
+    val playable = pl.songs.filter { it.trackId != null }.map { item ->
+        ActivePlayable(
+            itemType = "track",
+            itemId = item.trackId.toString(),
+            title = item.title,
+            subtitle = item.artist,
+            artworkUrl = api.artwork.albumArtwork(item.albumId),
+            streamUrl = api.streamUrl("track", item.trackId.toString()),
+        )
+    }
+
+    LazyColumn(contentPadding = PaddingValues(top = 78.dp, bottom = 32.dp)) {
+        item {
+            Column(modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp)) {
+                Text(text = name, color = SoulSyncColors.TextPrimary, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                if (!pl.blurb.isNullOrBlank()) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(text = pl.blurb.orEmpty(), color = SoulSyncColors.TextSecondary, fontSize = 13.5.sp)
+                }
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = listOfNotNull(
+                        "${pl.songs.size} songs",
+                        (pl.songs.size - playable.size).takeIf { it > 0 }?.let { "$it not in your library" },
+                    ).joinToString(" · "),
+                    color = SoulSyncColors.TextSecondary,
+                    fontSize = 12.sp,
+                )
+                Spacer(modifier = Modifier.height(14.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Button(
+                        onClick = { if (playable.isNotEmpty()) coordinator.playAudio(playable.first(), playable.drop(1)) },
+                        enabled = playable.isNotEmpty(),
+                        shape = RoundedCornerShape(999.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = SoulSyncColors.Accent,
+                            contentColor = SoulSyncColors.OnAccent,
+                        ),
+                        modifier = Modifier.weight(1f).height(44.dp).dpadFocusable(),
+                    ) {
+                        Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(19.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Play", fontWeight = FontWeight.SemiBold)
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            val shuffled = playable.shuffled()
+                            if (shuffled.isNotEmpty()) coordinator.playAudio(shuffled.first(), shuffled.drop(1))
+                        },
+                        enabled = playable.isNotEmpty(),
+                        shape = RoundedCornerShape(999.dp),
+                        border = BorderStroke(1.dp, SoulSyncColors.Line),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            containerColor = SoulSyncColors.Card,
+                            contentColor = SoulSyncColors.TextPrimary,
+                        ),
+                        modifier = Modifier.weight(1f).height(44.dp).dpadFocusable(),
+                    ) {
+                        Icon(Icons.Default.Shuffle, contentDescription = null, modifier = Modifier.size(17.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Shuffle", fontWeight = FontWeight.SemiBold)
+                    }
+                }
+                Spacer(modifier = Modifier.height(10.dp))
+                if (playable.isNotEmpty()) {
+                    // the same key the web player sends: discover:<key>
+                    GroupDownloadButton(
+                        api = api,
+                        target = DownloadTarget(
+                            type = "playlist",
+                            id = "discover:$key",
+                            title = name,
+                            subtitle = "${playable.size} songs",
+                            groupTitle = name,
+                        ),
+                    )
+                } else if (pl.songs.isNotEmpty()) {
+                    NothingToDownload("None of these are in your library yet, so there is nothing to download.")
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+        }
+        itemsIndexed(pl.songs) { idx, item ->
+            val isPlayable = item.trackId != null
+            MusicTrackRow(
+                title = item.title,
+                subtitle = listOfNotNull(item.artist, item.album).joinToString(" · "),
+                artworkUrl = api.artwork.albumArtwork(item.albumId),
+                duration = formatTrackDuration(item.durationMs),
+                isActive = isPlayable && activeTrackId == item.trackId?.toString(),
+                showDivider = idx < pl.songs.lastIndex,
+                playable = isPlayable,
+                trailingActions = if (isPlayable) {
+                    {
+                        TrackRowActionIcons(
+                            song = SongRefPayload(
+                                title = item.title,
+                                artist = item.artist,
+                                album = item.album,
+                                durationMs = item.durationMs,
+                                lib2TrackId = item.trackId,
+                            ),
+                            playable = ActivePlayable(
+                                itemType = "track",
+                                itemId = item.trackId.toString(),
+                                title = item.title,
+                                subtitle = item.artist,
+                                artworkUrl = api.artwork.albumArtwork(item.albumId),
+                                streamUrl = api.streamUrl("track", item.trackId.toString()),
+                            ),
+                            likedState = likedState,
+                            coordinator = coordinator,
+                            onAddToPlaylist = { playlistPickerSong = it },
+                        )
+                    }
+                } else {
+                    null
+                },
+                onClick = {
+                    val pIdx = playable.indexOfFirst { it.itemId == item.trackId?.toString() }
+                    if (pIdx >= 0) coordinator.playAudio(playable[pIdx], playable.drop(pIdx + 1))
+                },
+            )
+        }
+    }
+    if (playlistPickerSong != null) {
+        AddToPlaylistSheet(song = playlistPickerSong!!, api = api, onDismiss = { playlistPickerSong = null })
+    }
+}
+
+/** a download button that can't do anything yet, saying why */
+@Composable
+private fun NothingToDownload(why: String) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Icon(Icons.Default.Download, contentDescription = null, tint = SoulSyncColors.TextSecondary, modifier = Modifier.size(16.dp))
+        Text(why, color = SoulSyncColors.TextSecondary, fontSize = 12.5.sp)
     }
 }
 

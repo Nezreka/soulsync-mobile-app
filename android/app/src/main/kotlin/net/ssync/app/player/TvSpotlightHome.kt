@@ -590,7 +590,7 @@ internal fun TvSpotlightHome(
                             posterUrl = art,
                             backdropUrl = art,
                             fallbackIcon = Icons.Default.MusicNote,
-                            onClick = { onNavigate(PlayerDestination.Music) },
+                            onClick = { onNavigate(PlayerDestination.DiscoverPlaylistDetail(pl.key, pl.title)) },
                         )
                     }
                     out += TvSpotlightShelf("discovery-playlists", "SoulSync Discovery Playlists", cardStyle = TvCardStyle.SQUARE, items = cards)

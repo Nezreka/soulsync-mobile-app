@@ -33,6 +33,7 @@ import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CleaningServices
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PhoneAndroid
@@ -57,6 +58,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -80,6 +82,7 @@ import net.ssync.player.OfflineFormat
 import net.ssync.player.OfflineGroup
 import net.ssync.player.OfflineGrouping
 import net.ssync.player.OfflineShelf
+import net.ssync.player.OfflineSort
 import net.ssync.player.OfflineStorage
 import net.ssync.player.PlayerApiClient
 import net.ssync.player.TaskState
@@ -95,15 +98,39 @@ private fun shelfColor(s: OfflineShelf): Color = when (s) {
     OfflineShelf.HOME -> Color(0xFFFFB46B)
 }
 
-private val SECTION_ORDER = listOf(
-    OfflineShelf.TV to "Shows",
-    OfflineShelf.MOVIES to "Movies",
-    OfflineShelf.YOUTUBE to "YouTube",
-    OfflineShelf.HOME to "Home videos",
-    OfflineShelf.MUSIC to "Music",
-    OfflineShelf.PODCASTS to "Podcasts",
-    OfflineShelf.BOOKS to "Books",
-)
+// the screen's kinds in order: tv shows, movies, youtube, music, audiobooks, podcasts, home videos
+private val SECTION_ORDER = OfflineGrouping.SECTIONS
+
+/** newest first or a to z, and which kinds are folded away: this phone remembers */
+private class DownloadsView(context: android.content.Context) {
+    private val sp = context.getSharedPreferences("soulsync_downloads_view", android.content.Context.MODE_PRIVATE)
+    var sort by mutableStateOf(if (sp.getString("sort", "") == "az") OfflineSort.AZ else OfflineSort.RECENT)
+        private set
+    var folded by mutableStateOf(sp.getStringSet("folded", emptySet()).orEmpty().toSet())
+        private set
+
+    fun sortBy(next: OfflineSort) {
+        sort = next
+        sp.edit().putString("sort", if (next == OfflineSort.AZ) "az" else "recent").apply()
+    }
+
+    fun toggle(shelf: OfflineShelf) {
+        folded = if (shelf.name in folded) folded - shelf.name else folded + shelf.name
+        sp.edit().putStringSet("folded", folded).apply()
+    }
+}
+
+/** "12 episodes", "3 songs": what a kind holds, in its own words */
+private fun kindCount(shelf: OfflineShelf, n: Int): String {
+    val word = when (shelf) {
+        OfflineShelf.TV, OfflineShelf.PODCASTS -> "episode"
+        OfflineShelf.MOVIES -> "movie"
+        OfflineShelf.BOOKS -> "book"
+        OfflineShelf.MUSIC -> "song"
+        OfflineShelf.YOUTUBE, OfflineShelf.HOME -> "video"
+    }
+    return "$n $word${if (n == 1) "" else "s"}"
+}
 
 /** play a downloaded item from its file, with the rest of its group after it for audio */
 internal fun playDownloaded(coordinator: PlaybackCoordinator, api: PlayerApiClient, task: DownloadTask, group: List<DownloadTask> = emptyList()) {
@@ -161,6 +188,7 @@ fun DownloadsScreen(
     var openGroup by remember { mutableStateOf<String?>(null) }
     var menuTask by remember { mutableStateOf<DownloadTask?>(null) }
     var freeUp by remember { mutableStateOf<List<DownloadTask>?>(null) }
+    val view = remember(context) { DownloadsView(context) }
     var tick by remember { mutableIntStateOf(0) }
     LaunchedEffect(tasks.size) { tick++ }
 
@@ -183,7 +211,8 @@ fun DownloadsScreen(
     val byShelf = OfflineStorage.bytesByShelf(tasks)
     val pending = DownloadQueue.pending(tasks).filter { filter == null || it.shelf == filter }
     val done = tasks.filter { it.state == TaskState.DOWNLOADED }
-    val groups = OfflineGrouping.groups(done).filter { filter == null || it.shelf == filter }
+    // what's on the phone, filed by kind (a picked chip shows just that kind)
+    val sections = OfflineGrouping.sections(done, view.sort).filter { filter == null || it.shelf == filter }
     val shelvesWithContent = tasks.map { it.shelf }.toSet()
     val watchedAll = OfflineStorage.freeUpPlan(tasks, 0)
 
@@ -277,7 +306,7 @@ fun DownloadsScreen(
                         val b = byShelf[shelf] ?: return@forEach
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                             Box(Modifier.size(8.dp).clip(CircleShape).background(shelfColor(shelf)))
-                            Text("${shelf.label} ${OfflineFormat.bytes(b)}", color = DlColors.Muted, fontSize = 11.5.sp)
+                            Text("${SECTION_ORDER.first { it.first == shelf }.second} ${OfflineFormat.bytes(b)}", color = DlColors.Muted, fontSize = 11.5.sp)
                         }
                     }
                     if (byShelf.isEmpty()) Text("Nothing downloaded yet", color = DlColors.Muted, fontSize = 11.5.sp)
@@ -297,13 +326,22 @@ fun DownloadsScreen(
             }
         }
 
-        // filter chips
-        if (shelvesWithContent.size > 1) {
+        // kind chips (show just that kind) and newest first or a to z
+        if (done.isNotEmpty()) {
             item {
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    item { FilterChipPill("All", filter == null) { filter = null } }
-                    items(SECTION_ORDER.filter { it.first in shelvesWithContent }) { (shelf, _) ->
-                        FilterChipPill(shelf.label, filter == shelf) { filter = if (filter == shelf) null else shelf }
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (shelvesWithContent.size > 1) {
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            item { FilterChipPill("All", filter == null) { filter = null } }
+                            items(SECTION_ORDER.filter { it.first in shelvesWithContent }) { (shelf, label) ->
+                                FilterChipPill(label, filter == shelf) { filter = if (filter == shelf) null else shelf }
+                            }
+                        }
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text("Sort", color = DlColors.Muted, fontSize = 12.sp, modifier = Modifier.padding(end = 2.dp))
+                        FilterChipPill("Recent", view.sort == OfflineSort.RECENT) { view.sortBy(OfflineSort.RECENT) }
+                        FilterChipPill("A-Z", view.sort == OfflineSort.AZ) { view.sortBy(OfflineSort.AZ) }
                     }
                 }
             }
@@ -339,12 +377,20 @@ fun DownloadsScreen(
             }
         }
 
-        // the library on the phone
-        SECTION_ORDER.forEach { (shelf, label) ->
-            val inShelf = groups.filter { it.shelf == shelf }
-            if (inShelf.isEmpty()) return@forEach
-            item(key = "sec-$label") { SectionLabel(label) }
-            items(inShelf, key = { "g-" + it.key }) { g ->
+        // the library on the phone, by kind; a kind's heading folds it away
+        sections.forEach { section ->
+            // a picked chip opens its kind
+            val open = filter == section.shelf || section.shelf.name !in view.folded
+            item(key = "sec-${section.shelf}") {
+                KindHeader(
+                    label = section.label,
+                    sub = "${kindCount(section.shelf, section.count)} · ${OfflineFormat.bytes(section.bytes)}",
+                    color = shelfColor(section.shelf),
+                    open = open,
+                ) { view.toggle(section.shelf) }
+            }
+            if (!open) return@forEach
+            items(section.groups, key = { "g-" + it.key }) { g ->
                 GroupCard(
                     api = api,
                     group = g,
@@ -381,7 +427,7 @@ fun DownloadsScreen(
         DownloadItemMenu(api = api, task = t, onDismiss = { menuTask = null }, onPlay = { playDownloaded(coordinator, api, t) })
     }
     openGroup?.let { gk ->
-        val g = OfflineGrouping.groups(tasks.filter { it.state == TaskState.DOWNLOADED }).firstOrNull { it.key == gk }
+        val g = OfflineGrouping.sections(tasks.filter { it.state == TaskState.DOWNLOADED }).flatMap { it.groups }.firstOrNull { it.key == gk }
         if (g == null) openGroup = null else GroupSheet(api, coordinator, g, smartTag(g, rules), onDismiss = { openGroup = null })
     }
     freeUp?.let { list ->
@@ -428,6 +474,30 @@ private fun DeviceChip(name: String, sub: String, on: Boolean, onClick: () -> Un
             Text(name, color = Color.White, fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
             Text(sub, color = DlColors.Muted, fontSize = 11.5.sp, maxLines = 1)
         }
+    }
+}
+
+/** a kind's heading: its colour, name, how many and how big; tap to fold it away */
+@Composable
+private fun KindHeader(label: String, sub: String, color: Color, open: Boolean, onToggle: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().padding(top = 6.dp).clip(RoundedCornerShape(12.dp))
+            .background(DlColors.Raise).border(1.dp, DlColors.Line, RoundedCornerShape(12.dp))
+            .dpadFocusable(RoundedCornerShape(12.dp))
+            .clickable(onClickLabel = if (open) "Fold $label away" else "Show $label", onClick = onToggle)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Box(Modifier.size(10.dp).clip(CircleShape).background(color))
+        Text(label, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+        Text(sub, color = DlColors.Muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+        Icon(
+            Icons.Default.KeyboardArrowDown,
+            contentDescription = null,
+            tint = DlColors.Muted,
+            modifier = Modifier.size(20.dp).rotate(if (open) 0f else -90f),
+        )
     }
 }
 
@@ -549,6 +619,7 @@ private fun GroupCard(
                 }
                 val kind = when (group.groupType) {
                     "playlist" -> "Playlist · "
+                    OfflineGrouping.SONGS -> "On their own · "
                     "album", "home_album" -> "Album · "
                     "artist" -> "Artist · "
                     else -> ""
@@ -606,7 +677,16 @@ private fun GroupSheet(api: PlayerApiClient, coordinator: PlaybackCoordinator, g
                 if (canSmart) PillButton("Smart settings", Icons.Default.AutoAwesome) { smart = true }
                 PillButton("Remove all", Icons.Default.DeleteOutline) { confirmAll = true }
             }
-            group.tasks.forEach { t ->
+            // a show's episodes under their season
+            val parts = if (group.groupType == "show") OfflineGrouping.seasons(group) else listOf("" to group.tasks)
+            parts.forEach { (season, list) ->
+            if (season.isNotBlank() && parts.size > 1) {
+                Text(
+                    "$season · ${list.size} ${if (list.size == 1) "episode" else "episodes"}",
+                    color = DlColors.Muted, fontSize = 12.5.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 6.dp),
+                )
+            }
+            list.forEach { t ->
                 Row(
                     Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).dpadFocusable(RoundedCornerShape(10.dp))
                         .clickable { onDismiss(); playDownloaded(coordinator, api, t, group.tasks) }
@@ -621,6 +701,7 @@ private fun GroupSheet(api: PlayerApiClient, coordinator: PlaybackCoordinator, g
                     if (t.watched) DlTag("Watched")
                     CircleIcon(Icons.Default.MoreHoriz, "More") { menuTask = t }
                 }
+            }
             }
             Spacer(Modifier.height(8.dp))
         }
@@ -848,6 +929,8 @@ private fun TvDeviceDownloads(api: PlayerApiClient) {
 @Composable
 internal fun RemoteDeviceCard(api: PlayerApiClient, offline: OfflineApiClient, d: OfflineDevice, onChanged: () -> Unit) {
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    val view = remember(context) { DownloadsView(context) }
     var note by remember { mutableStateOf<String?>(null) }
     var sheetFor by remember { mutableStateOf<DownloadTarget?>(null) }
     val name = d.deviceName.ifBlank { "the phone" }
@@ -899,52 +982,75 @@ internal fun RemoteDeviceCard(api: PlayerApiClient, offline: OfflineApiClient, d
         }
 
         if (d.items.isEmpty() && waiting.isEmpty()) Text("Nothing on it yet.", color = DlColors.Muted, fontSize = 13.sp)
-        remoteGroups(d.items).forEach { g ->
-            val rule = ruleFor(g.type, g.id, d.rules)
-            val single = g.items.size == 1 && g.type in setOf("movie", "youtube", g.items.first().itemType)
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(top = 6.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    SoulSyncArtwork(url = api.artwork.resolve(g.artwork), contentDescription = g.title, modifier = Modifier.width(40.dp).height(56.dp).clip(RoundedCornerShape(8.dp)))
-                    Column(Modifier.weight(1f)) {
-                        Text(g.title, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text("${g.items.size} on $name · ${OfflineFormat.bytes(g.items.sumOf { it.sizeBytes })}", color = DlColors.Muted, fontSize = 12.sp)
-                        rule?.let { DlTag(ruleTag(it), DlColors.Smart, DlColors.SmartBg) }
+        // filed by kind like this phone's own downloads, each kind folding away
+        val byKind = remoteGroups(d.items).groupBy { net.ssync.player.shelfOf(it.items.first().itemType) }
+        SECTION_ORDER.forEach { (shelf, label) ->
+            val inKind = byKind[shelf] ?: return@forEach
+            val newest = { g: RemoteGroup -> g.items.maxOf { it.downloadedAt.orEmpty() } }
+            val sorted = when (view.sort) {
+                // a show's seasons stay together, in order
+                OfflineSort.AZ -> inKind.sortedWith(compareBy<RemoteGroup, String>(String.CASE_INSENSITIVE_ORDER) { it.title }.thenBy { it.id })
+                OfflineSort.RECENT -> inKind.sortedWith(compareByDescending<RemoteGroup> { newest(it) }.thenBy { it.title })
+            }
+            val open = shelf.name !in view.folded
+            KindHeader(
+                label = label,
+                sub = "${kindCount(shelf, inKind.sumOf { it.items.size })} · ${OfflineFormat.bytes(inKind.sumOf { g -> g.items.sumOf { it.sizeBytes } })}",
+                color = shelfColor(shelf),
+                open = open,
+            ) { view.toggle(shelf) }
+            if (open) sorted.forEach { g ->
+                val rule = ruleFor(g.type, g.id, d.rules)
+                val single = g.items.size == 1 && g.type in setOf("movie", "youtube", g.items.first().itemType)
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(top = 6.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        SoulSyncArtwork(url = api.artwork.resolve(g.artwork), contentDescription = g.title, modifier = Modifier.width(40.dp).height(56.dp).clip(RoundedCornerShape(8.dp)))
+                        Column(Modifier.weight(1f)) {
+                            // a season says which one, so a show's seasons read in order
+                            val season = g.id.substringAfter(':', "").toIntOrNull()?.takeIf { g.type == "season" }
+                            Text(
+                                if (season == null) g.title else "${g.title} · ${if (season == 0) "Specials" else "Season $season"}",
+                                color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            )
+                            Text("${g.items.size} on $name · ${OfflineFormat.bytes(g.items.sumOf { it.sizeBytes })}", color = DlColors.Muted, fontSize = 12.sp)
+                            rule?.let { DlTag(ruleTag(it), DlColors.Smart, DlColors.SmartBg) }
+                        }
                     }
-                }
-                if (!single) {
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        PillButton("Add the rest") { sheetFor = DownloadTarget(type = g.type, id = g.id, title = g.title, artwork = g.artwork, groupTitle = g.title) }
-                        if (g.type in setOf("season", "show", "playlist", "podcast")) {
-                            PillButton("Smart settings") {
-                                sheetFor = DownloadTarget(
-                                    type = if (g.type == "season") "show" else g.type,
-                                    id = if (g.type == "season") g.id.substringBefore(':') else g.id,
-                                    title = g.title, artwork = g.artwork, groupTitle = g.title,
+                    if (!single) {
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            PillButton("Add the rest") { sheetFor = DownloadTarget(type = g.type, id = g.id, title = g.title, artwork = g.artwork, groupTitle = g.title) }
+                            if (g.type in setOf("season", "show", "playlist", "podcast")) {
+                                PillButton("Smart settings") {
+                                    sheetFor = DownloadTarget(
+                                        type = if (g.type == "season") "show" else g.type,
+                                        id = if (g.type == "season") g.id.substringBefore(':') else g.id,
+                                        title = g.title, artwork = g.artwork, groupTitle = g.title,
+                                    )
+                                }
+                            }
+                            PillButton("Remove all") { wishRemove(g.type, g.id) }
+                        }
+                    }
+                    g.items.forEach { item ->
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.padding(start = if (single) 0.dp else 12.dp)) {
+                            Column(Modifier.weight(1f)) {
+                                Text(item.title ?: item.itemId, color = if (item.watched) DlColors.Muted else Color.White, fontSize = 13.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(
+                                    listOfNotNull(
+                                        OfflineFormat.qualityTag(item.quality),
+                                        OfflineFormat.bytes(item.sizeBytes).takeIf { item.sizeBytes > 0 },
+                                        when (item.state) {
+                                            "downloaded" -> if (item.watched) "watched" else "on the phone"
+                                            "downloading" -> "downloading ${(item.progress * 100).toInt()}%"
+                                            "queued" -> "waiting"
+                                            else -> item.state
+                                        },
+                                    ).joinToString(" · "),
+                                    color = if (item.state == "downloaded" && !item.watched) DlColors.Done else DlColors.Muted, fontSize = 12.sp,
                                 )
                             }
+                            PillButton(if (item.state == "downloaded") "Remove" else "Cancel") { wishRemove(item.itemType, item.itemId, item.quality) }
                         }
-                        PillButton("Remove all") { wishRemove(g.type, g.id) }
-                    }
-                }
-                g.items.forEach { item ->
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.padding(start = if (single) 0.dp else 12.dp)) {
-                        Column(Modifier.weight(1f)) {
-                            Text(item.title ?: item.itemId, color = if (item.watched) DlColors.Muted else Color.White, fontSize = 13.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(
-                                listOfNotNull(
-                                    OfflineFormat.qualityTag(item.quality),
-                                    OfflineFormat.bytes(item.sizeBytes).takeIf { item.sizeBytes > 0 },
-                                    when (item.state) {
-                                        "downloaded" -> if (item.watched) "watched" else "on the phone"
-                                        "downloading" -> "downloading ${(item.progress * 100).toInt()}%"
-                                        "queued" -> "waiting"
-                                        else -> item.state
-                                    },
-                                ).joinToString(" · "),
-                                color = if (item.state == "downloaded" && !item.watched) DlColors.Done else DlColors.Muted, fontSize = 12.sp,
-                            )
-                        }
-                        PillButton(if (item.state == "downloaded") "Remove" else "Cancel") { wishRemove(item.itemType, item.itemId, item.quality) }
                     }
                 }
             }
