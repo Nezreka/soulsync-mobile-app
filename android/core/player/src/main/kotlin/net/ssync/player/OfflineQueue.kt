@@ -92,13 +92,14 @@ data class DownloadTask(
 }
 
 enum class OfflineShelf(val label: String) {
-    TV("TV"), MOVIES("Movies"), YOUTUBE("YouTube"), MUSIC("Music"), PODCASTS("Podcasts"), BOOKS("Books")
+    TV("TV"), MOVIES("Movies"), YOUTUBE("YouTube"), HOME("Home videos"), MUSIC("Music"), PODCASTS("Podcasts"), BOOKS("Books")
 }
 
 fun shelfOf(itemType: String): OfflineShelf = when (itemType.lowercase()) {
     "episode" -> OfflineShelf.TV
     "movie" -> OfflineShelf.MOVIES
     "youtube" -> OfflineShelf.YOUTUBE
+    "home" -> OfflineShelf.HOME
     "podcast_episode", "podcast" -> OfflineShelf.PODCASTS
     "audiobook" -> OfflineShelf.BOOKS
     else -> OfflineShelf.MUSIC

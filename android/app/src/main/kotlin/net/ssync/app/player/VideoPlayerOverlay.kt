@@ -204,7 +204,7 @@ fun VideoPlayerOverlay(
     var playbackError by remember { mutableStateOf<String?>(null) }
     var hasRenderedFirstFrame by remember(item.streamUrl) { mutableStateOf(false) }
 
-    val canTranscode = item.itemType == "movie" || item.itemType == "episode" || item.itemType == "youtube"
+    val canTranscode = item.itemType == "movie" || item.itemType == "episode" || item.itemType == "youtube" || item.itemType == "home"
 
     fun effectivePositionMs(): Long {
         val raw = exoPlayer.currentPosition.coerceAtLeast(0L)
@@ -344,7 +344,7 @@ fun VideoPlayerOverlay(
 
             override fun onPlayerError(error: PlaybackException) {
                 val cur = latestItem
-                val curCanTranscode = cur.itemType == "movie" || cur.itemType == "episode" || cur.itemType == "youtube"
+                val curCanTranscode = cur.itemType == "movie" || cur.itemType == "episode" || cur.itemType == "youtube" || cur.itemType == "home"
                 // If a Live Guide commercial clip fails to decode (e.g. broken audio/mpeg frame),
                 // skip seamlessly into the next scheduled item instead of interrupting playback.
                 if (cur.isLiveGuide && cur.itemType == "commercial") {
@@ -426,7 +426,7 @@ fun VideoPlayerOverlay(
                     !watchedMarked &&
                     durationMs > 0L &&
                     positionMs >= (durationMs * 0.92).toLong() &&
-                    (item.itemType == "movie" || (!item.isLiveGuide && item.itemType == "episode"))
+                    (item.itemType == "movie" || item.itemType == "home" || (!item.isLiveGuide && item.itemType == "episode"))
                 ) {
                     watchedMarked = true
                     val atS = positionMs / 1000.0

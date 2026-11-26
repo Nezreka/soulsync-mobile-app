@@ -43,6 +43,7 @@ internal fun statusLine(t: DownloadTask, live: LiveProgress?): String {
 }
 
 internal fun groupNoun(type: String, count: Int, video: Boolean): String = when {
+    type == "home_album" || type == "home" -> if (count == 1) "video" else "videos"
     type == "season" || type == "show" || (video && type != "movie") -> if (count == 1) "episode" else "episodes"
     type == "podcast" -> if (count == 1) "episode" else "episodes"
     type == "audiobook" -> if (count == 1) "part" else "parts"

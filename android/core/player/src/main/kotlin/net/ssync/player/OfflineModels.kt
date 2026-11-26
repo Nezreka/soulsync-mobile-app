@@ -325,5 +325,5 @@ data class OfflinePendingOp(
 
 fun offlineKey(itemType: String, itemId: String): String = "${itemType.lowercase()}:$itemId"
 
-val OFFLINE_VIDEO_KINDS: Set<String> = setOf("movie", "episode", "youtube")
+val OFFLINE_VIDEO_KINDS: Set<String> = setOf("movie", "episode", "youtube", "home")
 val OFFLINE_AUDIO_KINDS: Set<String> = setOf("track", "audiobook", "podcast_episode")

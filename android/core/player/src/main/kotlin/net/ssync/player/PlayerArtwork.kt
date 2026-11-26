@@ -79,6 +79,7 @@ class PlayerArtwork(baseUrl: String) {
             "audiobook" -> audiobookCover(itemId)
             "track" -> parentId?.toIntOrNull()?.let { albumArtwork(it) }
             "youtube" -> "https://i.ytimg.com/vi/$itemId/mqdefault.jpg"
+            "home" -> "$base/api/player/home/thumb/${java.net.URLEncoder.encode(itemId, "UTF-8")}"
             else -> null
         }
     }

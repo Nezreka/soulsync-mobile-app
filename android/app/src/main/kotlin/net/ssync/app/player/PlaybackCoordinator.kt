@@ -356,6 +356,7 @@ class PlaybackCoordinator(
             "show" -> "/player/tv/${item.itemId}"
             "episode" -> item.parentId?.let { "/player/tv/$it" } ?: "/player/tv"
             "youtube" -> "/player/youtube"
+            "home" -> "/player/home-videos"
             "audiobook" -> "/player/audiobooks/${item.itemId}"
             "podcast", "podcast_episode" -> "/player/podcasts"
             else -> "/player/music"
@@ -431,7 +432,7 @@ class PlaybackCoordinator(
                         positionMs = lastPositionMs,
                         durationMs = totalDurationMs,
                         finished = reachedCredits,
-                        markWatched = reachedCredits && (current.itemType == "movie" || current.itemType == "episode" || current.itemType == "youtube"),
+                        markWatched = reachedCredits && (current.itemType == "movie" || current.itemType == "episode" || current.itemType == "youtube" || current.itemType == "home"),
                     )
                 }
                 if (stillActive && !toCast) api.clearPresence()

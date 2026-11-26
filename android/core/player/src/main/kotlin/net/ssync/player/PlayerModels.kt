@@ -213,13 +213,19 @@ data class VideoCatalogKinds(
 @Serializable
 data class PlayerLibrary(
     val id: Int,
-    /** "movie" | "show" */
+    /** "movie" | "show" | "home" */
     val kind: String = "movie",
     val name: String = "",
     @SerialName("own_page")
     val ownPage: Boolean = false,
     val main: Boolean = false,
-)
+    /** the live guide plays its titles (home videos default to no) */
+    @SerialName("in_guide")
+    val inGuide: Boolean = kind != "home",
+) {
+    /** a home videos library always has a page of its own: it isn't part of Movies or TV Shows */
+    val hasOwnPage: Boolean get() = ownPage || kind == "home"
+}
 
 @Serializable
 internal data class PlayerLibrariesResponse(val libraries: List<PlayerLibrary> = emptyList())
@@ -235,7 +241,7 @@ data class VideoCatalog(
     val libraries: List<PlayerLibrary> = emptyList(),
 ) {
     /** the ids of the libraries that have a page of their own */
-    val ownPageLibraryIds: Set<Int> get() = libraries.filter { it.ownPage }.map { it.id }.toSet()
+    val ownPageLibraryIds: Set<Int> get() = libraries.filter { it.hasOwnPage }.map { it.id }.toSet()
 }
 
 @Serializable
@@ -1931,6 +1937,7 @@ internal object VideoCatalogDecoder {
                 name = o["name"].strOrNull() ?: "",
                 ownPage = o["own_page"].boolOrNull() ?: false,
                 main = o["main"].boolOrNull() ?: false,
+                inGuide = o["in_guide"].boolOrNull() ?: (o["kind"].strOrNull() != "home"),
             )
         } ?: emptyList()
         return VideoCatalog(movies, shows, recent, youtube, kinds, libraries)

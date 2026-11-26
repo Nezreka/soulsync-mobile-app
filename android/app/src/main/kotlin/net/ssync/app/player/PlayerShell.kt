@@ -42,6 +42,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.filled.AdminPanelSettings
+import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Download
@@ -614,6 +615,7 @@ fun PlayerShell(
                                                 onHasHeroChanged = { homeHasHero = it },
                                                 onDeviceRevoked = onDeviceRevoked,
                                                 onUnpair = onUnpair,
+                                                isAdmin = isAdminUser,
                                                 onSettingsChanged = {
                                                     playerSettings = it
                                                     PlayerNavPrefs.order.value = it.sidebarOrder.ifEmpty { PlayerNavPrefs.order.value }
@@ -1794,7 +1796,8 @@ private fun PlayerSidebar(
     val isSettingsSel = current is PlayerDestination.Settings
     val anySidebarSelected = isHomeSel || isSearchSel || isGuideSel || isCalendarSel || isWatchlistSel ||
         isWatchingNowSel || isMoviesSel || isTvSel || isYouTubeSel || isMusicSel ||
-        isPlaylistsSel || isPodcastsSel || isAudiobooksSel || isAdminOrDownloadsSel || isSettingsSel
+        isPlaylistsSel || isPodcastsSel || isAudiobooksSel || isAdminOrDownloadsSel || isSettingsSel ||
+        current is PlayerDestination.Library || current is PlayerDestination.HomeVideos || current is PlayerDestination.HomeVideoAlbum
 
     fun activeMod(selected: Boolean, extra: Modifier = Modifier): Modifier =
         if (selected) extra.focusRequester(activeItemFocusRequester) else extra
@@ -1968,7 +1971,14 @@ private fun PlayerSidebar(
             val ownPageLibraries = HomeWarmCache.ownPageLibraries.value
             // a library an admin gave its own page (Anime, Kids, 4K): an entry after the page it is a kind of
             fun libraryPlaces(kind: String) = ownPageLibraries.filter { it.kind == kind }.map { lib ->
-                SidebarPlace(
+                if (kind == "home") {
+                    // home videos: their own page, and its albums count as on it
+                    val here = (current is PlayerDestination.HomeVideos && current.library.id == lib.id) ||
+                        (current is PlayerDestination.HomeVideoAlbum && current.library.id == lib.id)
+                    SidebarPlace("lib:${lib.id}", Icons.Default.VideoLibrary, lib.name.ifBlank { "Home videos" }, here) {
+                        onNavigate(PlayerDestination.HomeVideos(lib))
+                    }
+                } else SidebarPlace(
                     "lib:${lib.id}",
                     if (kind == "movie") Icons.Default.Movie else Icons.Default.Tv,
                     lib.name,
@@ -1979,7 +1989,8 @@ private fun PlayerSidebar(
                 libraryPlaces("movie") +
                 listOf(SidebarPlace("/player/tv", Icons.Default.Tv, "TV Shows", isTvSel) { onNavigate(PlayerDestination.Tv) }) +
                 libraryPlaces("show") +
-                listOf(SidebarPlace("/player/youtube", Icons.Default.SmartDisplay, "YouTube", isYouTubeSel) { onNavigate(PlayerDestination.YouTube) })
+                listOf(SidebarPlace("/player/youtube", Icons.Default.SmartDisplay, "YouTube", isYouTubeSel) { onNavigate(PlayerDestination.YouTube) }) +
+                libraryPlaces("home")
             val listenPlaces = listOf(
                 SidebarPlace("/player/music", Icons.Default.MusicNote, "Music", isMusicSel) { onNavigate(PlayerDestination.Music) },
                 SidebarPlace("/player/music/playlists", Icons.AutoMirrored.Filled.QueueMusic, "Playlists", isPlaylistsSel) { onNavigate(PlayerDestination.Playlists) },
@@ -2189,6 +2200,7 @@ private fun PlayerContent(
     onHasHeroChanged: (Boolean) -> Unit,
     onDeviceRevoked: () -> Unit,
     onUnpair: () -> Unit,
+    isAdmin: Boolean = false,
     onSettingsChanged: (net.ssync.player.PlayerSettings) -> Unit = {},
 ) {
     when (current) {
@@ -2213,6 +2225,8 @@ private fun PlayerContent(
         } else {
             TvScreen(api, { onNavigate(PlayerDestination.ShowDetail(it)) }, onDeviceRevoked, coordinator = coordinator, onNavigate = onNavigate, library = current.library)
         }
+        is PlayerDestination.HomeVideos -> HomeVideosScreen(current.library, api, coordinator, isAdmin, onNavigate, onDeviceRevoked)
+        is PlayerDestination.HomeVideoAlbum -> HomeVideoAlbumScreen(current.library, current.album, api, coordinator, isAdmin, onDeviceRevoked)
         is PlayerDestination.MovieDetail -> MovieDetailScreen(current.movieId, api, coordinator, onNavigate, onDeviceRevoked)
         is PlayerDestination.CollectionDetail -> CollectionDetailScreen(current.collection, api, onNavigate, onDeviceRevoked)
         PlayerDestination.Tv -> TvScreen(api, { onNavigate(PlayerDestination.ShowDetail(it)) }, onDeviceRevoked, coordinator = coordinator, onNavigate = onNavigate)

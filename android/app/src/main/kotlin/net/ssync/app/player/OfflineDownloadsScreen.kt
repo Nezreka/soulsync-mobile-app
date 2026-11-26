@@ -92,12 +92,14 @@ private fun shelfColor(s: OfflineShelf): Color = when (s) {
     OfflineShelf.BOOKS -> Color(0xFFFFB547)
     OfflineShelf.PODCASTS -> Color(0xFFA78BFA)
     OfflineShelf.YOUTUBE -> Color(0xFFF87171)
+    OfflineShelf.HOME -> Color(0xFFFFB46B)
 }
 
 private val SECTION_ORDER = listOf(
     OfflineShelf.TV to "Shows",
     OfflineShelf.MOVIES to "Movies",
     OfflineShelf.YOUTUBE to "YouTube",
+    OfflineShelf.HOME to "Home videos",
     OfflineShelf.MUSIC to "Music",
     OfflineShelf.PODCASTS to "Podcasts",
     OfflineShelf.BOOKS to "Books",
@@ -542,12 +544,12 @@ private fun GroupCard(
                 val noun = when (group.shelf) {
                     OfflineShelf.TV, OfflineShelf.PODCASTS -> if (n == 1) "episode" else "episodes"
                     OfflineShelf.BOOKS -> if (n == 1) "part" else "parts"
-                    OfflineShelf.YOUTUBE -> if (n == 1) "video" else "videos"
+                    OfflineShelf.YOUTUBE, OfflineShelf.HOME -> if (n == 1) "video" else "videos"
                     else -> if (n == 1) "song" else "songs"
                 }
                 val kind = when (group.groupType) {
                     "playlist" -> "Playlist · "
-                    "album" -> "Album · "
+                    "album", "home_album" -> "Album · "
                     "artist" -> "Artist · "
                     else -> ""
                 }

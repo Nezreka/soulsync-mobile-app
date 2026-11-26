@@ -12,6 +12,13 @@ sealed interface PlayerDestination {
     data object Movies : PlayerDestination
     /** a library with a page of its own: its Movies or TV Shows page, only its titles */
     data class Library(val library: net.ssync.player.PlayerLibrary) : PlayerDestination
+    /** a home videos library: on this day, its albums and the timeline by month */
+    data class HomeVideos(val library: net.ssync.player.PlayerLibrary) : PlayerDestination
+    /** one folder of a home videos library, oldest first */
+    data class HomeVideoAlbum(
+        val library: net.ssync.player.PlayerLibrary,
+        val album: net.ssync.player.HomeAlbum,
+    ) : PlayerDestination
     data class MovieDetail(val movieId: Int) : PlayerDestination
     data class CollectionDetail(
         val collection: net.ssync.player.StudioCollection,

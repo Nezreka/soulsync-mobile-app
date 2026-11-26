@@ -127,6 +127,7 @@ object OfflineMigration {
         "audiobook" -> "Audiobook"
         "podcast_episode", "podcast" -> "Podcast episode"
         "youtube" -> "YouTube video"
+        "home" -> "Home video"
         else -> "Download"
     } + " $id".takeIf { id.length <= 12 }.orEmpty()
 

@@ -106,12 +106,13 @@ fun MediaContextMenuSheet(
         "audiobook" -> "Audiobook"
         "podcast" -> "Podcast"
         "youtube" -> "YouTube"
+        "home" -> "Home video"
         else -> "Media"
     }
 
     // single items and whole groups; a tv sends them to a phone instead
     val canDownload = item.owned &&
-        item.itemType in setOf("movie", "episode", "track", "youtube", "audiobook", "podcast", "podcast_episode", "show", "season", "album", "artist", "playlist")
+        item.itemType in setOf("movie", "episode", "track", "youtube", "home", "audiobook", "podcast", "podcast_episode", "show", "season", "album", "artist", "playlist")
 
     if (!dlSheet) AdaptiveTvSheet(
         onDismissRequest = onDismiss,

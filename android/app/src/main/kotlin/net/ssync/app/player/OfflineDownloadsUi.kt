@@ -117,7 +117,7 @@ data class DownloadTarget(
     val sortIndex: Int = 0,
 )
 
-internal val GROUP_TYPES = setOf("season", "show", "album", "artist", "playlist", "podcast")
+internal val GROUP_TYPES = setOf("season", "show", "album", "artist", "playlist", "podcast", "home_album")
 
 private fun needsNotificationAsk(context: Context): Boolean =
     Build.VERSION.SDK_INT >= 33 &&
@@ -331,7 +331,7 @@ fun GroupDownloadButton(
     val noun = when (target.type) {
         "season" -> "season"
         "show" -> "show"
-        "album" -> "album"
+        "album", "home_album" -> "album"
         "artist" -> "albums"
         "playlist" -> "playlist"
         "podcast" -> "episodes"
@@ -456,7 +456,7 @@ private fun sheetHeading(type: String, send: Boolean): String {
     val what = when (type) {
         "season" -> "a season"
         "show" -> "a show"
-        "album" -> "an album"
+        "album", "home_album" -> "an album"
         "artist" -> "an artist"
         "playlist" -> "a playlist"
         "podcast" -> "a podcast"
@@ -464,6 +464,7 @@ private fun sheetHeading(type: String, send: Boolean): String {
         "movie" -> "a movie"
         "episode" -> "an episode"
         "track" -> "a song"
+        "home" -> "a video"
         else -> "this"
     }
     return if (send) "Send $what to a phone" else "Download $what"
@@ -572,7 +573,7 @@ fun DownloadSheet(
     val limit = if (remote) (p?.limitBytes?.takeIf { it > 0 } ?: dev?.limitBytes ?: 0L) else settings.limitBytes
     val free = if (remote) (p?.freeBytes?.takeIf { it > 0 } ?: dev?.freeBytes ?: 0L) else OfflineDownloads.freeBytes()
     val fit = OfflineStorage.check(need, used, limit, free)
-    val video = p?.isVideo ?: (target.type in OFFLINE_VIDEO_KINDS || target.type in setOf("season", "show"))
+    val video = p?.isVideo ?: (target.type in OFFLINE_VIDEO_KINDS || target.type in setOf("season", "show", "home_album"))
 
     AdaptiveTvSheet(onDismissRequest = onDismiss, containerColor = DlColors.Raise, panelWidth = 480.dp) {
         Column(

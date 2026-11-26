@@ -119,7 +119,7 @@ internal object HomeWarmCache {
     var catalog: VideoCatalog = VideoCatalog()
         set(value) {
             field = value
-            val pages = value.libraries.filter { it.ownPage }
+            val pages = value.libraries.filter { it.hasOwnPage }
             if (pages != ownPageLibraries.value) ownPageLibraries.value = pages
         }
     var catalogFetchedAtMs: Long = 0L
@@ -875,7 +875,7 @@ fun HomeScreen(
                                         subtitle = item.meta?.subtitle.orEmpty(),
                                         artworkUrl = resolvedArt,
                                         streamUrl = api.streamUrl(item.itemType, item.itemId),
-                                        isVideo = item.itemType in setOf("movie", "episode", "youtube"),
+                                        isVideo = item.itemType in setOf("movie", "episode", "youtube", "home"),
                                         parentId = item.meta?.parentId,
                                         onOpenDetails = {
                                             when (item.itemType) {
