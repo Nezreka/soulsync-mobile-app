@@ -66,6 +66,7 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Podcasts
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SmartDisplay
 import androidx.compose.material.icons.filled.Tune
@@ -346,6 +347,21 @@ fun PlayerShell(
         }
     }
 
+    // notifications: the bell's count while open, the 15 minute job, and taps from the tray
+    NotificationsWhileOpen(api, currentRecord, isTv)
+    val notifyUnread by NotificationCenter.unread.collectAsState()
+    val notifyTap by NotificationCenter.pendingTap.collectAsState()
+    LaunchedEffect(notifyTap, api) {
+        if (notifyTap == null) return@LaunchedEffect
+        val tap = NotificationCenter.consumeTap() ?: return@LaunchedEffect
+        if (NotificationRoutes.opensNotificationSettings(tap.link)) NotificationsSettingsJump.request()
+        navigateTo(NotificationRoutes.destinationFor(tap.link) ?: PlayerDestination.Notifications)
+        if (tap.ids.isNotEmpty()) {
+            NotificationCenter.onRead(context, tap.ids)
+            notificationsClient(api).markRead(tap.ids)
+        }
+    }
+
     var showExitConfirm by remember { mutableStateOf(false) }
     val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
     val activityContext = androidx.compose.ui.platform.LocalContext.current
@@ -575,6 +591,8 @@ fun PlayerShell(
                                         onCastClick = { showCastSheet = true },
                                         onSearch = { navigateTo(PlayerDestination.Search) },
                                         onProfileClick = { showProfileSheet = true },
+                                        notifyCount = notifyUnread,
+                                        onNotifications = { navigateTo(PlayerDestination.Notifications) },
                                     )
                                 }
 
@@ -996,6 +1014,8 @@ private fun FloatingTopHeader(
     onCastClick: () -> Unit,
     onSearch: () -> Unit,
     onProfileClick: () -> Unit,
+    notifyCount: Int = 0,
+    onNotifications: (() -> Unit)? = null,
 ) {
     val focusManager = LocalFocusManager.current
     val isTv = LocalIsTv.current
@@ -1137,6 +1157,12 @@ private fun FloatingTopHeader(
             if (tvMiniAudioSlot != null) {
                 tvMiniAudioSlot()
                 Spacer(modifier = Modifier.width(10.dp))
+            }
+
+            // a phone has no room for the bell beside a resume pill; the drawer still has Notifications
+            if (onNotifications != null && (isTv || minimizedVideoTitle.isNullOrBlank())) {
+                NotificationBellButton(count = notifyCount, onClick = onNotifications)
+                Spacer(modifier = Modifier.width(8.dp))
             }
 
             if (showCastButton) {
@@ -2030,6 +2056,9 @@ private fun PlayerSidebar(
                     itemModifier = activeMod(isAdminOrDownloadsSel),
                 ) { onNavigate(PlayerDestination.Downloads) }
             }
+            val notifyCount by NotificationCenter.unread.collectAsState()
+            val isNotifySel = current is PlayerDestination.Notifications
+            SidebarItem(Icons.Default.Notifications, "Notifications", isNotifySel, collapsed, badgeCount = notifyCount, itemModifier = activeMod(isNotifySel)) { onNavigate(PlayerDestination.Notifications) }
             SidebarItem(Icons.Default.Settings, "Player Settings", isSettingsSel, collapsed, itemModifier = activeMod(isSettingsSel)) { onNavigate(PlayerDestination.Settings) }
             if (showCollapseToggle) {
                 SidebarItem(
@@ -2282,6 +2311,7 @@ private fun PlayerContent(
         )
         PlayerDestination.Search -> SearchScreen(api, coordinator, onNavigate, onDeviceRevoked)
         is PlayerDestination.SearchQuery -> SearchScreen(api, coordinator, onNavigate, onDeviceRevoked, initialQuery = current.query)
+        PlayerDestination.Notifications -> NotificationsScreen(api, onNavigate, onDeviceRevoked)
         PlayerDestination.Settings -> SettingsScreen(
             record = record,
             api = api,

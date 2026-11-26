@@ -51,6 +51,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -1126,6 +1127,9 @@ internal fun TvSpotlightHome(
                     item = activeAudio,
                 )
             }
+            // the bell: a tv shows notifications here and in its list, never in a system tray
+            val unread by NotificationCenter.unread.collectAsState()
+            NotificationBellButton(count = unread, size = 32.dp, onClick = { onNavigate(PlayerDestination.Notifications) })
             if (clockText.isNotBlank()) {
                 Box(
                     modifier = Modifier

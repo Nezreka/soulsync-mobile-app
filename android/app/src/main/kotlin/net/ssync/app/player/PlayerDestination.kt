@@ -57,6 +57,8 @@ sealed interface PlayerDestination {
     data object Search : PlayerDestination
     data class SearchQuery(val query: String) : PlayerDestination
     data object Settings : PlayerDestination
+    /** the bell's list: this profile's notifications */
+    data object Notifications : PlayerDestination
 }
 
 enum class BottomTab(val label: String) {

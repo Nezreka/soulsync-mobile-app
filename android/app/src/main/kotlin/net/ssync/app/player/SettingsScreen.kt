@@ -31,6 +31,7 @@ import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Subtitles
 import androidx.compose.material.icons.filled.Tv
@@ -87,6 +88,7 @@ private enum class SettingsCategory(
     DISPLAY("Music & Home", "Audio engine, visualizers, home & poster badges", Icons.Default.MusicNote),
     SUBTITLES("Subtitles", "Live cinema preview, size, and style", Icons.Default.Subtitles),
     LIVETV("Live TV & Issues", "Retro broadcast commercials & issue queue", Icons.Default.Tv),
+    NOTIFICATIONS("Notifications", "What reaches you, quiet hours, and this device", Icons.Default.Notifications),
     SERVER("Server & Device", "Direct HTTPS pairing & security", Icons.Default.Lock),
 }
 
@@ -262,7 +264,10 @@ fun SettingsScreen(
     }
 
     val isTv = net.ssync.pairing.ui.LocalIsTv.current
-    var activeCategory by remember { mutableStateOf(SettingsCategory.PLAYBACK) }
+    // the bell's list opens settings straight on Notifications
+    var activeCategory by remember {
+        mutableStateOf(if (NotificationsSettingsJump.take()) SettingsCategory.NOTIFICATIONS else SettingsCategory.PLAYBACK)
+    }
 
     Box(
         modifier = Modifier
@@ -1390,6 +1395,12 @@ fun SettingsScreen(
 
         // 5. Connected Server & Device Security
         }
+        if (activeCategory == SettingsCategory.NOTIFICATIONS) {
+        item {
+            NotificationsSettingsSection(record = record, api = api, onSaved = { flashSaved() })
+        }
+        }
+
         if (activeCategory == SettingsCategory.SERVER) {
         item {
             SettingsCard(
@@ -1465,7 +1476,7 @@ fun SettingsScreen(
 }
 
 @Composable
-private fun SettingsCard(
+internal fun SettingsCard(
     icon: ImageVector,
     title: String,
     scopeBadge: String,
@@ -1547,12 +1558,12 @@ private fun SettingsCard(
 }
 
 @Composable
-private fun SettingsDivider() {
+internal fun SettingsDivider() {
     HorizontalDivider(color = Color.White.copy(alpha = 0.06f))
 }
 
 @Composable
-private fun SettingsToggleRow(
+internal fun SettingsToggleRow(
     label: String,
     help: String,
     checked: Boolean,
@@ -1599,7 +1610,7 @@ private fun SettingsToggleRow(
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun <T> SegmentedPillRow(
+internal fun <T> SegmentedPillRow(
     options: List<Pair<T, String>>,
     selected: T,
     enabled: Boolean = true,

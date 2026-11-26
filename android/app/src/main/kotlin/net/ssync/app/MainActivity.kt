@@ -50,6 +50,8 @@ class MainActivity : ComponentActivity() {
     private var incomingLink by mutableStateOf<String?>(null)
 
     private fun takeLink(intent: Intent?) {
+        // a tapped notification: the shell opens its screen
+        if (net.ssync.app.player.NotificationCenter.takeIntent(intent)) return
         val raw = intent?.takeIf { it.action == Intent.ACTION_VIEW }?.dataString ?: return
         if (PairingLink.isPairingLink(raw)) incomingLink = raw
     }
