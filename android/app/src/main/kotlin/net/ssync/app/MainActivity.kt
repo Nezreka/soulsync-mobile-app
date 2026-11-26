@@ -1,8 +1,10 @@
 package net.ssync.app
 
 import android.content.ComponentName
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
@@ -29,6 +31,8 @@ import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.ListenableFuture
 import kotlinx.coroutines.launch
 import net.ssync.app.player.PlayerShell
+import net.ssync.connect.PairingLink
+import net.ssync.connect.PairingLinkDecision
 import net.ssync.connect.RendezvousClient
 import net.ssync.pairing.PairingScreen
 import net.ssync.pairing.PairingViewModel
@@ -42,12 +46,28 @@ import net.ssync.storage.KeystoreServerVault
 import net.ssync.storage.PairedServerRecord
 
 class MainActivity : ComponentActivity() {
+    // a soulsync://pair link from a phone camera, waiting for the root to take it
+    private var incomingLink by mutableStateOf<String?>(null)
+
+    private fun takeLink(intent: Intent?) {
+        val raw = intent?.takeIf { it.action == Intent.ACTION_VIEW }?.dataString ?: return
+        if (PairingLink.isPairingLink(raw)) incomingLink = raw
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        takeLink(intent)
+    }
+
     @OptIn(
         androidx.compose.material3.ExperimentalMaterial3Api::class,
         androidx.compose.foundation.ExperimentalFoundationApi::class,
     )
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // a recreated activity already handled the link it started with
+        if (savedInstanceState == null) takeLink(intent)
         setContent {
             val isTv = remember { isAndroidTv() }
             // a TV draws artwork large: ask for sizes to match (PlayerArtwork.largeScreen)
@@ -85,7 +105,7 @@ class MainActivity : ComponentActivity() {
                     androidx.compose.material3.LocalRippleConfiguration provides if (isTv) tvRipple else baseRipple,
                     androidx.compose.material3.LocalMinimumInteractiveComponentSize provides if (isTv) androidx.compose.ui.unit.Dp.Unspecified else androidx.compose.ui.unit.Dp(48f),
                 ) {
-                    SoulSyncRoot()
+                    SoulSyncRoot(incomingLink = incomingLink, onLinkTaken = { incomingLink = null })
                 }
             }
         }
@@ -93,7 +113,7 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun SoulSyncRoot() {
+private fun SoulSyncRoot(incomingLink: String?, onLinkTaken: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val vault = remember(context) { KeystoreServerVault(context.applicationContext) }
@@ -101,10 +121,32 @@ private fun SoulSyncRoot() {
     var loaded by remember { mutableStateOf(false) }
     var pairedRecord by remember { mutableStateOf<PairedServerRecord?>(null) }
     var revokedNotice by remember { mutableStateOf<String?>(null) }
+    // a scanned link: for the pairing screen, or asked about when already paired
+    var linkToPair by remember { mutableStateOf<Result<PairingLink>?>(null) }
+    var linkPrompt by remember { mutableStateOf<LinkPrompt?>(null) }
+    var linkProblem by remember { mutableStateOf<String?>(null) }
+    // pairing again (same server or a switch): the old pairing stays until it's done
+    var repairing by remember { mutableStateOf(false) }
 
     LaunchedEffect(vault) {
         pairedRecord = vault.load()
         loaded = true
+    }
+
+    LaunchedEffect(incomingLink, loaded) {
+        val raw = incomingLink ?: return@LaunchedEffect
+        if (!loaded) return@LaunchedEffect
+        onLinkTaken()
+        val parsed = PairingLink.parse(raw)
+        val record = pairedRecord
+        if (record == null || repairing) {
+            linkToPair = parsed
+            return@LaunchedEffect
+        }
+        parsed.fold(
+            onSuccess = { linkPrompt = LinkPrompt(it, PairingLinkDecision.decide(it, record.fingerprint)) },
+            onFailure = { linkProblem = it.message ?: PairingLink.BAD_LINK },
+        )
     }
 
     var controller by remember { mutableStateOf<MediaController?>(null) }
@@ -131,18 +173,35 @@ private fun SoulSyncRoot() {
     Box(modifier = Modifier.fillMaxSize()) {
         if (loaded) {
             val activeRecord = pairedRecord
-            if (activeRecord == null) {
-                val pairingViewModel = remember(vault, revokedNotice) {
+            if (activeRecord == null || repairing) {
+                val pairingViewModel = remember(vault, revokedNotice, repairing) {
                     PairingViewModel(
                         vault = vault,
                         rendezvousClient = RendezvousClient(baseUrl = BuildConfig.CONNECT_BASE_URL),
                     )
                 }
+                LaunchedEffect(pairingViewModel, linkToPair) {
+                    val pending = linkToPair ?: return@LaunchedEffect
+                    linkToPair = null
+                    pending.fold(
+                        onSuccess = { pairingViewModel.startFromLink(it) },
+                        onFailure = { pairingViewModel.showLinkProblem(it.message ?: PairingLink.BAD_LINK) },
+                    )
+                }
+                if (activeRecord != null) {
+                    // back keeps the current pairing
+                    BackHandler { repairing = false }
+                }
                 PairingScreen(
                     viewModel = pairingViewModel,
-                    noticeBanner = revokedNotice,
+                    noticeBanner = if (activeRecord != null) {
+                        "Still connected to ${serverLabel(activeRecord)}. Go back to keep it."
+                    } else {
+                        revokedNotice
+                    },
                     onPaired = { saved ->
                         revokedNotice = null
+                        repairing = false
                         pairedRecord = saved
                     },
                 )
@@ -168,5 +227,26 @@ private fun SoulSyncRoot() {
             }
         }
         SoulSyncBootOverlay(ready = loaded)
+
+        val prompt = linkPrompt
+        val record = pairedRecord
+        if (prompt != null && record != null && !repairing) {
+            PairingLinkPromptDialog(
+                prompt = prompt,
+                currentServer = serverLabel(record),
+                onKeep = { linkPrompt = null },
+                onPair = {
+                    linkPrompt = null
+                    linkToPair = Result.success(prompt.link)
+                    repairing = true
+                },
+            )
+        }
+        linkProblem?.let { message ->
+            PairingLinkProblemDialog(message = message, onDismiss = { linkProblem = null })
+        }
     }
 }
+
+private fun serverLabel(record: PairedServerRecord): String =
+    record.serverName?.takeIf { it.isNotBlank() } ?: "your SoulSync server"

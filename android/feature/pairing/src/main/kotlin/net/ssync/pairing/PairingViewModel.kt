@@ -3,12 +3,14 @@ package net.ssync.pairing
 import android.os.Build
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import net.ssync.connect.LookupOutcome
 import net.ssync.connect.PairingCode
+import net.ssync.connect.PairingLink
 import net.ssync.connect.RendezvousClient
 import net.ssync.connect.VerifiedServerAnswer
 import net.ssync.network.AdmitClient
@@ -54,13 +56,37 @@ class PairingViewModel(
     private val _step = MutableStateFlow<PairingStep>(PairingStep.CodeEntry())
     val step: StateFlow<PairingStep> = _step.asStateFlow()
 
+    // the fingerprint a scanned link named: the relay's answer must match it
+    private var linkFingerprint: String? = null
+    private var work: Job? = null
+
     fun onCodeChanged(value: String) {
         val current = _step.value as? PairingStep.CodeEntry ?: return
+        linkFingerprint = null
         _step.value = current.copy(codeInput = value, errorMessage = null)
     }
 
-    fun submitCode() {
+    /** a scanned soulsync://pair link: fill the code in and look it up. the
+     *  user still confirms the fingerprint, as with a typed code. */
+    fun startFromLink(link: PairingLink) {
+        work?.cancel()
+        linkFingerprint = link.fingerprint
+        _step.value = PairingStep.CodeEntry(codeInput = link.codeText)
+        submitCode(keepLinkFingerprint = true)
+    }
+
+    /** a link that couldn't be read: say so over the normal code boxes */
+    fun showLinkProblem(message: String) {
+        work?.cancel()
+        linkFingerprint = null
+        _step.value = PairingStep.CodeEntry(errorMessage = message)
+    }
+
+    fun submitCode() = submitCode(keepLinkFingerprint = false)
+
+    private fun submitCode(keepLinkFingerprint: Boolean) {
         val current = _step.value as? PairingStep.CodeEntry ?: return
+        if (!keepLinkFingerprint) linkFingerprint = null
         val parsed = PairingCode.parse(current.codeInput).getOrElse {
             _step.value = current.copy(
                 errorMessage = "Enter the 16-character pairing code shown in SoulSync Settings.",
@@ -69,9 +95,17 @@ class PairingViewModel(
         }
 
         _step.value = current.copy(isBusy = true, errorMessage = null)
-        viewModelScope.launch {
+        val expected = linkFingerprint
+        work = viewModelScope.launch {
             when (val outcome = rendezvousClient.lookup(parsed)) {
                 is LookupOutcome.Verified -> {
+                    if (expected != null && expected != outcome.answer.fingerprint) {
+                        _step.value = PairingStep.CodeEntry(
+                            errorMessage = "The server that answered isn't the one in the QR code, so pairing stopped. " +
+                                "Make a new code in SoulSync and try again.",
+                        )
+                        return@launch
+                    }
                     _step.value = PairingStep.ConfirmFingerprint(
                         code = parsed,
                         answer = outcome.answer,
@@ -103,7 +137,7 @@ class PairingViewModel(
         val current = _step.value as? PairingStep.ConfirmFingerprint ?: return
         _step.value = current.copy(isBusy = true, errorMessage = null)
 
-        viewModelScope.launch {
+        work = viewModelScope.launch {
             val pinnedClient = CertPinningOkHttp.createPinnedClient(
                 expectedCertFingerprintSha256 = current.answer.certFingerprintSha256,
             )
@@ -173,7 +207,7 @@ class PairingViewModel(
         val current = _step.value as? PairingStep.ProfilePick ?: return
         _step.value = current.copy(isBusy = true, errorMessage = null)
 
-        viewModelScope.launch {
+        work = viewModelScope.launch {
             val pinnedClient = CertPinningOkHttp.createPinnedClient(
                 expectedCertFingerprintSha256 = current.answer.certFingerprintSha256,
             )
