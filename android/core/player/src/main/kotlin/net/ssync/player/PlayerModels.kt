@@ -236,6 +236,8 @@ data class PlayerLibrary(
     /** the live guide plays its titles (home videos default to no) */
     @SerialName("in_guide")
     val inGuide: Boolean = kind != "home",
+    /** a 4K library, as the server sees it (its name or a folder says so); null from an older server */
+    val uhd: Boolean? = null,
 ) {
     /** a home videos library always has a page of its own: it isn't part of Movies or TV Shows */
     val hasOwnPage: Boolean get() = ownPage || kind == "home"
@@ -1954,6 +1956,7 @@ internal object VideoCatalogDecoder {
                 ownPage = o["own_page"].boolOrNull() ?: false,
                 main = o["main"].boolOrNull() ?: false,
                 inGuide = o["in_guide"].boolOrNull() ?: (o["kind"].strOrNull() != "home"),
+                uhd = o["uhd"].boolOrNull(),
             )
         } ?: emptyList()
         val home = (root["home"] as? JsonArray)?.mapNotNull { el ->

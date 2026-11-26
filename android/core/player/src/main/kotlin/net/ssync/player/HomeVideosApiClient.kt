@@ -26,6 +26,14 @@ class HomeVideosApiClient(
     suspend fun overview(library: Int): MusicApiResult<HomeOverview> =
         get("$root/overview?library=$library") { HomeVideoParser.overview(it) }
 
+    /**
+     * home's On this day row: clips filmed on this month and day in earlier
+     * years, from every home library this profile can see. [day] is the
+     * viewer's own day (yyyy-mm-dd), so it turns at their midnight
+     */
+    suspend fun memories(day: String = java.time.LocalDate.now().toString()): MusicApiResult<List<HomeVideo>> =
+        get("$root/memories?date=$day") { body -> HomeVideoParser.page(body).videos.filter { !it.missing } }
+
     /** one page of a month (newest first), an album (oldest first) or a search */
     suspend fun videos(
         library: Int,

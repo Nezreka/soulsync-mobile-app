@@ -439,6 +439,8 @@ fun PosterCard(
     inLibrary: Boolean? = true,
     width: Dp = 122.dp,
     contextItem: MediaContextItem? = null,
+    /** a small label top left, like "4K" when another copy is 4K */
+    chip: String? = null,
     onClick: () -> Unit,
 ) {
     val openContext = LocalMediaContextMenu.current
@@ -490,6 +492,9 @@ fun PosterCard(
                     fallbackIcon = Icons.Default.Movie,
                     modifier = Modifier.fillMaxSize(),
                 )
+                if (!chip.isNullOrBlank()) {
+                    TitleChip(chip, Modifier.align(Alignment.TopStart).padding(6.dp))
+                }
                 if (inLibrary != null) {
                     LibraryCornerBadge(
                         inLibrary = inLibrary,
@@ -622,6 +627,7 @@ fun WideMediaCard(
     progress: Float? = null,
     width: Dp = 228.dp,
     contextItem: MediaContextItem? = null,
+    chip: String? = null,
     onClick: () -> Unit,
 ) {
     val openContext = LocalMediaContextMenu.current
@@ -664,6 +670,9 @@ fun WideMediaCard(
                             ),
                         ),
                 )
+                if (!chip.isNullOrBlank()) {
+                    TitleChip(chip, Modifier.align(Alignment.TopStart).padding(6.dp))
+                }
                 if (progress != null && progress > 0f) {
                     LinearProgressIndicator(
                         progress = { progress },
@@ -695,6 +704,22 @@ fun WideMediaCard(
     }
 }
 
+/** a small label on a card's picture: "4K" */
+@Composable
+fun TitleChip(text: String, modifier: Modifier = Modifier) {
+    Text(
+        text = text,
+        color = Color.White,
+        fontSize = 9.5.sp,
+        fontWeight = FontWeight.ExtraBold,
+        letterSpacing = 0.4.sp,
+        modifier = modifier
+            .background(Color.Black.copy(alpha = 0.72f), RoundedCornerShape(4.dp))
+            .border(1.dp, Color.White.copy(alpha = 0.28f), RoundedCornerShape(4.dp))
+            .padding(horizontal = 5.dp, vertical = 1.dp),
+    )
+}
+
 @Composable
 fun LibraryCornerBadge(
     inLibrary: Boolean,
@@ -723,6 +748,7 @@ fun RankedPosterCard(
     title: String,
     artworkUrl: String?,
     contextItem: MediaContextItem? = null,
+    chip: String? = null,
     onClick: () -> Unit,
 ) {
     Row(
@@ -741,6 +767,7 @@ fun RankedPosterCard(
             artworkUrl = artworkUrl,
             width = 116.dp,
             contextItem = contextItem,
+            chip = chip,
             onClick = onClick,
         )
     }

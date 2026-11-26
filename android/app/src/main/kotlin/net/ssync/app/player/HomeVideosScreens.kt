@@ -800,16 +800,18 @@ internal fun Chip(text: String, modifier: Modifier = Modifier, tabular: Boolean 
 /** a large On this day card: the picture, how long ago, the name and date */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun MemoryCard(v: HomeVideo, home: HomeVideosApiClient, modifier: Modifier, onClick: () -> Unit, onLongClick: () -> Unit) {
+internal fun MemoryCard(v: HomeVideo, home: HomeVideosApiClient, modifier: Modifier, onClick: () -> Unit, onLongClick: (() -> Unit)? = null) {
     val haptic = LocalHapticFeedback.current
     val title = HomeVideoText.title(v)
     Box(
         modifier
             .aspectRatio(16f / 9f)
             .clip(RoundedCornerShape(14.dp))
-            .combinedClickable(onClick = onClick, onLongClick = {
-                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                onLongClick()
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick?.let { long ->
+                {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    long()
+                }
             }),
     ) {
         HomeThumb(v, home, Modifier.fillMaxSize(), maxPx = 720)

@@ -84,8 +84,14 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import net.ssync.pairing.theme.SoulSyncColors
 import net.ssync.pairing.ui.LocalIsTv
+import net.ssync.pairing.ui.dpadCardFocusable
 import net.ssync.pairing.ui.dpadFocusable
 import net.ssync.player.HomeLayout
+import net.ssync.player.HomeLibraries
+import net.ssync.player.HomeVideo
+import net.ssync.player.HomeVideosApiClient
+import net.ssync.player.LibraryRow
+import net.ssync.player.TitleCopies
 import net.ssync.player.HomeLayoutResponse
 import net.ssync.player.LayoutCatalog
 import net.ssync.player.PHONE_LAYOUT_DEVICE
@@ -130,6 +136,8 @@ internal object HomeWarmCache {
     var podcasts: List<PodcastSub> = emptyList()
     var books: List<OwnedBook> = emptyList()
     var homeLayout: HomeLayout = HomeLayout()
+    /** home's On this day clips */
+    var memories: List<HomeVideo> = emptyList()
     var layoutShared: Boolean = true
     var liveGuideHighlights: List<HomeLiveHighlight> = emptyList()
     var hasLoadedOnce: Boolean = false
@@ -362,10 +370,14 @@ fun HomeScreen(
         }
     }
 
+    // one card per title across libraries on the rows built from the whole catalog
+    val copies = remember(catalog) { TitleCopies.of(catalog) }
+    fun movie4k(id: Int): String? = if (copies.movieHas4k(id)) "4K" else null
+    fun show4k(id: Int): String? = if (copies.showHas4k(id)) "4K" else null
+
     // Build New Releases Billboard slides from newest Movies + TV Shows (1:1 with desktop /player)
-    val billboardSlides = remember(catalog) {
-        val movieSlides = catalog.movies
-            .sortedByDescending { it.addedAt.orEmpty() }
+    val billboardSlides = remember(catalog, copies) {
+        val movieSlides = copies.movies(catalog.movies.sortedByDescending { it.addedAt.orEmpty() })
             .take(4)
             .map { m ->
                 BillboardSlide(
@@ -386,8 +398,7 @@ fun HomeScreen(
                     previewStreamUrl = api.streamUrl("movie", m.id.toString()),
                 )
             }
-        val showSlides = catalog.shows
-            .sortedByDescending { it.addedAt.orEmpty() }
+        val showSlides = copies.shows(catalog.shows.sortedByDescending { it.addedAt.orEmpty() })
             .take(3)
             .map { s ->
                 val firstEpId = s.episodes.firstOrNull()?.firstOrNull()?.toString()?.trim('"')
@@ -500,7 +511,7 @@ fun HomeScreen(
             (api.fetchDiscoverMoreLike() as? MusicApiResult.Success)?.let { moreLikeRails = it.data }
         }
     }
-    val becauseRails: List<Pair<String, List<Pair<String, Int>>>> = remember(moreLikeRails, catalog.movies, catalog.shows) {
+    val becauseRails: List<Pair<String, List<Pair<String, Int>>>> = remember(moreLikeRails, catalog.movies, catalog.shows, copies) {
         val movieByTmdb = catalog.movies.mapNotNull { m -> m.tmdbId?.let { it to m.id } }.toMap()
         val showByTmdb = catalog.shows.mapNotNull { sh -> sh.tmdbId?.let { it to sh.id } }.toMap()
         moreLikeRails.map { rail ->
@@ -510,12 +521,50 @@ fun HomeScreen(
                     "show" -> showByTmdb[t.tmdbId]?.let { "show" to it }
                     else -> null
                 }
-            }.distinct()
+            }.let { copies.cards(it) }
             rail.title.replaceFirst(Regex("^More like "), "Because you have ") to cards
         }.filter { it.second.size >= 4 }.take(2)
     }
-    val sortedMovies = remember(catalog.movies) { catalog.movies.sortedByDescending { it.addedAt.orEmpty() } }
-    val sortedShows = remember(catalog.shows) { catalog.shows.sortedByDescending { it.addedAt.orEmpty() } }
+    val sortedMovies = remember(catalog.movies, copies) { copies.movies(catalog.movies.sortedByDescending { it.addedAt.orEmpty() }) }
+    val sortedShows = remember(catalog.shows, copies) { copies.shows(catalog.shows.sortedByDescending { it.addedAt.orEmpty() }) }
+    val topMovies = remember(catalog.movies, copies) { copies.movies(catalog.movies.sortedByDescending { it.rating ?: 0.0 }).take(10) }
+    val topShows = remember(catalog.shows, copies) { copies.shows(catalog.shows.sortedByDescending { it.rating ?: 0.0 }).take(10) }
+
+    // the rows of one library: its newest titles, and what you started in it
+    val libraryRowIds = homeLayout.rows.filter { it.on && HomeLibraries.parse(it.id) != null }.map { it.id }
+    val libRecentMovies = remember(libraryRowIds, catalog) {
+        libraryRowIds.mapNotNull { id ->
+            val lib = (HomeLibraries.parse(id) as? LibraryRow.Recent)?.let { HomeLibraries.library(it, catalog.libraries) }
+            if (lib?.kind == "movie") id to HomeLibraries.recentMovies(lib.id, catalog.movies, catalog.libraries).take(20) else null
+        }.toMap()
+    }
+    val libRecentShows = remember(libraryRowIds, catalog) {
+        libraryRowIds.mapNotNull { id ->
+            val lib = (HomeLibraries.parse(id) as? LibraryRow.Recent)?.let { HomeLibraries.library(it, catalog.libraries) }
+            if (lib?.kind == "show") id to HomeLibraries.recentShows(lib.id, catalog.shows, catalog.libraries).take(20) else null
+        }.toMap()
+    }
+    val libContinue = remember(libraryRowIds, catalog, continueItems) {
+        libraryRowIds.mapNotNull { id ->
+            val lib = (HomeLibraries.parse(id) as? LibraryRow.Continue)?.let { HomeLibraries.library(it, catalog.libraries) }
+                ?: return@mapNotNull null
+            id to HomeLibraries.continueIn(lib, continueItems, catalog.movies, catalog.shows, catalog.libraries)
+        }.toMap()
+    }
+
+    // On this day: the profile's home videos filmed on this day in earlier years
+    val homeContext = LocalContext.current
+    val homeClient = remember(api) { HomeVideosApiClient(api.baseUrl, api.pinnedAuthenticatedClient) }
+    var memories by remember(api.baseUrl) { mutableStateOf(if (warmHit) HomeWarmCache.memories else emptyList()) }
+    val wantsMemories = homeLayout.rows.any { it.on && it.id == HomeLibraries.MEMORIES } &&
+        HomeLibraries.hasHomeLibrary(catalog.libraries)
+    val today = java.time.LocalDate.now().toString()
+    LaunchedEffect(api.baseUrl, wantsMemories, today, catalog.libraries) {
+        if (wantsMemories) (homeClient.memories(today) as? MusicApiResult.Success)?.let {
+            memories = it.data
+            HomeWarmCache.memories = it.data
+        }
+    }
 
     // 1:1 Desktop Parity: On Live TV Right Now, Seasonal Spotlight, Today's Picks & Rediscover
     // Computed off the main thread on Dispatchers.Default so initial Home composition never drops frames!
@@ -540,7 +589,7 @@ fun HomeScreen(
             HomeWarmCache.liveGuideHighlights = built
         }
     }
-    val seasonalBundle = remember(catalog.movies, catalog.shows) {
+    val seasonalBundle = remember(catalog.movies, catalog.shows, copies) {
         val cal = java.util.Calendar.getInstance()
         val month = cal.get(java.util.Calendar.MONTH) // 0..11
         val daySeed = cal.get(java.util.Calendar.YEAR) * 1000 + cal.get(java.util.Calendar.DAY_OF_YEAR)
@@ -563,26 +612,28 @@ fun HomeScreen(
         val showMatches = catalog.shows.filter { s -> s.genres.any { it.lowercase() in genres } }
             .map { Triple("show", it.id, it.title) }
         val combined = (movieMatches + showMatches)
+            .map { (k, id, t) -> Triple(k, if (k == "movie") copies.movieId(id) else copies.showId(id), t) }
+            .distinctBy { it.first to it.second }
             .sortedBy { (k, id, _) -> ((id * 2654435761L) xor daySeed.toLong() xor k.hashCode().toLong()) }
             .take(18)
         label to combined
     }
-    val dailyGenrePick = remember(catalog.movies) {
+    val dailyGenrePick = remember(catalog.movies, copies) {
         val counts = mutableMapOf<String, Int>()
         catalog.movies.forEach { m -> m.genres.forEach { g -> counts[g] = (counts[g] ?: 0) + 1 } }
         val eligible = counts.entries.filter { it.value >= 4 }.map { it.key }.sorted()
         if (eligible.isEmpty()) null else {
             val daySeed = java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_YEAR)
             val chosen = eligible[daySeed % eligible.size]
-            chosen to catalog.movies.filter { m -> m.genres.any { it.equals(chosen, ignoreCase = true) } }
-                .sortedByDescending { it.rating ?: 0.0 }
-                .take(18)
+            chosen to copies.movies(
+                catalog.movies.filter { m -> m.genres.any { it.equals(chosen, ignoreCase = true) } }
+                    .sortedByDescending { it.rating ?: 0.0 },
+            ).take(18)
         }
     }
-    val rediscoverMovies = remember(catalog.movies) {
+    val rediscoverMovies = remember(catalog.movies, copies) {
         val daySeed = java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_YEAR).toLong()
-        catalog.movies
-            .sortedBy { it.addedAt.orEmpty() }
+        copies.movies(catalog.movies.sortedBy { it.addedAt.orEmpty() })
             .take(40)
             .sortedBy { (it.id.toLong() * 1103515245L) xor daySeed }
             .take(18)
@@ -605,6 +656,8 @@ fun HomeScreen(
             liveGuideHighlights = liveGuideHighlights,
             logos = logos,
             onNavigate = onNavigate,
+            memories = memories,
+            homeClient = homeClient,
         )
         if (showEditor) {
             HomeEditorSheet(
@@ -641,11 +694,137 @@ fun HomeScreen(
                 },
                 catalog = layoutCatalog,
                 availableShowGenres = catalog.shows.flatMap { it.genres }.distinct().sorted(),
+                libraries = catalog.libraries,
                 onDismiss = { showEditor = false },
             )
         }
         return
     }
+    // a continue watching card: the main row and a library's own row draw the same
+    val continueCard: @Composable (ProgressRow) -> Unit = { item ->
+        val idInt = item.itemId.toIntOrNull()
+        val parentInt = item.meta?.parentId?.toIntOrNull()
+        val catalogTitle = when (item.itemType) {
+            "movie" -> idInt?.let { moviesById[it]?.title }
+            "show" -> idInt?.let { showsById[it]?.title }
+            "episode" -> parentInt?.let { showsById[it]?.title }
+            "youtube" -> catalog.youtube.firstOrNull { it.id == item.itemId || it.youtubeId == item.itemId }?.title
+            "audiobook" -> books.firstOrNull { it.asin == item.itemId }?.title
+            else -> null
+        }
+        val displayTitle = item.meta?.title
+            ?.takeIf { it.isNotBlank() && !it.equals("Untitled", ignoreCase = true) }
+            ?: catalogTitle
+            ?: item.itemId
+        val resolvedArt = if (item.itemType == "youtube") {
+            val ytCatalogThumb = catalog.youtube
+                .firstOrNull { it.id == item.itemId || it.youtubeId == item.itemId }
+                ?.thumbnailUrl
+            val metaArt = (item.meta?.backdrop ?: item.meta?.artwork)
+                ?.takeIf { it.isNotBlank() && !it.contains("/api/image-proxy") }
+            api.artwork.resolve(metaArt ?: ytCatalogThumb)
+                ?: api.artwork.forItem("youtube", item.itemId, preferBackdrop = true)
+        } else {
+            api.artwork.resolve(item.meta?.backdrop ?: item.meta?.artwork)
+                ?: api.artwork.forItem(
+                    itemType = item.itemType,
+                    itemId = item.itemId,
+                    preferBackdrop = true,
+                    parentId = item.meta?.parentId,
+                )
+        }
+        WideMediaCard(
+            title = displayTitle,
+            subtitle = item.meta?.subtitle ?: item.itemType.replaceFirstChar { it.uppercase() },
+            artworkUrl = resolvedArt,
+            progress = item.progressFraction,
+            contextItem = MediaContextItem(
+                itemType = item.itemType,
+                itemId = item.itemId,
+                title = displayTitle,
+                subtitle = item.meta?.subtitle.orEmpty(),
+                artworkUrl = resolvedArt,
+                streamUrl = api.streamUrl(item.itemType, item.itemId),
+                isVideo = item.itemType in setOf("movie", "episode", "youtube", "home"),
+                parentId = item.meta?.parentId,
+                onOpenDetails = {
+                    when (item.itemType) {
+                        "movie" -> idInt?.let { onNavigate(PlayerDestination.MovieDetail(it)) }
+                        "show" -> idInt?.let { onNavigate(PlayerDestination.ShowDetail(it)) }
+                        "episode" -> parentInt?.let { onNavigate(PlayerDestination.ShowDetail(it)) }
+                        "track" -> parentInt?.let { onNavigate(PlayerDestination.AlbumDetail(it)) }
+                    }
+                },
+            ),
+            onClick = {
+                when (item.itemType) {
+                    "movie" -> if (idInt != null) onNavigate(PlayerDestination.MovieDetail(idInt))
+                    "show" -> if (idInt != null) onNavigate(PlayerDestination.ShowDetail(idInt))
+                    "episode" -> if (parentInt != null) {
+                        onNavigate(PlayerDestination.ShowDetail(parentInt))
+                    } else {
+                        coordinator.playVideo(
+                            ActivePlayable(
+                                itemType = item.itemType,
+                                itemId = item.itemId,
+                                title = displayTitle,
+                                subtitle = item.meta?.subtitle.orEmpty(),
+                                artworkUrl = resolvedArt,
+                                streamUrl = api.streamUrl(item.itemType, item.itemId),
+                                isVideo = true,
+                                resumePositionMs = (item.positionSeconds * 1000.0).toLong(),
+                            ),
+                        )
+                    }
+                    "track" -> if (parentInt != null) {
+                        onNavigate(PlayerDestination.AlbumDetail(parentInt, highlightTrackId = idInt))
+                    } else {
+                        onNavigate(PlayerDestination.Music)
+                    }
+                    "audiobook" -> {
+                        val book = books.firstOrNull { it.asin == item.itemId }
+                        if (book != null) onNavigate(PlayerDestination.AudiobookDetail(book))
+                        else onNavigate(PlayerDestination.Audiobooks)
+                    }
+                    "podcast" -> onNavigate(PlayerDestination.Podcasts)
+                    "youtube" -> {
+                        val ytMatch = catalog.youtube.firstOrNull {
+                            it.id == item.itemId || it.youtubeId == item.itemId
+                        }
+                        val chId = item.meta?.parentId ?: ytMatch?.channelId
+                        val chTitle = item.meta?.subtitle?.takeIf { it.isNotBlank() }
+                            ?: ytMatch?.channelTitle.orEmpty()
+                        coordinator.playVideo(
+                            ActivePlayable(
+                                itemType = "youtube",
+                                itemId = item.itemId,
+                                title = displayTitle,
+                                subtitle = chTitle,
+                                artworkUrl = resolvedArt,
+                                streamUrl = api.streamUrl("youtube", item.itemId),
+                                isVideo = true,
+                                resumePositionMs = (item.positionSeconds * 1000.0).toLong(),
+                                parentId = chId,
+                            ),
+                        )
+                    }
+                    else -> coordinator.playVideo(
+                        ActivePlayable(
+                            itemType = item.itemType,
+                            itemId = item.itemId,
+                            title = displayTitle,
+                            subtitle = item.meta?.subtitle.orEmpty(),
+                            artworkUrl = resolvedArt,
+                            streamUrl = api.streamUrl(item.itemType, item.itemId),
+                            isVideo = true,
+                            resumePositionMs = (item.positionSeconds * 1000.0).toLong(),
+                        ),
+                    )
+                }
+            },
+        )
+    }
+
     val heroPlayFocus = remember { FocusRequester() }
     LaunchedEffect(isTv, showBillboard) {
         if (isTv && showBillboard) {
@@ -828,131 +1007,86 @@ fun HomeScreen(
         homeLayout.rows.filter { it.on }.forEach { row ->
             val cardWidth = if (row.style == "large") 150.dp else 124.dp
             when {
+                // a library's rows, under its current name; one this profile can't see is skipped
+                !HomeLibraries.visible(row.id, catalog.libraries) -> Unit
+                row.id == HomeLibraries.MEMORIES -> if (memories.isNotEmpty()) {
+                    item(key = "row-${row.id}") {
+                        MediaRail(title = "On this day") {
+                            items(memories, key = { "memory-${it.id}" }) { v ->
+                                MemoryCard(
+                                    v = v,
+                                    home = homeClient,
+                                    modifier = Modifier
+                                        .width(if (row.style == "large") 320.dp else 260.dp)
+                                        .dpadCardFocusable(RoundedCornerShape(14.dp)),
+                                    onClick = { playHomeClip(homeContext, api, homeClient, coordinator, v, memories) },
+                                )
+                            }
+                        }
+                    }
+                }
+                row.id in libContinue -> {
+                    val started = libContinue[row.id].orEmpty()
+                    if (started.isNotEmpty()) item(key = "row-${row.id}") {
+                        MediaRail(title = HomeLibraries.title(row.id, catalog.libraries).orEmpty()) {
+                            items(started, key = { "${it.itemType}:${it.itemId}" }) { item -> continueCard(item) }
+                        }
+                    }
+                }
+                row.id in libRecentMovies || row.id in libRecentShows -> {
+                    val lib = (HomeLibraries.parse(row.id) as? LibraryRow.Recent)?.let { HomeLibraries.library(it, catalog.libraries) }
+                    val films = libRecentMovies[row.id].orEmpty()
+                    val series = libRecentShows[row.id].orEmpty()
+                    if (lib != null && (films.isNotEmpty() || series.isNotEmpty())) item(key = "row-${row.id}") {
+                        MediaRail(
+                            title = HomeLibraries.title(row.id, catalog.libraries).orEmpty(),
+                            actionLabel = "All",
+                            onAction = { onNavigate(libraryDestination(lib)) },
+                        ) {
+                            val cards = films.map { m ->
+                                LibraryTitleCard("movie", m.id, m.title, m.year?.toString(), m.rating,
+                                    api.artwork.moviePoster(m.id), api.artwork.movieBackdrop(m.id))
+                            } + series.map { sh ->
+                                LibraryTitleCard("show", sh.id, sh.title, "${sh.episodeCount} episodes", sh.rating,
+                                    api.artwork.showPoster(sh.id), api.artwork.showBackdrop(sh.id))
+                            }
+                            val shown = if (row.style == "ranked") cards.take(10) else cards
+                            itemsIndexed(shown, key = { _, c -> "${row.id}-${c.kind}-${c.id}" }) { idx, c ->
+                                val open = {
+                                    onNavigate(if (c.kind == "movie") PlayerDestination.MovieDetail(c.id) else PlayerDestination.ShowDetail(c.id))
+                                }
+                                val ctx = MediaContextItem(
+                                    itemType = c.kind,
+                                    itemId = c.id.toString(),
+                                    title = c.title,
+                                    subtitle = c.subtitle.orEmpty(),
+                                    artworkUrl = c.poster,
+                                    streamUrl = if (c.kind == "movie") api.streamUrl("movie", c.id.toString()) else null,
+                                    isVideo = true,
+                                    onOpenDetails = open,
+                                )
+                                when (row.style) {
+                                    "ranked" -> RankedPosterCard(rank = idx + 1, title = c.title, artworkUrl = c.poster, contextItem = ctx, onClick = open)
+                                    "wide" -> WideMediaCard(title = c.title, subtitle = c.subtitle, artworkUrl = c.backdrop, fallbackArtworkUrl = c.poster, contextItem = ctx, onClick = open)
+                                    else -> PosterCard(
+                                        title = c.title,
+                                        subtitle = c.subtitle,
+                                        artworkUrl = c.poster,
+                                        badge = c.rating?.let { "%.1f".format(it) },
+                                        width = cardWidth,
+                                        contextItem = ctx,
+                                        onClick = open,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
                 row.id == "continue" && continueItems.isNotEmpty() -> {
                     item(key = "row-continue") {
                         MediaRail(title = "Continue Watching") {
                             items(continueItems, key = { "${it.itemType}:${it.itemId}" }) { item ->
-                                val idInt = item.itemId.toIntOrNull()
-                                val parentInt = item.meta?.parentId?.toIntOrNull()
-                                val catalogTitle = when (item.itemType) {
-                                    "movie" -> idInt?.let { moviesById[it]?.title }
-                                    "show" -> idInt?.let { showsById[it]?.title }
-                                    "episode" -> parentInt?.let { showsById[it]?.title }
-                                    "youtube" -> catalog.youtube.firstOrNull { it.id == item.itemId || it.youtubeId == item.itemId }?.title
-                                    "audiobook" -> books.firstOrNull { it.asin == item.itemId }?.title
-                                    else -> null
-                                }
-                                val displayTitle = item.meta?.title
-                                    ?.takeIf { it.isNotBlank() && !it.equals("Untitled", ignoreCase = true) }
-                                    ?: catalogTitle
-                                    ?: item.itemId
-                                val resolvedArt = if (item.itemType == "youtube") {
-                                    val ytCatalogThumb = catalog.youtube
-                                        .firstOrNull { it.id == item.itemId || it.youtubeId == item.itemId }
-                                        ?.thumbnailUrl
-                                    val metaArt = (item.meta?.backdrop ?: item.meta?.artwork)
-                                        ?.takeIf { it.isNotBlank() && !it.contains("/api/image-proxy") }
-                                    api.artwork.resolve(metaArt ?: ytCatalogThumb)
-                                        ?: api.artwork.forItem("youtube", item.itemId, preferBackdrop = true)
-                                } else {
-                                    api.artwork.resolve(item.meta?.backdrop ?: item.meta?.artwork)
-                                        ?: api.artwork.forItem(
-                                            itemType = item.itemType,
-                                            itemId = item.itemId,
-                                            preferBackdrop = true,
-                                            parentId = item.meta?.parentId,
-                                        )
-                                }
-                                WideMediaCard(
-                                    title = displayTitle,
-                                    subtitle = item.meta?.subtitle ?: item.itemType.replaceFirstChar { it.uppercase() },
-                                    artworkUrl = resolvedArt,
-                                    progress = item.progressFraction,
-                                    contextItem = MediaContextItem(
-                                        itemType = item.itemType,
-                                        itemId = item.itemId,
-                                        title = displayTitle,
-                                        subtitle = item.meta?.subtitle.orEmpty(),
-                                        artworkUrl = resolvedArt,
-                                        streamUrl = api.streamUrl(item.itemType, item.itemId),
-                                        isVideo = item.itemType in setOf("movie", "episode", "youtube", "home"),
-                                        parentId = item.meta?.parentId,
-                                        onOpenDetails = {
-                                            when (item.itemType) {
-                                                "movie" -> idInt?.let { onNavigate(PlayerDestination.MovieDetail(it)) }
-                                                "show" -> idInt?.let { onNavigate(PlayerDestination.ShowDetail(it)) }
-                                                "episode" -> parentInt?.let { onNavigate(PlayerDestination.ShowDetail(it)) }
-                                                "track" -> parentInt?.let { onNavigate(PlayerDestination.AlbumDetail(it)) }
-                                            }
-                                        },
-                                    ),
-                                    onClick = {
-                                        when (item.itemType) {
-                                            "movie" -> if (idInt != null) onNavigate(PlayerDestination.MovieDetail(idInt))
-                                            "show" -> if (idInt != null) onNavigate(PlayerDestination.ShowDetail(idInt))
-                                            "episode" -> if (parentInt != null) {
-                                                onNavigate(PlayerDestination.ShowDetail(parentInt))
-                                            } else {
-                                                coordinator.playVideo(
-                                                    ActivePlayable(
-                                                        itemType = item.itemType,
-                                                        itemId = item.itemId,
-                                                        title = displayTitle,
-                                                        subtitle = item.meta?.subtitle.orEmpty(),
-                                                        artworkUrl = resolvedArt,
-                                                        streamUrl = api.streamUrl(item.itemType, item.itemId),
-                                                        isVideo = true,
-                                                        resumePositionMs = (item.positionSeconds * 1000.0).toLong(),
-                                                    ),
-                                                )
-                                            }
-                                            "track" -> if (parentInt != null) {
-                                                onNavigate(PlayerDestination.AlbumDetail(parentInt, highlightTrackId = idInt))
-                                            } else {
-                                                onNavigate(PlayerDestination.Music)
-                                            }
-                                            "audiobook" -> {
-                                                val book = books.firstOrNull { it.asin == item.itemId }
-                                                if (book != null) onNavigate(PlayerDestination.AudiobookDetail(book))
-                                                else onNavigate(PlayerDestination.Audiobooks)
-                                            }
-                                            "podcast" -> onNavigate(PlayerDestination.Podcasts)
-                                            "youtube" -> {
-                                                val ytMatch = catalog.youtube.firstOrNull {
-                                                    it.id == item.itemId || it.youtubeId == item.itemId
-                                                }
-                                                val chId = item.meta?.parentId ?: ytMatch?.channelId
-                                                val chTitle = item.meta?.subtitle?.takeIf { it.isNotBlank() }
-                                                    ?: ytMatch?.channelTitle.orEmpty()
-                                                coordinator.playVideo(
-                                                    ActivePlayable(
-                                                        itemType = "youtube",
-                                                        itemId = item.itemId,
-                                                        title = displayTitle,
-                                                        subtitle = chTitle,
-                                                        artworkUrl = resolvedArt,
-                                                        streamUrl = api.streamUrl("youtube", item.itemId),
-                                                        isVideo = true,
-                                                        resumePositionMs = (item.positionSeconds * 1000.0).toLong(),
-                                                        parentId = chId,
-                                                    ),
-                                                )
-                                            }
-                                            else -> coordinator.playVideo(
-                                                ActivePlayable(
-                                                    itemType = item.itemType,
-                                                    itemId = item.itemId,
-                                                    title = displayTitle,
-                                                    subtitle = item.meta?.subtitle.orEmpty(),
-                                                    artworkUrl = resolvedArt,
-                                                    streamUrl = api.streamUrl(item.itemType, item.itemId),
-                                                    isVideo = true,
-                                                    resumePositionMs = (item.positionSeconds * 1000.0).toLong(),
-                                                ),
-                                            )
-                                        }
-                                    },
-                                )
+                                continueCard(item)
                             }
                         }
                     }
@@ -1013,6 +1147,7 @@ fun HomeScreen(
                                         artworkUrl = api.artwork.moviePoster(id),
                                         badge = m?.rating?.let { "%.1f".format(it) },
                                         width = cardWidth,
+                                        chip = movie4k(id),
                                         onClick = { onNavigate(PlayerDestination.MovieDetail(id)) },
                                     )
                                 } else {
@@ -1023,6 +1158,7 @@ fun HomeScreen(
                                         artworkUrl = api.artwork.showPoster(id),
                                         badge = s?.rating?.let { "%.1f".format(it) },
                                         width = cardWidth,
+                                        chip = show4k(id),
                                         onClick = { onNavigate(PlayerDestination.ShowDetail(id)) },
                                     )
                                 }
@@ -1044,6 +1180,7 @@ fun HomeScreen(
                                     artworkUrl = api.artwork.moviePoster(m.id),
                                     badge = m.rating?.let { "%.1f".format(it) },
                                     width = cardWidth,
+                                    chip = movie4k(m.id),
                                     onClick = { onNavigate(PlayerDestination.MovieDetail(m.id)) },
                                 )
                             }
@@ -1064,6 +1201,7 @@ fun HomeScreen(
                                             subtitle = m.year?.toString(),
                                             artworkUrl = api.artwork.moviePoster(m.id),
                                             width = cardWidth,
+                                            chip = movie4k(m.id),
                                             onClick = { onNavigate(PlayerDestination.MovieDetail(m.id)) },
                                         )
                                     } else {
@@ -1073,6 +1211,7 @@ fun HomeScreen(
                                             subtitle = "${sh.episodeCount} episodes",
                                             artworkUrl = api.artwork.showPoster(sh.id),
                                             width = cardWidth,
+                                            chip = show4k(sh.id),
                                             onClick = { onNavigate(PlayerDestination.ShowDetail(sh.id)) },
                                         )
                                     }
@@ -1095,6 +1234,7 @@ fun HomeScreen(
                                     artworkUrl = api.artwork.moviePoster(m.id),
                                     badge = m.rating?.let { "%.1f".format(it) },
                                     width = cardWidth,
+                                    chip = movie4k(m.id),
                                     onClick = { onNavigate(PlayerDestination.MovieDetail(m.id)) },
                                 )
                             }
@@ -1220,7 +1360,7 @@ fun HomeScreen(
                 }
                 (row.id == "top-rated" || row.id == "top-movies") && catalog.movies.isNotEmpty() -> {
                     item(key = "row-${row.id}") {
-                        val top10 = catalog.movies.sortedByDescending { it.rating ?: 0.0 }.take(10)
+                        val top10 = topMovies
                         MediaRail("Top 10 in Your Library") {
                             itemsIndexed(top10, key = { _, m -> "${row.id}-${m.id}" }) { idx, m ->
                                 val movieCtx = MediaContextItem(
@@ -1239,6 +1379,7 @@ fun HomeScreen(
                                         title = m.title,
                                         artworkUrl = api.artwork.moviePoster(m.id),
                                         contextItem = movieCtx,
+                                        chip = movie4k(m.id),
                                         onClick = { onNavigate(PlayerDestination.MovieDetail(m.id)) },
                                     )
                                 } else {
@@ -1249,6 +1390,7 @@ fun HomeScreen(
                                         badge = m.rating?.let { "%.1f".format(it) },
                                         width = cardWidth,
                                         contextItem = movieCtx,
+                                        chip = movie4k(m.id),
                                         onClick = { onNavigate(PlayerDestination.MovieDetail(m.id)) },
                                     )
                                 }
@@ -1258,7 +1400,7 @@ fun HomeScreen(
                 }
                 row.id == "top-shows" && catalog.shows.isNotEmpty() -> {
                     item(key = "row-top-shows") {
-                        val top10 = catalog.shows.sortedByDescending { it.rating ?: 0.0 }.take(10)
+                        val top10 = topShows
                         MediaRail("Top 10 TV Shows") {
                             itemsIndexed(top10, key = { _, s -> "top-show-${s.id}" }) { idx, s ->
                                 RankedPosterCard(
@@ -1274,6 +1416,7 @@ fun HomeScreen(
                                         isVideo = true,
                                         onOpenDetails = { onNavigate(PlayerDestination.ShowDetail(s.id)) },
                                     ),
+                                    chip = show4k(s.id),
                                     onClick = { onNavigate(PlayerDestination.ShowDetail(s.id)) },
                                 )
                             }
@@ -1300,6 +1443,7 @@ fun HomeScreen(
                                         subtitle = m.year?.toString(),
                                         artworkUrl = api.artwork.movieBackdrop(m.id),
                                         contextItem = mCtx,
+                                        chip = movie4k(m.id),
                                         onClick = { onNavigate(PlayerDestination.MovieDetail(m.id)) },
                                     )
                                 } else {
@@ -1310,6 +1454,7 @@ fun HomeScreen(
                                         badge = m.rating?.let { "%.1f".format(it) },
                                         width = cardWidth,
                                         contextItem = mCtx,
+                                        chip = movie4k(m.id),
                                         onClick = { onNavigate(PlayerDestination.MovieDetail(m.id)) },
                                     )
                                 }
@@ -1336,6 +1481,7 @@ fun HomeScreen(
                                         isVideo = true,
                                         onOpenDetails = { onNavigate(PlayerDestination.ShowDetail(show.id)) },
                                     ),
+                                    chip = show4k(show.id),
                                     onClick = { onNavigate(PlayerDestination.ShowDetail(show.id)) },
                                 )
                             }
@@ -1459,7 +1605,7 @@ fun HomeScreen(
                 }
                 row.id.startsWith("genre:movie:") -> {
                     val genre = row.id.removePrefix("genre:movie:")
-                    val matches = catalog.movies.filter { m -> m.genres.any { it.equals(genre, ignoreCase = true) } }
+                    val matches = copies.movies(catalog.movies.filter { m -> m.genres.any { it.equals(genre, ignoreCase = true) } })
                     if (matches.isNotEmpty()) {
                         item(key = "row-${row.id}") {
                             MediaRail("$genre Movies") {
@@ -1479,6 +1625,7 @@ fun HomeScreen(
                                             isVideo = true,
                                             onOpenDetails = { onNavigate(PlayerDestination.MovieDetail(m.id)) },
                                         ),
+                                        chip = movie4k(m.id),
                                         onClick = { onNavigate(PlayerDestination.MovieDetail(m.id)) },
                                     )
                                 }
@@ -1488,7 +1635,7 @@ fun HomeScreen(
                 }
                 row.id.startsWith("genre:show:") -> {
                     val genre = row.id.removePrefix("genre:show:")
-                    val matches = catalog.shows.filter { s -> s.genres.any { it.equals(genre, ignoreCase = true) } }
+                    val matches = copies.shows(catalog.shows.filter { s -> s.genres.any { it.equals(genre, ignoreCase = true) } })
                     if (matches.isNotEmpty()) {
                         item(key = "row-${row.id}") {
                             MediaRail("$genre Shows") {
@@ -1498,6 +1645,7 @@ fun HomeScreen(
                                         subtitle = "${s.episodeCount} episodes",
                                         artworkUrl = api.artwork.showPoster(s.id),
                                         width = cardWidth,
+                                        chip = show4k(s.id),
                                         onClick = { onNavigate(PlayerDestination.ShowDetail(s.id)) },
                                     )
                                 }
@@ -1567,6 +1715,7 @@ fun HomeScreen(
             },
             catalog = layoutCatalog,
             availableShowGenres = catalog.shows.flatMap { it.genres }.distinct().sorted(),
+            libraries = catalog.libraries,
             onDismiss = { showEditor = false },
         )
     }

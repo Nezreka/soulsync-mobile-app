@@ -86,6 +86,12 @@ import net.ssync.player.CatalogMovie
 import net.ssync.player.CatalogShow
 import net.ssync.player.DiscoverPlaylistSummary
 import net.ssync.player.HomeLayout
+import net.ssync.player.HomeLibraries
+import net.ssync.player.HomeVideo
+import net.ssync.player.HomeVideoText
+import net.ssync.player.HomeVideosApiClient
+import net.ssync.player.LibraryRow
+import net.ssync.player.TitleCopies
 import net.ssync.player.LibAlbum
 import net.ssync.player.MusicApiResult
 import net.ssync.player.OwnedBook
@@ -157,11 +163,18 @@ internal fun TvSpotlightHome(
     liveGuideHighlights: List<HomeLiveHighlight>,
     logos: Map<String, String?>,
     onNavigate: (PlayerDestination) -> Unit,
+    /** home's On this day clips */
+    memories: List<HomeVideo> = emptyList(),
+    homeClient: HomeVideosApiClient? = null,
 ) {
     val context = LocalContext.current
     val imageLoader = LocalSoulSyncImageLoader.current
     val moviesById = remember(catalog.movies) { catalog.movies.associateBy { it.id } }
     val showsById = remember(catalog.shows) { catalog.shows.associateBy { it.id } }
+    // one card per title across libraries on the rows built from the whole catalog
+    val copies = remember(catalog) { TitleCopies.of(catalog) }
+    fun movie4k(id: Int): String? = if (copies.movieHas4k(id)) "4K" else null
+    fun show4k(id: Int): String? = if (copies.showHas4k(id)) "4K" else null
 
     fun formatRuntime(seconds: Int?): String? {
         if (seconds == null || seconds <= 60) return null
@@ -220,131 +233,179 @@ internal fun TvSpotlightHome(
         )
     }
 
+    /** a continue watching card: the main row and a library's own row draw the same */
+    fun continueCard(item: ProgressRow, prefix: String): TvSpotlightCard? {
+        val frac = item.progressFraction.takeIf { it > 0.01f }
+        return when (item.itemType) {
+            "movie" -> {
+                val id = item.itemId.toIntOrNull()
+                val m = id?.let { moviesById[it] }
+                if (m != null) {
+                    movieCard(prefix, m, progress = frac)
+                } else {
+                    TvSpotlightCard(
+                        key = "$prefix-m-${item.itemId}",
+                        title = item.meta?.title ?: "Movie",
+                        subtitle = item.meta?.subtitle,
+                        posterUrl = api.artwork.forItem("movie", item.itemId, preferBackdrop = false),
+                        backdropUrl = api.artwork.forItem("movie", item.itemId, preferBackdrop = true),
+                        progress = frac,
+                        onClick = { id?.let { onNavigate(PlayerDestination.MovieDetail(it)) } },
+                    )
+                }
+            }
+            "episode" -> {
+                val epId = item.itemId.toIntOrNull()
+                val showId = item.meta?.parentId?.toIntOrNull()
+                val show = showId?.let { showsById[it] }
+                val epLine = listOfNotNull(
+                    item.meta?.subtitle?.takeIf { it.isNotBlank() },
+                    item.meta?.title?.takeIf { it.isNotBlank() && it != show?.title },
+                ).joinToString(" · ")
+                if (show != null) {
+                    showCard(
+                        keyPrefix = "$prefix-ep-${item.itemId}",
+                        s = show,
+                        subtitleOverride = epLine.ifBlank { item.meta?.subtitle },
+                        progress = frac,
+                    ).copy(
+                        onClick = {
+                            if (showId != null && epId != null) {
+                                onNavigate(PlayerDestination.EpisodeDetail(showId, epId))
+                            } else {
+                                onNavigate(PlayerDestination.ShowDetail(show.id))
+                            }
+                        },
+                    )
+                } else {
+                    TvSpotlightCard(
+                        key = "$prefix-ep-${item.itemId}",
+                        title = item.meta?.parentTitle ?: item.meta?.title ?: "Episode",
+                        subtitle = epLine.ifBlank { item.meta?.subtitle },
+                        posterUrl = api.artwork.resolve(item.meta?.artwork) ?: api.artwork.forItem("episode", item.itemId, preferBackdrop = false),
+                        backdropUrl = api.artwork.resolve(item.meta?.backdrop) ?: api.artwork.forItem("episode", item.itemId, preferBackdrop = true),
+                        fallbackIcon = Icons.Default.Tv,
+                        progress = frac,
+                        onClick = {
+                            if (showId != null && epId != null) {
+                                onNavigate(PlayerDestination.EpisodeDetail(showId, epId))
+                            } else if (showId != null) {
+                                onNavigate(PlayerDestination.ShowDetail(showId))
+                            }
+                        },
+                    )
+                }
+            }
+            "youtube" -> {
+                TvSpotlightCard(
+                    key = "$prefix-yt-${item.itemId}",
+                    title = item.meta?.title ?: "YouTube Video",
+                    subtitle = item.meta?.subtitle ?: "YouTube",
+                    posterUrl = api.artwork.forItem("youtube", item.itemId, preferBackdrop = true),
+                    backdropUrl = api.artwork.forItem("youtube", item.itemId, preferBackdrop = true),
+                    fallbackIcon = Icons.Default.SmartDisplay,
+                    progress = frac,
+                    onClick = {
+                        coordinator.playVideo(
+                            ActivePlayable(
+                                itemType = "youtube",
+                                itemId = item.itemId,
+                                title = item.meta?.title ?: "YouTube",
+                                subtitle = item.meta?.subtitle.orEmpty(),
+                                artworkUrl = api.artwork.forItem("youtube", item.itemId, preferBackdrop = true),
+                                streamUrl = api.streamUrl("youtube", item.itemId),
+                                isVideo = true,
+                            ),
+                        )
+                    },
+                )
+            }
+            "home" -> {
+                val art = api.artwork.resolve(item.meta?.backdrop ?: item.meta?.artwork)
+                    ?: api.artwork.forItem("home", item.itemId)
+                TvSpotlightCard(
+                    key = "$prefix-home-${item.itemId}",
+                    title = item.meta?.title ?: "Home video",
+                    subtitle = item.meta?.subtitle ?: "Home video",
+                    posterUrl = art,
+                    backdropUrl = art,
+                    fallbackIcon = Icons.Default.Videocam,
+                    progress = frac,
+                    onClick = {
+                        coordinator.playVideo(
+                            ActivePlayable(
+                                itemType = "home",
+                                itemId = item.itemId,
+                                title = item.meta?.title ?: "Home video",
+                                subtitle = item.meta?.subtitle.orEmpty(),
+                                artworkUrl = art,
+                                streamUrl = api.streamUrl("home", item.itemId),
+                                isVideo = true,
+                                resumePositionMs = if (item.finished) 0L else (item.positionSeconds * 1000.0).toLong(),
+                            ),
+                        )
+                    },
+                )
+            }
+            else -> null
+        }
+    }
+
     val shelves = remember(
         continueItems, catalog, watchlist, studioCollections, discoverPlaylists,
-        albums, podcasts, books, homeLayout, liveGuideHighlights,
+        albums, podcasts, books, homeLayout, liveGuideHighlights, memories, homeClient,
     ) {
         val out = mutableListOf<TvSpotlightShelf>()
         val enabledRows = homeLayout.rows.filter { it.on }
 
         enabledRows.forEach { row ->
+            val libRow = HomeLibraries.parse(row.id)
+            val lib = libRow?.let { HomeLibraries.library(it, catalog.libraries) }
             when {
+                // a library's rows, under its current name; one this profile can't see is skipped
+                !HomeLibraries.visible(row.id, catalog.libraries) -> Unit
+                libRow == LibraryRow.Memories -> if (memories.isNotEmpty() && homeClient != null) {
+                    val cards = memories.map { v ->
+                        val art = homeThumb(homeClient, v)
+                        TvSpotlightCard(
+                            key = "memory-${v.id}",
+                            title = HomeVideoText.title(v),
+                            subtitle = listOfNotNull(HomeVideoText.yearsAgo(v), HomeVideoText.date(v).takeIf { it.isNotBlank() }).joinToString(" · "),
+                            metaChips = listOfNotNull(
+                                HomeVideoText.duration(v.durationS).takeIf { it.isNotBlank() },
+                                v.album.takeIf { it.isNotBlank() },
+                            ),
+                            posterUrl = art,
+                            backdropUrl = art,
+                            fallbackIcon = Icons.Default.Videocam,
+                            progress = v.progressFraction,
+                            onClick = { playHomeClip(context, api, homeClient, coordinator, v, memories) },
+                        )
+                    }
+                    out += TvSpotlightShelf(row.id, "On this day", subtitle = HomeVideoText.today(), cardStyle = TvCardStyle.WIDESCREEN, items = cards)
+                }
+                libRow is LibraryRow.Continue && lib != null -> {
+                    val cards = HomeLibraries.continueIn(lib, continueItems, catalog.movies, catalog.shows, catalog.libraries)
+                        .take(18)
+                        .mapNotNull { continueCard(it, "lc${lib.id}") }
+                    if (cards.isNotEmpty()) {
+                        out += TvSpotlightShelf(row.id, HomeLibraries.title(row.id, catalog.libraries).orEmpty(), cardStyle = TvCardStyle.POSTER, items = cards)
+                    }
+                }
+                libRow is LibraryRow.Recent && lib != null -> {
+                    // a library's own row shows its own copies
+                    val cards = if (lib.kind == "movie") {
+                        HomeLibraries.recentMovies(lib.id, catalog.movies, catalog.libraries).take(20).map { movieCard("lr${lib.id}", it) }
+                    } else {
+                        HomeLibraries.recentShows(lib.id, catalog.shows, catalog.libraries).take(20).map { showCard("lr${lib.id}", it) }
+                    }
+                    if (cards.isNotEmpty()) {
+                        out += TvSpotlightShelf(row.id, HomeLibraries.title(row.id, catalog.libraries).orEmpty(), cardStyle = TvCardStyle.POSTER, items = cards)
+                    }
+                }
                 row.id == "continue" && continueItems.isNotEmpty() -> {
                     val cards = continueItems.take(18).mapNotNull { item ->
-                        val frac = item.progressFraction.takeIf { it > 0.01f }
-                        when (item.itemType) {
-                            "movie" -> {
-                                val id = item.itemId.toIntOrNull()
-                                val m = id?.let { moviesById[it] }
-                                if (m != null) {
-                                    movieCard("cw", m, progress = frac)
-                                } else {
-                                    TvSpotlightCard(
-                                        key = "cw-m-${item.itemId}",
-                                        title = item.meta?.title ?: "Movie",
-                                        subtitle = item.meta?.subtitle,
-                                        posterUrl = api.artwork.forItem("movie", item.itemId, preferBackdrop = false),
-                                        backdropUrl = api.artwork.forItem("movie", item.itemId, preferBackdrop = true),
-                                        progress = frac,
-                                        onClick = { id?.let { onNavigate(PlayerDestination.MovieDetail(it)) } },
-                                    )
-                                }
-                            }
-                            "episode" -> {
-                                val epId = item.itemId.toIntOrNull()
-                                val showId = item.meta?.parentId?.toIntOrNull()
-                                val show = showId?.let { showsById[it] }
-                                val epLine = listOfNotNull(
-                                    item.meta?.subtitle?.takeIf { it.isNotBlank() },
-                                    item.meta?.title?.takeIf { it.isNotBlank() && it != show?.title },
-                                ).joinToString(" · ")
-                                if (show != null) {
-                                    showCard(
-                                        keyPrefix = "cw-ep-${item.itemId}",
-                                        s = show,
-                                        subtitleOverride = epLine.ifBlank { item.meta?.subtitle },
-                                        progress = frac,
-                                    ).copy(
-                                        onClick = {
-                                            if (showId != null && epId != null) {
-                                                onNavigate(PlayerDestination.EpisodeDetail(showId, epId))
-                                            } else {
-                                                onNavigate(PlayerDestination.ShowDetail(show.id))
-                                            }
-                                        },
-                                    )
-                                } else {
-                                    TvSpotlightCard(
-                                        key = "cw-ep-${item.itemId}",
-                                        title = item.meta?.parentTitle ?: item.meta?.title ?: "Episode",
-                                        subtitle = epLine.ifBlank { item.meta?.subtitle },
-                                        posterUrl = api.artwork.resolve(item.meta?.artwork) ?: api.artwork.forItem("episode", item.itemId, preferBackdrop = false),
-                                        backdropUrl = api.artwork.resolve(item.meta?.backdrop) ?: api.artwork.forItem("episode", item.itemId, preferBackdrop = true),
-                                        fallbackIcon = Icons.Default.Tv,
-                                        progress = frac,
-                                        onClick = {
-                                            if (showId != null && epId != null) {
-                                                onNavigate(PlayerDestination.EpisodeDetail(showId, epId))
-                                            } else if (showId != null) {
-                                                onNavigate(PlayerDestination.ShowDetail(showId))
-                                            }
-                                        },
-                                    )
-                                }
-                            }
-                            "youtube" -> {
-                                TvSpotlightCard(
-                                    key = "cw-yt-${item.itemId}",
-                                    title = item.meta?.title ?: "YouTube Video",
-                                    subtitle = item.meta?.subtitle ?: "YouTube",
-                                    posterUrl = api.artwork.forItem("youtube", item.itemId, preferBackdrop = true),
-                                    backdropUrl = api.artwork.forItem("youtube", item.itemId, preferBackdrop = true),
-                                    fallbackIcon = Icons.Default.SmartDisplay,
-                                    progress = frac,
-                                    onClick = {
-                                        coordinator.playVideo(
-                                            ActivePlayable(
-                                                itemType = "youtube",
-                                                itemId = item.itemId,
-                                                title = item.meta?.title ?: "YouTube",
-                                                subtitle = item.meta?.subtitle.orEmpty(),
-                                                artworkUrl = api.artwork.forItem("youtube", item.itemId, preferBackdrop = true),
-                                                streamUrl = api.streamUrl("youtube", item.itemId),
-                                                isVideo = true,
-                                            ),
-                                        )
-                                    },
-                                )
-                            }
-                            "home" -> {
-                                val art = api.artwork.resolve(item.meta?.backdrop ?: item.meta?.artwork)
-                                    ?: api.artwork.forItem("home", item.itemId)
-                                TvSpotlightCard(
-                                    key = "cw-home-${item.itemId}",
-                                    title = item.meta?.title ?: "Home video",
-                                    subtitle = item.meta?.subtitle ?: "Home video",
-                                    posterUrl = art,
-                                    backdropUrl = art,
-                                    fallbackIcon = Icons.Default.Videocam,
-                                    progress = frac,
-                                    onClick = {
-                                        coordinator.playVideo(
-                                            ActivePlayable(
-                                                itemType = "home",
-                                                itemId = item.itemId,
-                                                title = item.meta?.title ?: "Home video",
-                                                subtitle = item.meta?.subtitle.orEmpty(),
-                                                artworkUrl = art,
-                                                streamUrl = api.streamUrl("home", item.itemId),
-                                                isVideo = true,
-                                                resumePositionMs = if (item.finished) 0L else (item.positionSeconds * 1000.0).toLong(),
-                                            ),
-                                        )
-                                    },
-                                )
-                            }
-                            else -> null
-                        }
+                        continueCard(item, "cw")
                     }
                     if (cards.isNotEmpty()) {
                         out += TvSpotlightShelf("continue", "Continue Watching", cardStyle = TvCardStyle.POSTER, items = cards)
@@ -352,18 +413,16 @@ internal fun TvSpotlightHome(
                 }
 
                 row.id == "recent-movies" && catalog.movies.isNotEmpty() -> {
-                    val cards = catalog.movies
-                        .sortedByDescending { it.addedAt.orEmpty() }
+                    val cards = copies.movies(catalog.movies.sortedByDescending { it.addedAt.orEmpty() })
                         .take(20)
-                        .map { movieCard("recent-m", it) }
+                        .map { movieCard("recent-m", it).copy(badge = movie4k(it.id)) }
                     out += TvSpotlightShelf("recent-movies", "Recently Added in Movies", cardStyle = TvCardStyle.POSTER, items = cards)
                 }
 
                 row.id == "recent-shows" && catalog.shows.isNotEmpty() -> {
-                    val cards = catalog.shows
-                        .sortedByDescending { it.addedAt.orEmpty() }
+                    val cards = copies.shows(catalog.shows.sortedByDescending { it.addedAt.orEmpty() })
                         .take(20)
-                        .map { showCard("recent-s", it) }
+                        .map { showCard("recent-s", it, badge = show4k(it.id)) }
                     out += TvSpotlightShelf("recent-shows", "Recently Added in TV Shows", cardStyle = TvCardStyle.POSTER, items = cards)
                 }
 
@@ -585,8 +644,8 @@ internal fun TvSpotlightHome(
                     val m = item.itemId.toIntOrNull()?.let { moviesById[it] } ?: return@forEach
                     if (m.genres.isEmpty() || "m-${m.id}" in becauseSeeds) return@forEach
                     val seedGenres = m.genres.map { it.lowercase() }.toSet()
-                    val matches = catalog.movies
-                        .filter { it.id != m.id && it.genres.any { g -> g.lowercase() in seedGenres } }
+                    val matches = copies.movies(catalog.movies)
+                        .filter { copies.movieId(it.id) != copies.movieId(m.id) && it.genres.any { g -> g.lowercase() in seedGenres } }
                         .sortedByDescending { cand ->
                             val overlap = cand.genres.count { it.lowercase() in seedGenres } * 2.0
                             val sameStudio = if (!m.studio.isNullOrBlank() && cand.studio == m.studio) 1.5 else 0.0
@@ -599,7 +658,7 @@ internal fun TvSpotlightHome(
                             id = "because-m-${m.id}",
                             title = "Because you watched ${m.title}",
                             cardStyle = TvCardStyle.POSTER,
-                            items = matches.map { movieCard("byw-${m.id}", it) },
+                            items = matches.map { movieCard("byw-${m.id}", it).copy(badge = movie4k(it.id)) },
                         )
                     }
                 }
@@ -608,8 +667,8 @@ internal fun TvSpotlightHome(
                     val s = showsById[sid] ?: return@forEach
                     if (s.genres.isEmpty() || "s-${s.id}" in becauseSeeds) return@forEach
                     val seedGenres = s.genres.map { it.lowercase() }.toSet()
-                    val matches = catalog.shows
-                        .filter { it.id != s.id && it.genres.any { g -> g.lowercase() in seedGenres } }
+                    val matches = copies.shows(catalog.shows)
+                        .filter { copies.showId(it.id) != copies.showId(s.id) && it.genres.any { g -> g.lowercase() in seedGenres } }
                         .sortedByDescending { cand ->
                             val overlap = cand.genres.count { it.lowercase() in seedGenres } * 2.0
                             val sameNet = if (!s.network.isNullOrBlank() && cand.network == s.network) 1.5 else 0.0
@@ -622,7 +681,7 @@ internal fun TvSpotlightHome(
                             id = "because-s-${s.id}",
                             title = "Because you watched ${s.title}",
                             cardStyle = TvCardStyle.POSTER,
-                            items = matches.map { showCard("byw-${s.id}", it) },
+                            items = matches.map { showCard("byw-${s.id}", it, badge = show4k(it.id)) },
                         )
                     }
                 }

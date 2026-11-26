@@ -49,6 +49,8 @@ import androidx.compose.ui.unit.sp
 import net.ssync.pairing.theme.SoulSyncColors
 import net.ssync.pairing.ui.dpadFocusable
 import net.ssync.player.HomeLayout
+import net.ssync.player.HomeLibraries
+import net.ssync.player.PlayerLibrary
 import net.ssync.player.LayoutCatalog
 import net.ssync.player.LayoutRow
 
@@ -86,8 +88,13 @@ fun HomeEditorSheet(
     /** only Home has a billboard to switch */
     showBillboard: Boolean = true,
     availableShowGenres: List<String> = emptyList(),
+    /** the libraries this profile can see: their rows are offered, a hidden one's are not shown */
+    libraries: List<PlayerLibrary> = emptyList(),
 ) {
     val defs = remember(catalog) { catalog.rows.associateBy { it.id } }
+    // a saved row for a library this profile can't see stays saved, but isn't shown
+    val shown = { r: LayoutRow -> HomeLibraries.visible(r.id, libraries) }
+    fun rowLabel(id: String) = defs[id]?.label ?: HomeLibraries.title(id, libraries) ?: labelForRowId(id)
     var draft by remember(initialLayout) { mutableStateOf(initialLayout) }
     var shared by remember(initialShared) { mutableStateOf(initialShared) }
 
@@ -180,13 +187,45 @@ fun HomeEditorSheet(
                 }
             }
 
+            // a library's rows: the server's catalog offers them, and so does every library this profile can see
+            val addableLibraryRows = (catalog.rows.map { it.id }.filter { HomeLibraries.parse(it) != null } + HomeLibraries.offered(libraries))
+                .distinct()
+                .filter { it !in existingIds && HomeLibraries.visible(it, libraries) }
+            if (addableLibraryRows.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                Text("Add library row", color = SoulSyncColors.TextSecondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    contentPadding = PaddingValues(vertical = 6.dp),
+                ) {
+                    items(addableLibraryRows) { rowId ->
+                        FilterChip(
+                            selected = false,
+                            onClick = {
+                                val style = defs[rowId]?.style ?: HomeLibraries.defaultStyle(rowId)
+                                draft = draft.copy(rows = listOf(LayoutRow(rowId, style, true)) + draft.rows)
+                            },
+                            leadingIcon = { Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(15.dp)) },
+                            label = { Text(rowLabel(rowId)) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                containerColor = SoulSyncColors.Card,
+                                labelColor = SoulSyncColors.TextPrimary,
+                            ),
+                            modifier = Modifier.dpadFocusable(androidx.compose.foundation.shape.RoundedCornerShape(999.dp)),
+                        )
+                    }
+                }
+            }
+
             Spacer(Modifier.height(8.dp))
 
+            val shownIndices = draft.rows.indices.filter { shown(draft.rows[it]) }
             LazyColumn(
                 modifier = Modifier.fillMaxWidth().height(320.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                itemsIndexed(draft.rows, key = { _, r -> r.id }) { idx, row ->
+                itemsIndexed(shownIndices, key = { _, i -> draft.rows[i].id }) { pos, idx ->
+                    val row = draft.rows[idx]
                     Card(
                         colors = CardDefaults.cardColors(containerColor = SoulSyncColors.Card),
                         border = BorderStroke(1.dp, SoulSyncColors.Line),
@@ -195,15 +234,15 @@ fun HomeEditorSheet(
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        text = defs[row.id]?.label ?: labelForRowId(row.id),
+                                        text = rowLabel(row.id),
                                         style = MaterialTheme.typography.titleMedium,
                                     )
-                                    val hint = defs[row.id]?.hint.orEmpty()
+                                    val hint = defs[row.id]?.hint ?: HomeLibraries.hint(row.id, libraries)
                                     if (hint.isNotBlank()) {
                                         Text(hint, color = SoulSyncColors.TextSecondary, fontSize = 11.sp)
                                     }
                                 }
-                                if (row.id.startsWith("genre:")) {
+                                if (row.id.startsWith("genre:") || HomeLibraries.parse(row.id) != null) {
                                     IconButton(
                                         onClick = { draft = draft.copy(rows = draft.rows.filterIndexed { i, _ -> i != idx }) },
                                         modifier = Modifier.dpadFocusable(androidx.compose.foundation.shape.CircleShape),
@@ -212,31 +251,15 @@ fun HomeEditorSheet(
                                     }
                                 }
                                 IconButton(
-                                    onClick = {
-                                        if (idx > 0) {
-                                            val list = draft.rows.toMutableList()
-                                            val tmp = list[idx - 1]
-                                            list[idx - 1] = list[idx]
-                                            list[idx] = tmp
-                                            draft = draft.copy(rows = list)
-                                        }
-                                    },
-                                    enabled = idx > 0,
+                                    onClick = { draft = draft.copy(rows = HomeLibraries.move(draft.rows, idx, up = true, shown)) },
+                                    enabled = pos > 0,
     modifier = Modifier.dpadFocusable(androidx.compose.foundation.shape.CircleShape),
                                 ) {
                                     Icon(Icons.Default.ArrowUpward, contentDescription = "Move up", modifier = Modifier.size(18.dp))
                                 }
                                 IconButton(
-                                    onClick = {
-                                        if (idx < draft.rows.lastIndex) {
-                                            val list = draft.rows.toMutableList()
-                                            val tmp = list[idx + 1]
-                                            list[idx + 1] = list[idx]
-                                            list[idx] = tmp
-                                            draft = draft.copy(rows = list)
-                                        }
-                                    },
-                                    enabled = idx < draft.rows.lastIndex,
+                                    onClick = { draft = draft.copy(rows = HomeLibraries.move(draft.rows, idx, up = false, shown)) },
+                                    enabled = pos < shownIndices.lastIndex,
     modifier = Modifier.dpadFocusable(androidx.compose.foundation.shape.CircleShape),
                                 ) {
                                     Icon(Icons.Default.ArrowDownward, contentDescription = "Move down", modifier = Modifier.size(18.dp))
@@ -253,6 +276,7 @@ fun HomeEditorSheet(
                             }
                             // only the styles this row can take (the server puts any other back)
                             val rowStyles = defs[row.id]?.styles?.takeIf { it.isNotEmpty() }
+                                ?: HomeLibraries.styles(row.id).takeIf { it.isNotEmpty() }
                                 ?: if (row.id.startsWith("genre:") || defs.isEmpty()) ROW_STYLES else listOf(row.style)
                             if (rowStyles.size > 1) Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                 rowStyles.forEach { st ->
