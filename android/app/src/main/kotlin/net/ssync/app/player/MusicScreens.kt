@@ -2388,12 +2388,16 @@ fun AlbumDetailScreen(
     LaunchedEffect(albumId, api, reloadNonce) {
         isLoading = true
         loadError = null
-        when (val r = api.fetchAlbumDetail(albumId)) {
+        when (val r = api.fetchAlbumDetail(albumId, resolve = true)) {
             is MusicApiResult.Success -> album = r.data
             MusicApiResult.DeviceRevoked -> onDeviceRevoked()
             is MusicApiResult.Error -> loadError = r.message
         }
         isLoading = false
+        // the server is fetching the release's real tracklist: refresh until missing songs have names
+        if (album?.isTracklistPending == true) {
+            api.pollAlbumTracklist(albumId, onDeviceRevoked = onDeviceRevoked) { album = it }
+        }
     }
 
     val al = album
@@ -2442,7 +2446,7 @@ fun AlbumDetailScreen(
         )
     }
     val missingEntries = al.tracks.mapIndexedNotNull { idx, t ->
-        if (!t.isOwned) Triple(idx, t, "${t.id ?: "m-$idx"}") else null
+        if (t.isRequestable) Triple(idx, t, "${t.id ?: "m-$idx"}") else null
     }
     val unrequestedMissing = missingEntries.filter { (_, _, key) ->
         val st = reqState[key]
@@ -2453,6 +2457,8 @@ fun AlbumDetailScreen(
     val totalDuration = formatTotalAlbumDuration(al.tracks)
 
     suspend fun requestTrack(idx: Int, t: LibTrack, key: String) {
+        // an untitled track would send an empty title: wait for the real tracklist
+        if (!t.isRequestable) return
         val cur = reqState[key]
         if (cur == "sending" || cur == "wishlist" || cur == "requested" || cur == "owned") return
         reqState[key] = "sending"
@@ -2693,7 +2699,7 @@ fun AlbumDetailScreen(
             }
 
             val playable = t.isOwned
-            val displayTitle = t.title.ifBlank { "Track ${t.trackNumber ?: (idx + 1)}" }
+            val displayTitle = t.displayTitle(idx + 1)
             val rowKey = "${t.id ?: "m-$idx"}"
             val st = reqState[rowKey]
             val isActive = playable && activeTrackId == t.id?.toString()
@@ -2708,6 +2714,7 @@ fun AlbumDetailScreen(
                 isActive = isActive,
                 requestStatus = if (playable) null else st,
                 showDivider = idx < al.tracks.lastIndex,
+                requestable = t.isRequestable,
                 contextItem = MediaContextItem(
                     itemType = "track",
                     itemId = t.id?.toString() ?: "m-$idx",
@@ -2718,7 +2725,7 @@ fun AlbumDetailScreen(
                     isVideo = false,
                     parentId = al.id.toString(),
                     owned = playable,
-                    onRequest = if (!playable) ({ scope.launch { requestTrack(idx, t, rowKey) } }) else null,
+                    onRequest = if (t.isRequestable) ({ scope.launch { requestTrack(idx, t, rowKey) } }) else null,
                     songRef = if (playable) {
                         SongRefPayload(
                             title = t.title,
@@ -2792,6 +2799,8 @@ private fun AlbumTrackRow(
     requestStatus: String?,
     showDivider: Boolean,
     contextItem: MediaContextItem? = null,
+    // false for a missing track whose name isn't known yet: no request until it has one
+    requestable: Boolean = true,
     trailingActions: (@Composable () -> Unit)? = null,
     onClick: () -> Unit,
 ) {
@@ -2900,7 +2909,7 @@ private fun AlbumTrackRow(
                             "requested" -> "Request submitted"
                             "owned" -> "In library"
                             "error" -> "Could not request · Tap to retry"
-                            else -> "Not in library · Tap to request"
+                            else -> if (requestable) "Not in library · Tap to request" else "Not in library"
                         },
                         color = SoulSyncColors.TextSecondary,
                         fontSize = 11.5.sp,
@@ -2950,7 +2959,7 @@ private fun AlbumTrackRow(
                         )
                     }
                 }
-            } else {
+            } else if (requestable || requestStatus != null) {
                 val pillText = when (requestStatus) {
                     "sending" -> "…"
                     "wishlist" -> "Wishlist"

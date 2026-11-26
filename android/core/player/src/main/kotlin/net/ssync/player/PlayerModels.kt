@@ -503,6 +503,17 @@ data class LibTrack(
             !isMissing &&
             !fileStatus.equals("missing", ignoreCase = true) &&
             (file != null || fileCount > 0 || !serverTrackId.isNullOrBlank())
+
+    /** a real title: not blank and not the literal "null" an old row can carry */
+    val hasTitle: Boolean
+        get() = title.isNotBlank() && !title.trim().equals("null", ignoreCase = true)
+
+    /** the title to show; an untitled missing track shows "Track N" (its number, else its position) */
+    fun displayTitle(position: Int): String = if (hasTitle) title else "Track ${trackNumber ?: position}"
+
+    /** a missing track can be requested only once it has a title, or the request would carry an empty one */
+    val isRequestable: Boolean
+        get() = !isOwned && hasTitle
 }
 
 @Serializable
@@ -531,6 +542,17 @@ data class LibAlbumDetail(
     @SerialName("primary_artist")
     val primaryArtist: LibArtistRef? = null,
     val tracks: List<LibTrack> = emptyList(),
+    @SerialName("tracklist_sync")
+    val tracklistSync: TracklistSync? = null,
+) {
+    /** the server is still fetching this release's real tracklist */
+    val isTracklistPending: Boolean
+        get() = tracklistSync?.status.equals("pending", ignoreCase = true)
+}
+
+@Serializable
+data class TracklistSync(
+    val status: String? = null,
 )
 
 @Serializable

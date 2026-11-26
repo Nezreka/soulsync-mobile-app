@@ -1105,7 +1105,7 @@ fun CinemaAlbumDetailScreen(
     LaunchedEffect(albumId, api, reloadNonce) {
         if (!warmHit) isLoading = true
         loadError = null
-        when (val r = api.fetchAlbumDetail(albumId)) {
+        when (val r = api.fetchAlbumDetail(albumId, resolve = true)) {
             is MusicApiResult.Success -> {
                 album = r.data
                 HomeWarmCache.albumDetails[albumId] = r.data
@@ -1130,6 +1130,13 @@ fun CinemaAlbumDetailScreen(
             is MusicApiResult.Error -> loadError = r.message
         }
         isLoading = false
+        // the server is fetching the release's real tracklist: refresh until missing songs have names
+        if (album?.isTracklistPending == true) {
+            api.pollAlbumTracklist(albumId, onDeviceRevoked = onDeviceRevoked) {
+                album = it
+                HomeWarmCache.albumDetails[albumId] = it
+            }
+        }
     }
 
     val al = album
@@ -1181,7 +1188,7 @@ fun CinemaAlbumDetailScreen(
         }
     }
     val missingEntries = al.tracks.mapIndexedNotNull { idx, t ->
-        if (!t.isOwned) Triple(idx, t, "${t.id ?: "m-$idx"}") else null
+        if (t.isRequestable) Triple(idx, t, "${t.id ?: "m-$idx"}") else null
     }
     val unrequestedMissing = missingEntries.filter { (_, _, key) ->
         val st = reqState[key]
@@ -1206,6 +1213,8 @@ fun CinemaAlbumDetailScreen(
     }
 
     suspend fun requestTrack(idx: Int, t: LibTrack, key: String) {
+        // an untitled track would send an empty title: wait for the real tracklist
+        if (!t.isRequestable) return
         val cur = reqState[key]
         if (cur == "sending" || cur == "wishlist" || cur == "requested" || cur == "owned") return
         reqState[key] = "sending"
@@ -1631,7 +1640,7 @@ fun CinemaAlbumDetailScreen(
                             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                     Text(
-                                        text = tr.title,
+                                        text = tr.displayTitle(idx + 1),
                                         color = if (rowFocused) Color(0xFF0A0C14) else Color.White.copy(alpha = if (owned) 1f else 0.45f),
                                         fontSize = 14.5.sp,
                                         fontWeight = FontWeight.SemiBold,
@@ -1689,7 +1698,7 @@ fun CinemaAlbumDetailScreen(
                                     onAddToPlaylist = { playlistPickerSong = it },
                                 )
                             }
-                            if (!owned) {
+                            if (!owned && (tr.isRequestable || rStatus != null)) {
                                 val badgeLabel = when (rStatus) {
                                     "sending" -> "Requesting…"
                                     "wishlist" -> "In Wishlist"

@@ -1,6 +1,7 @@
 package net.ssync.player
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -188,12 +189,43 @@ class PlayerApiClient(
         }
     }
 
-    suspend fun fetchAlbumDetail(albumId: Int): MusicApiResult<LibAlbumDetail> =
-        getJson("$base/api/library/v2/albums/$albumId") { body ->
+    /** resolve = true asks the server to fetch the release's real tracklist in the background (tracklist_sync) */
+    suspend fun fetchAlbumDetail(albumId: Int, resolve: Boolean = false): MusicApiResult<LibAlbumDetail> =
+        getJson("$base/api/library/v2/albums/$albumId" + if (resolve) "?resolve=1" else "") { body ->
             requireNotNull(json.decodeFromString<AlbumDetailEnvelope>(body).album) {
                 "Album not found"
             }
         }
+
+    /**
+     * while the server is still fetching an album's real tracklist, refetch it every
+     * intervalMs and hand each copy to onUpdate. stops once it isn't pending, after
+     * maxWaitMs, or when the caller's coroutine is cancelled (the screen left).
+     */
+    suspend fun pollAlbumTracklist(
+        albumId: Int,
+        intervalMs: Long = 2_000L,
+        maxWaitMs: Long = 60_000L,
+        onDeviceRevoked: () -> Unit = {},
+        onUpdate: (LibAlbumDetail) -> Unit,
+    ) {
+        var waited = 0L
+        while (waited < maxWaitMs) {
+            delay(intervalMs)
+            waited += intervalMs
+            when (val r = fetchAlbumDetail(albumId, resolve = true)) {
+                is MusicApiResult.Success -> {
+                    onUpdate(r.data)
+                    if (!r.data.isTracklistPending) return
+                }
+                MusicApiResult.DeviceRevoked -> {
+                    onDeviceRevoked()
+                    return
+                }
+                is MusicApiResult.Error -> Unit
+            }
+        }
+    }
 
     suspend fun fetchSongs(search: String = "", limit: Int = 100, page: Int = 1): MusicApiResult<List<LibSong>> {
         val url = "$base/api/library/v2/songs".toHttpUrl().newBuilder()
