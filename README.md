@@ -8,7 +8,7 @@ Stream **Movies, TV Shows, YouTube, Music, Podcasts, Audiobooks, and Live Guide*
 
 ## Install
 
-1. Download the latest APK from [Releases](https://github.com/Nezreka/soulsync-mobile-app/releases/latest) (`SoulSync-Player-0.1.0.apk`).
+1. Download the latest APK from [Releases](https://github.com/Nezreka/soulsync-mobile-app/releases/latest) (`SoulSync-Player-0.2.0.apk`).
 2. On your phone, tablet or Android TV, allow installs from your browser or file manager, then open the APK.
 3. In SoulSync, open **Settings → Devices → Add a device** and enter the code it shows in the app.
 
@@ -40,6 +40,7 @@ Needs Android 8.0 or newer and a SoulSync server on 3.7.0 or newer. On an Androi
 - **Pages you arrange:** Movies, TV, Music and YouTube draw their rows from the same per-profile layouts as the web player: reorder, hide, restyle, and switch on extra rows. Changes made in a browser show up in the app.
 - **Libraries:** The server's own libraries (4K, Kids, Anime and so on) get their own pages in the sidebar, and a library hidden from a profile stays hidden in the app.
 - **Title logos:** Movie and show pages draw the title's logo, with the title as text when there is none.
+- **Downloads (phones and tablets):** pick Original, High, Phone or Small with real sizes; download a whole season, show, album, artist, playlist, audiobook or podcast. Downloads keep going with the app closed (pause, resume, retry, reorder), with Wi-Fi only and a storage limit. Smart downloads keep the next episodes ready, delete what's watched and keep a playlist in step. Offline, the app plays what's downloaded and sends your progress when it's back. Manage any of your devices' downloads from the app or the web player. The TV app sends things to a phone instead.
 - **Casting:** Chromecast plays anything, with files the TV can't decode converted on the server.
 - **Admin stops and messages:** When an admin stops a stream from SoulSync's Server Activity, the app stops and shows their message; a message on its own shows without stopping.
 
