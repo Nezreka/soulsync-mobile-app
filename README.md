@@ -8,7 +8,7 @@ Stream **Movies, TV Shows, YouTube, Music, Podcasts, Audiobooks, and Live Guide*
 
 ## Install
 
-1. Download the latest APK from [Releases](https://github.com/Nezreka/soulsync-mobile-app/releases/latest) (`SoulSync-Player-0.4.1.apk`).
+1. Download the latest APK from [Releases](https://github.com/Nezreka/soulsync-mobile-app/releases/latest) (`SoulSync-Player-0.5.0.apk`).
 2. On your phone, tablet or Android TV, allow installs from your browser or file manager, then open the APK.
 3. In SoulSync, open **Settings → Devices → Add a device**, then scan the QR code with your phone's camera (it opens the app with the code filled in), or type the code into the app.
 
@@ -42,6 +42,7 @@ Needs Android 8.0 or newer and a SoulSync server on 3.7.0 or newer. On an Androi
 - **Title logos:** Movie and show pages draw the title's logo, with the title as text when there is none.
 - **Downloads (phones and tablets):** pick Original, High, Phone or Small with real sizes; download a whole season, show, album, artist, playlist, audiobook or podcast. Downloads keep going with the app closed (pause, resume, retry, reorder), with Wi-Fi only and a storage limit. Smart downloads keep the next episodes ready, delete what's watched and keep a playlist in step. Offline, the app plays what's downloaded and sends your progress when it's back. Manage any of your devices' downloads from the app or the web player. The TV app sends things to a phone instead.
 - **A home that knows your libraries:** add "Recently added in" and "Continue in" rows for any library, see each film once with a 4K chip when you have a 4K copy, and an "On this day" row of your home videos.
+- **Notifications:** new episodes of shows you're watching, well-reviewed films, your requests, watchlist titles arriving, season premieres, watch party invites and more, each switchable per profile, with quiet hours and a daily digest. Phones get system notifications; the TV shows a bell.
 - **Home videos:** your own clips as a library: On this day, folders as albums, a month-by-month timeline, search, and editing of name, date and picture. Phones get album downloads; the TV gets rows built for the remote with a month jump list.
 - **Casting:** Chromecast plays anything, with files the TV can't decode converted on the server.
 - **Admin stops and messages:** When an admin stops a stream from SoulSync's Server Activity, the app stops and shows their message; a message on its own shows without stopping.
