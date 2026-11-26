@@ -1376,6 +1376,7 @@ internal fun TvCinemaPillTab(
     label: String,
     selected: Boolean,
     onClick: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     var focused by remember { mutableStateOf(false) }
     val bg = when {
@@ -1390,19 +1391,24 @@ internal fun TvCinemaPillTab(
         else -> Color.White.copy(alpha = 0.14f)
     }
     Box(
-        modifier = Modifier
+        modifier = modifier
             .clip(CircleShape)
             .background(bg)
             .border(if (selected || focused) 1.2.dp else 1.dp, borderColor, CircleShape)
             .onFocusChanged { focused = it.isFocused || it.hasFocus }
             .clickable(onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 6.dp),
+        contentAlignment = Alignment.Center,
     ) {
+        // one line always: squeezed, a label wrapped one letter per line
         Text(
             text = label,
             color = fg,
             fontSize = 12.5.sp,
             fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            softWrap = false,
+            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
         )
     }
 }

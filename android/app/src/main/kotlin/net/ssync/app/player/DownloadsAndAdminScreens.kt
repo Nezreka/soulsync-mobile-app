@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -64,6 +65,15 @@ import net.ssync.player.MusicApiResult
 import net.ssync.player.PlayerApiClient
 import java.io.File
 
+/** when the users page header stacks: below this width the title and both tabs don't fit on one line */
+internal object UsersHeaderLayout {
+    const val TAB_MIN_WIDTH_DP = 120f
+    // icon + title (~230) + two tabs at their minimum + gaps
+    const val ONE_LINE_MIN_WIDTH_DP = 540f
+
+    fun stacked(widthDp: Float): Boolean = widthDp < ONE_LINE_MIN_WIDTH_DP
+}
+
 private fun formatDownloadBytes(bytes: Long): String = if (bytes <= 0L) "—" else net.ssync.player.OfflineFormat.bytes(bytes)
 
 @Composable
@@ -107,27 +117,77 @@ fun AdminUsersScreen(
                 ),
             ),
     ) {
-        // Unified Cinema Hub Header + Pill Tabs: My Downloads | Users & Devices
-        Row(
+        // the header: title and the two tabs. a phone has no room for them on
+        // one line (the tabs squeezed to a letter per line), so there the title
+        // takes its own line and the tabs share the next one, half each
+        androidx.compose.foundation.layout.BoxWithConstraints(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(start = sidePadStart, end = sidePadEnd, top = if (isTv) 20.dp else 12.dp, bottom = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Icon(Icons.Default.AdminPanelSettings, contentDescription = null, tint = SoulSyncColors.AccentLight, modifier = Modifier.size(22.dp))
-            Text("Users & Downloads", color = Color.White, fontSize = if (isTv) 24.sp else 20.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-0.3).sp)
-            Spacer(modifier = Modifier.width(6.dp))
-            TvCinemaPillTab(
-                label = "Users & Devices",
-                selected = activeTab == "admin",
-                onClick = { activeTab = "admin" },
-            )
-            TvCinemaPillTab(
-                label = "My Downloads",
-                selected = activeTab == "mine",
-                onClick = { activeTab = "mine" },
-            )
+            val stacked = UsersHeaderLayout.stacked(maxWidth.value)
+            val title: @Composable (Modifier) -> Unit = { mod ->
+                Row(
+                    modifier = mod,
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Icon(Icons.Default.AdminPanelSettings, contentDescription = null, tint = SoulSyncColors.AccentLight, modifier = Modifier.size(22.dp))
+                    Text(
+                        "Users & Downloads",
+                        color = Color.White,
+                        fontSize = if (isTv) 24.sp else 20.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        letterSpacing = (-0.3).sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            if (stacked) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    title(Modifier.fillMaxWidth())
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        TvCinemaPillTab(
+                            label = "Users & Devices",
+                            selected = activeTab == "admin",
+                            onClick = { activeTab = "admin" },
+                            modifier = Modifier.weight(1f).height(36.dp),
+                        )
+                        TvCinemaPillTab(
+                            label = "My Downloads",
+                            selected = activeTab == "mine",
+                            onClick = { activeTab = "mine" },
+                            modifier = Modifier.weight(1f).height(36.dp),
+                        )
+                    }
+                }
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    // the title gives way first; the tabs keep their full labels
+                    title(Modifier.weight(1f, fill = false))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    TvCinemaPillTab(
+                        label = "Users & Devices",
+                        selected = activeTab == "admin",
+                        onClick = { activeTab = "admin" },
+                        modifier = Modifier.widthIn(min = UsersHeaderLayout.TAB_MIN_WIDTH_DP.dp),
+                    )
+                    TvCinemaPillTab(
+                        label = "My Downloads",
+                        selected = activeTab == "mine",
+                        onClick = { activeTab = "mine" },
+                        modifier = Modifier.widthIn(min = UsersHeaderLayout.TAB_MIN_WIDTH_DP.dp),
+                    )
+                }
+            }
         }
 
         if (activeTab == "mine") {
