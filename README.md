@@ -8,7 +8,7 @@ Stream **Movies, TV Shows, YouTube, Music, Podcasts, Audiobooks, and Live Guide*
 
 ## Install
 
-1. Download the latest APK from [Releases](https://github.com/Nezreka/soulsync-mobile-app/releases/latest) (`SoulSync-Player-0.5.0.apk`).
+1. Download the latest APK from [Releases](https://github.com/Nezreka/soulsync-mobile-app/releases/latest) (`SoulSync-Player-0.5.1.apk`).
 2. On your phone, tablet or Android TV, allow installs from your browser or file manager, then open the APK.
 3. In SoulSync, open **Settings → Devices → Add a device**, then scan the QR code with your phone's camera (it opens the app with the code filled in), or type the code into the app.
 
