@@ -211,31 +211,25 @@ internal fun HomeVideoSheet(
                         color = if (v.missing) HomeColors.Muted else SoulSyncColors.BgPrimary, fontWeight = FontWeight.Bold, fontSize = 13.5.sp,
                     )
                 }
-                if (!v.missing) {
-                    OfflineDownloadButton(
-                        api = api,
+                // download and info live behind one ⋯
+                MoreActionsButton(
+                    item = MediaContextItem(
                         itemType = "home",
                         itemId = v.id,
                         title = title,
                         subtitle = HomeVideoText.date(v),
                         artworkUrl = thumb,
                         isVideo = true,
+                        owned = !v.missing,
+                        actionsOnly = true,
                         groupType = if (v.albumKey.isNotBlank()) "home_album" else "",
                         groupId = v.albumKey,
                         groupTitle = HomeVideoText.albumName(HomeAlbum(v.albumKey, v.album)),
-                    )
-                }
-                ItemInfoIconButton(
-                    api = api,
-                    itemType = "home",
-                    itemId = v.id,
-                    title = title,
-                    subtitle = HomeVideoText.date(v),
-                    artworkUrl = thumb,
+                    ),
                     size = 40.dp,
                     iconSize = 20.dp,
                     tint = Color.White.copy(alpha = 0.85f),
-                    background = Color.White.copy(alpha = 0.08f),
+                    outlined = true,
                 )
             }
             loadError?.let { Text(it, color = DlColors.Bad, fontSize = 12.5.sp) }

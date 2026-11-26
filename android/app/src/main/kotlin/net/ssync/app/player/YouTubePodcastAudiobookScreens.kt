@@ -335,13 +335,16 @@ fun YouTubeScreen(
                                         Text(v.title, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
                                         Text(v.channelTitle.orEmpty(), style = MaterialTheme.typography.bodyMedium, maxLines = 1)
                                     }
-                                    ItemInfoIconButton(
-                                        api = api,
-                                        itemType = "youtube",
-                                        itemId = v.id,
-                                        title = v.title,
-                                        subtitle = v.channelTitle.orEmpty(),
-                                        artworkUrl = thumbOf(v),
+                                    MoreActionsButton(
+                                        item = MediaContextItem(
+                                            itemType = "youtube",
+                                            itemId = v.id,
+                                            title = v.title,
+                                            subtitle = v.channelTitle.orEmpty(),
+                                            artworkUrl = thumbOf(v),
+                                            isVideo = true,
+                                            actionsOnly = true,
+                                        ),
                                         size = 40.dp,
                                         iconSize = 20.dp,
                                     )
@@ -479,12 +482,25 @@ fun YouTubeChannelScreen(
     LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         item { Text(channelName, style = MaterialTheme.typography.headlineMedium) }
         items(videos, key = { it.id }) { v ->
+            val menuItem = MediaContextItem(
+                itemType = "youtube",
+                itemId = v.id,
+                title = v.title,
+                subtitle = channelName,
+                artworkUrl = api.artwork.resolve(v.thumbnail),
+                isVideo = true,
+                actionsOnly = true,
+                groupType = "youtube",
+                groupId = channelId,
+                groupTitle = channelName,
+            )
             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Box(modifier = Modifier.weight(1f)) {
                     SimpleTrackRow(
                         title = v.title,
                         subtitle = v.publishedAt.orEmpty(),
                         artworkUrl = api.artwork.resolve(v.thumbnail),
+                        contextItem = menuItem,
                         onClick = {
                             coordinator.playVideo(
                                 ActivePlayable(
@@ -500,29 +516,7 @@ fun YouTubeChannelScreen(
                         },
                     )
                 }
-                OfflineDownloadButton(
-                    api = api,
-                    itemType = "youtube",
-                    itemId = v.id,
-                    title = v.title,
-                    subtitle = channelName,
-                    artworkUrl = api.artwork.resolve(v.thumbnail),
-                    isVideo = true,
-                    compact = true,
-                    groupType = "youtube",
-                    groupId = channelId,
-                    groupTitle = channelName,
-                )
-                ItemInfoIconButton(
-                    api = api,
-                    itemType = "youtube",
-                    itemId = v.id,
-                    title = v.title,
-                    subtitle = channelName,
-                    artworkUrl = api.artwork.resolve(v.thumbnail),
-                    size = 40.dp,
-                    iconSize = 20.dp,
-                )
+                MoreActionsButton(item = menuItem, size = 40.dp, iconSize = 20.dp)
             }
         }
     }
@@ -642,16 +636,17 @@ fun PodcastDetailScreen(
             }
             Spacer(modifier = Modifier.height(10.dp))
             // the newest episodes on the phone, and smart downloads that keep them coming
-            GroupDownloadButton(
-                api = api,
-                target = DownloadTarget(
-                    type = "podcast",
-                    id = sub.id.toString(),
+            MoreActionsButton(
+                item = MediaContextItem(
+                    itemType = "podcast",
+                    itemId = sub.id.toString(),
                     title = sub.title,
                     subtitle = sub.author.orEmpty(),
-                    artwork = relativeArt(show?.artworkUrl ?: sub.artworkUrl),
+                    artworkUrl = api.artwork.resolve(show?.artworkUrl ?: sub.artworkUrl),
+                    actionsOnly = true,
                     groupTitle = sub.title,
                 ),
+                outlined = true,
             )
             Spacer(modifier = Modifier.height(10.dp))
         }
@@ -661,6 +656,20 @@ fun PodcastDetailScreen(
             // the web player's key for an episode, so a resume carries between them
             val episodeKey = (ep.guid ?: ep.enclosureUrl ?: ep.title).take(200)
             var showEpReport by remember(ep.guid ?: ep.title) { mutableStateOf(false) }
+            val menuItem = MediaContextItem(
+                itemType = "podcast_episode",
+                itemId = "${sub.id}:$episodeKey",
+                title = ep.title,
+                subtitle = sub.title,
+                artworkUrl = api.artwork.resolve(ep.artworkUrl ?: sub.artworkUrl),
+                owned = stream != null,
+                actionsOnly = true,
+                parentId = sub.id.toString(),
+                groupType = "podcast",
+                groupId = sub.id.toString(),
+                groupTitle = sub.title,
+                onReport = { showEpReport = true },
+            )
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -670,6 +679,7 @@ fun PodcastDetailScreen(
                         title = ep.title,
                         subtitle = listOfNotNull(ep.pubDate, ep.durationSeconds?.let { "${it / 60}m" }).joinToString(" • "),
                         artworkUrl = api.artwork.resolve(ep.artworkUrl ?: sub.artworkUrl),
+                        contextItem = menuItem,
                         onClick = {
                             if (stream == null) return@SimpleTrackRow
                             coordinator.playAudio(
@@ -685,39 +695,7 @@ fun PodcastDetailScreen(
                         },
                     )
                 }
-                if (stream != null) {
-                    OfflineDownloadButton(
-                        api = api,
-                        itemType = "podcast_episode",
-                        itemId = "${sub.id}:$episodeKey",
-                        title = ep.title,
-                        subtitle = sub.title,
-                        artworkUrl = api.artwork.resolve(ep.artworkUrl ?: sub.artworkUrl),
-                        isVideo = false,
-                        parentId = sub.id.toString(),
-                        compact = true,
-                        groupType = "podcast",
-                        groupId = sub.id.toString(),
-                        groupTitle = sub.title,
-                    )
-                }
-                ItemInfoIconButton(
-                    api = api,
-                    itemType = "podcast_episode",
-                    itemId = "${sub.id}:$episodeKey",
-                    title = ep.title,
-                    subtitle = sub.title,
-                    artworkUrl = api.artwork.resolve(ep.artworkUrl ?: sub.artworkUrl),
-                    size = 40.dp,
-                    iconSize = 22.dp,
-                )
-                androidx.compose.material3.IconButton(onClick = { showEpReport = true }) {
-                    Icon(
-                        imageVector = Icons.Default.Flag,
-                        contentDescription = "Report issue",
-                        tint = SoulSyncColors.TextSecondary,
-                    )
-                }
+                MoreActionsButton(item = menuItem, size = 40.dp, iconSize = 20.dp)
             }
             if (showEpReport) {
                 ReportIssueDialog(
@@ -833,6 +811,11 @@ fun AudiobookDetailScreen(
             Text("${mins / 60}h ${mins % 60}m", style = MaterialTheme.typography.bodyMedium)
         }
         Spacer(modifier = Modifier.height(20.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
         Button(
             onClick = {
                 coordinator.playAudio(
@@ -850,72 +833,27 @@ fun AudiobookDetailScreen(
                 containerColor = SoulSyncColors.Accent,
                 contentColor = SoulSyncColors.OnAccent,
             ),
-            modifier = Modifier.fillMaxWidth().height(50.dp).dpadFocusable(),
+            modifier = Modifier.weight(1f).height(50.dp).dpadFocusable(),
         ) {
             Icon(Icons.Default.PlayArrow, contentDescription = null)
             Spacer(modifier = Modifier.width(6.dp))
             Text("Listen")
         }
-        Spacer(modifier = Modifier.height(10.dp))
-        GroupDownloadButton(
-            api = api,
-            target = DownloadTarget(
-                type = "audiobook",
-                id = book.asin,
+        // download, info and report live behind one ⋯
+        MoreActionsButton(
+            item = MediaContextItem(
+                itemType = "audiobook",
+                itemId = book.asin,
                 title = book.title,
                 subtitle = book.author.orEmpty(),
-                artwork = relativeArt(book.coverUrl),
+                artworkUrl = api.artwork.resolve(book.coverUrl),
+                actionsOnly = true,
                 groupTitle = book.title,
             ),
+            size = 50.dp,
+            iconSize = 22.dp,
+            outlined = true,
         )
-        Spacer(modifier = Modifier.height(10.dp))
-        var showBookInfo by remember(book.asin) { mutableStateOf(false) }
-        androidx.compose.material3.OutlinedButton(
-            onClick = { showBookInfo = true },
-            modifier = Modifier.fillMaxWidth().height(46.dp).dpadFocusable(),
-        ) {
-            Icon(
-                imageVector = Icons.Outlined.Info,
-                contentDescription = null,
-                tint = SoulSyncColors.TextSecondary,
-            )
-            Spacer(modifier = Modifier.width(6.dp))
-            Text("Info", color = SoulSyncColors.TextPrimary)
-        }
-        if (showBookInfo) {
-            ItemInfoSheet(
-                api = api,
-                itemType = "audiobook",
-                itemId = book.asin,
-                fallbackTitle = book.title,
-                fallbackSubtitle = book.author.orEmpty(),
-                fallbackArtwork = api.artwork.resolve(book.coverUrl),
-                onDismiss = { showBookInfo = false },
-            )
-        }
-        Spacer(modifier = Modifier.height(10.dp))
-        var showBookReport by remember(book.asin) { mutableStateOf(false) }
-        androidx.compose.material3.OutlinedButton(
-            onClick = { showBookReport = true },
-            modifier = Modifier.fillMaxWidth().height(46.dp),
-        ) {
-            Icon(
-                imageVector = Icons.Default.Flag,
-                contentDescription = null,
-                tint = SoulSyncColors.TextSecondary,
-            )
-            Spacer(modifier = Modifier.width(6.dp))
-            Text("Report issue", color = SoulSyncColors.TextPrimary)
-        }
-        if (showBookReport) {
-            ReportIssueDialog(
-                api = api,
-                itemType = "audiobook",
-                itemId = book.asin,
-                title = book.title,
-                subtitle = book.author.orEmpty(),
-                onDismiss = { showBookReport = false },
-            )
         }
     }
 }

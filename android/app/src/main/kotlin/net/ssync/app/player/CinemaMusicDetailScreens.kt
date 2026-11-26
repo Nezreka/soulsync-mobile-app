@@ -6,6 +6,7 @@ import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -1099,7 +1100,6 @@ fun CinemaAlbumDetailScreen(
     var loadError by remember(albumId) { mutableStateOf<String?>(null) }
     var reloadNonce by remember { mutableStateOf(0) }
     var moreByArtist by remember(albumId) { mutableStateOf<List<LibAlbum>>(emptyList()) }
-    var playlistPickerSong by remember { mutableStateOf<SongRefPayload?>(null) }
     val likedState = rememberLikedTracksState(api)
 
     LaunchedEffect(albumId, api, reloadNonce) {
@@ -1585,6 +1585,18 @@ fun CinemaAlbumDetailScreen(
                             lib2TrackId = tr.id,
                         )
                     } else null
+                    val pItem = if (owned && songRef != null) {
+                        ActivePlayable(
+                            itemType = "track",
+                            itemId = tr.id.toString(),
+                            title = tr.title,
+                            subtitle = al.primaryArtist?.name ?: al.title,
+                            artworkUrl = coverUrl,
+                            streamUrl = api.streamUrl("track", tr.id.toString()),
+                            parentId = al.id.toString(),
+                        )
+                    } else null
+                    val openContext = LocalMediaContextMenu.current
 
                     Column(modifier = Modifier.padding(start = sideStart, end = sideEnd)) {
                         if (showDisc) {
@@ -1610,12 +1622,17 @@ fun CinemaAlbumDetailScreen(
                                     },
                                 )
                                 .onFocusChanged { rowFocused = it.isFocused || it.hasFocus }
-                                .clickable(enabled = owned) {
-                                    val playIdx = playableTracks.indexOfFirst { it.itemId == tr.id.toString() }
-                                    if (playIdx >= 0) {
-                                        coordinator.playAudio(playableTracks[playIdx], playableTracks.drop(playIdx + 1))
-                                    }
-                                }
+                                .combinedClickable(
+                                    enabled = owned,
+                                    onClick = {
+                                        val playIdx = playableTracks.indexOfFirst { it.itemId == tr.id.toString() }
+                                        if (playIdx >= 0) {
+                                            coordinator.playAudio(playableTracks[playIdx], playableTracks.drop(playIdx + 1))
+                                        }
+                                    },
+                                    // a long press, or holding select on a tv
+                                    onLongClick = pItem?.let { p -> { openContext(p.toContextItem(songRef)) } },
+                                )
                                 .padding(horizontal = 12.dp, vertical = 10.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -1680,22 +1697,11 @@ fun CinemaAlbumDetailScreen(
                                     }
                                 }
                             }
-                            if (owned && songRef != null && !isTv) {
-                                val pItem = ActivePlayable(
-                                    itemType = "track",
-                                    itemId = tr.id.toString(),
-                                    title = tr.title,
-                                    subtitle = al.primaryArtist?.name ?: al.title,
-                                    artworkUrl = coverUrl,
-                                    streamUrl = api.streamUrl("track", tr.id.toString()),
-                                    parentId = al.id.toString(),
-                                )
+                            if (pItem != null && songRef != null) {
                                 TrackRowActionIcons(
                                     song = songRef,
                                     playable = pItem,
                                     likedState = likedState,
-                                    coordinator = coordinator,
-                                    onAddToPlaylist = { playlistPickerSong = it },
                                 )
                             }
                             if (!owned && (tr.isRequestable || rStatus != null)) {
@@ -1797,12 +1803,5 @@ fun CinemaAlbumDetailScreen(
             }
         }
 
-        if (playlistPickerSong != null) {
-            AddToPlaylistSheet(
-                song = playlistPickerSong!!,
-                api = api,
-                onDismiss = { playlistPickerSong = null },
-            )
-        }
     }
 }

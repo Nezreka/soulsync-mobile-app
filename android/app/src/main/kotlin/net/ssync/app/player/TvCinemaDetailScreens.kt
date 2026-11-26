@@ -39,6 +39,7 @@ import androidx.compose.material.icons.filled.BookmarkAdd
 import androidx.compose.material.icons.filled.BookmarkAdded
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Flag
+import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.Person
@@ -470,27 +471,25 @@ internal fun TvCinemaMovieDetail(
                                 icon = Icons.Default.Group,
                                 onClick = onStartWatchParty,
                             )
-                            var showInfo by remember(movie.id) { mutableStateOf(false) }
+                            // send to a phone, info and report live behind one ⋯
+                            val openContext = LocalMediaContextMenu.current
                             TvDetailIconAction(
-                                icon = Icons.Outlined.Info,
-                                contentDescription = "Info",
-                                onClick = { showInfo = true },
-                            )
-                            if (showInfo) {
-                                ItemInfoSheet(
-                                    api = api,
-                                    itemType = "movie",
-                                    itemId = movie.id.toString(),
-                                    fallbackTitle = movie.title,
-                                    fallbackSubtitle = movie.year?.toString() ?: "",
-                                    fallbackArtwork = posterUrl,
-                                    onDismiss = { showInfo = false },
-                                )
-                            }
-                            TvDetailIconAction(
-                                icon = Icons.Default.Flag,
-                                contentDescription = "Report issue",
-                                onClick = onReportIssue,
+                                icon = Icons.Default.MoreHoriz,
+                                contentDescription = "More actions",
+                                onClick = {
+                                    openContext(
+                                        MediaContextItem(
+                                            itemType = "movie",
+                                            itemId = movie.id.toString(),
+                                            title = movie.title,
+                                            subtitle = movie.year?.toString() ?: "",
+                                            artworkUrl = posterUrl,
+                                            isVideo = true,
+                                            actionsOnly = true,
+                                            onReport = onReportIssue,
+                                        ),
+                                    )
+                                },
                             )
                         }
                     }
@@ -985,10 +984,26 @@ internal fun TvCinemaShowDetail(
                                 icon = Icons.Default.Group,
                                 onClick = onStartWatchParty,
                             )
+                            // send to a phone, info and report live behind one ⋯
+                            val openContext = LocalMediaContextMenu.current
                             TvDetailIconAction(
-                                icon = Icons.Default.Flag,
-                                contentDescription = "Report issue",
-                                onClick = onReportIssue,
+                                icon = Icons.Default.MoreHoriz,
+                                contentDescription = "More actions",
+                                onClick = {
+                                    openContext(
+                                        MediaContextItem(
+                                            itemType = "show",
+                                            itemId = show.id.toString(),
+                                            title = show.title,
+                                            artworkUrl = posterUrl,
+                                            isVideo = true,
+                                            owned = firstPlayable != null,
+                                            actionsOnly = true,
+                                            groupTitle = show.title,
+                                            onReport = onReportIssue,
+                                        ),
+                                    )
+                                },
                             )
                         }
                     }

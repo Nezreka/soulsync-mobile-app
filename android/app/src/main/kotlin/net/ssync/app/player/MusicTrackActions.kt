@@ -105,18 +105,15 @@ internal fun rememberLikedTracksState(api: PlayerApiClient): LikedTracksState {
     return state
 }
 
+/** a track row keeps the heart inline; everything else sits behind the ⋯ */
 @Composable
 internal fun TrackRowActionIcons(
     song: SongRefPayload,
     playable: ActivePlayable?,
     likedState: LikedTracksState,
-    coordinator: PlaybackCoordinator,
-    onAddToPlaylist: (SongRefPayload) -> Unit,
 ) {
     val scope = rememberCoroutineScope()
     val liked = likedState.isLiked(song.lib2TrackId, song.artist, song.title)
-    var justQueued by remember(song.lib2TrackId, song.title) { mutableStateOf(false) }
-    val showQueue = playable != null && coordinator.activeItem != null
 
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -133,82 +130,8 @@ internal fun TrackRowActionIcons(
                 modifier = Modifier.size(18.dp),
             )
         }
-        if (showQueue && playable != null) {
-            IconButton(
-                onClick = {
-                    coordinator.enqueueAudio(playable)
-                    justQueued = true
-                    scope.launch {
-                        delay(1500)
-                        justQueued = false
-                    }
-                },
-                modifier = Modifier.size(34.dp).dpadFocusable(androidx.compose.foundation.shape.CircleShape),
-            ) {
-                Icon(
-                    imageVector = if (justQueued) Icons.Default.Check else Icons.Default.QueueMusic,
-                    contentDescription = "Add to queue",
-                    tint = if (justQueued) SoulSyncColors.AccentLight else SoulSyncColors.TextSecondary,
-                    modifier = Modifier.size(18.dp),
-                )
-            }
-        }
-        IconButton(
-            onClick = { onAddToPlaylist(song) },
-            modifier = Modifier.size(34.dp).dpadFocusable(androidx.compose.foundation.shape.CircleShape),
-        ) {
-            Icon(
-                imageVector = Icons.AutoMirrored.Filled.PlaylistAdd,
-                contentDescription = "Add to playlist",
-                tint = SoulSyncColors.TextSecondary,
-                modifier = Modifier.size(19.dp),
-            )
-        }
         if (playable != null) {
-            var showReport by remember(playable.itemId) { mutableStateOf(false) }
-            OfflineDownloadButton(
-                api = likedState.api,
-                itemType = playable.itemType,
-                itemId = playable.itemId,
-                title = playable.title,
-                subtitle = playable.subtitle,
-                artworkUrl = playable.artworkUrl,
-                streamUrl = playable.streamUrl,
-                isVideo = false,
-                parentId = playable.parentId,
-                compact = true,
-            )
-            ItemInfoIconButton(
-                api = likedState.api,
-                itemType = playable.itemType,
-                itemId = playable.itemId,
-                title = playable.title,
-                subtitle = playable.subtitle,
-                artworkUrl = playable.artworkUrl,
-                size = 32.dp,
-                iconSize = 17.dp,
-            )
-            IconButton(
-                onClick = { showReport = true },
-                modifier = Modifier.size(32.dp).dpadFocusable(androidx.compose.foundation.shape.CircleShape),
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Flag,
-                    contentDescription = "Report issue",
-                    tint = SoulSyncColors.TextSecondary,
-                    modifier = Modifier.size(16.dp),
-                )
-            }
-            if (showReport) {
-                ReportIssueDialog(
-                    api = likedState.api,
-                    itemType = playable.itemType,
-                    itemId = playable.itemId,
-                    title = playable.title,
-                    subtitle = playable.subtitle,
-                    onDismiss = { showReport = false },
-                )
-            }
+            MoreActionsButton(item = playable.toContextItem(song))
         }
     }
 }

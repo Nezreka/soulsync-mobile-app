@@ -5,6 +5,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -315,36 +316,25 @@ fun MovieDetailScreen(
                     }
                 }
                 item {
-                    OfflineDownloadButton(
-                        api = api,
-                        itemType = "movie",
-                        itemId = movie.id.toString(),
-                        title = movie.title,
-                        subtitle = movie.year?.toString() ?: "",
-                        artworkUrl = api.artwork.moviePoster(movie.id),
-                        streamUrl = api.streamUrl("movie", movie.id.toString()),
-                        isVideo = true,
-                    )
-                }
-                item {
-                    ItemInfoPillButton(
-                        api = api,
-                        itemType = "movie",
-                        itemId = movie.id.toString(),
-                        title = movie.title,
-                        subtitle = movie.year?.toString() ?: "",
-                        artworkUrl = api.artwork.moviePoster(movie.id),
-                    )
-                }
-                item {
-                    ReportIssuePillButton(
-                        onClick = {
-                            issueTarget = ReportIssueTarget(
-                                entityType = "movie",
-                                entityId = movie.id,
-                                title = movie.title,
-                            )
-                        },
+                    // download, info and report live behind one ⋯
+                    MoreActionsButton(
+                        item = MediaContextItem(
+                            itemType = "movie",
+                            itemId = movie.id.toString(),
+                            title = movie.title,
+                            subtitle = movie.year?.toString() ?: "",
+                            artworkUrl = api.artwork.moviePoster(movie.id),
+                            isVideo = true,
+                            actionsOnly = true,
+                            onReport = {
+                                issueTarget = ReportIssueTarget(
+                                    entityType = "movie",
+                                    entityId = movie.id,
+                                    title = movie.title,
+                                )
+                            },
+                        ),
+                        outlined = true,
                     )
                 }
             }
@@ -1519,29 +1509,27 @@ fun ShowDetailScreen(
                         }
                     }
                 }
-                if (seasons.any { se -> se.episodes.any { it.owned } }) {
-                    item {
-                        GroupDownloadButton(
-                            api = api,
-                            target = DownloadTarget(
-                                type = "show",
-                                id = show.id.toString(),
-                                title = show.title,
-                                artwork = if (show.hasPoster) "/api/video/poster/show/${show.id}" else null,
-                                groupTitle = show.title,
-                            ),
-                        )
-                    }
-                }
                 item {
-                    ReportIssuePillButton(
-                        onClick = {
-                            issueTarget = ReportIssueTarget(
-                                entityType = "show",
-                                entityId = show.id,
-                                title = show.title,
-                            )
-                        },
+                    // download, info and report live behind one ⋯
+                    MoreActionsButton(
+                        item = MediaContextItem(
+                            itemType = "show",
+                            itemId = show.id.toString(),
+                            title = show.title,
+                            artworkUrl = if (show.hasPoster) "/api/video/poster/show/${show.id}" else null,
+                            isVideo = true,
+                            owned = seasons.any { se -> se.episodes.any { it.owned } },
+                            actionsOnly = true,
+                            groupTitle = show.title,
+                            onReport = {
+                                issueTarget = ReportIssueTarget(
+                                    entityType = "show",
+                                    entityId = show.id,
+                                    title = show.title,
+                                )
+                            },
+                        ),
+                        outlined = true,
                     )
                 }
             }
@@ -1987,6 +1975,7 @@ fun ShowDetailScreen(
     }
 }
 
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun ShowEpisodeCard(
     episode: net.ssync.player.DetailEpisode,
@@ -2014,6 +2003,22 @@ private fun ShowEpisodeCard(
     var reqError by remember(episode.id) { mutableStateOf<String?>(null) }
 
     val canRequest = !episode.owned && showTmdbId != null && showTmdbId > 0 && requestMode != "none"
+    // download, info and report: the ⋯ and a long press on the header
+    val menuItem = MediaContextItem(
+        itemType = "episode",
+        itemId = episode.id.toString(),
+        title = "$showTitle · S${seasonNumber}E${episode.episodeNumber}",
+        subtitle = episode.title ?: "",
+        artworkUrl = api.artwork.episodeStill(episode.id),
+        isVideo = true,
+        parentId = showId.toString(),
+        owned = episode.owned,
+        actionsOnly = true,
+        groupTitle = showTitle,
+        sortIndex = seasonNumber * 1000 + episode.episodeNumber,
+        onReport = onReportIssue,
+    )
+    val openContext = LocalMediaContextMenu.current
     val reqDone = reqResult is VideoRequestResult.Got ||
         reqResult is VideoRequestResult.Asked ||
         reqResult is VideoRequestResult.OnTheWay ||
@@ -2102,7 +2107,10 @@ private fun ShowEpisodeCard(
                     .clip(RoundedCornerShape(10.dp))
                     .then(headerFocusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
                     .dpadFocusable(RoundedCornerShape(10.dp))
-                    .clickable { expanded = !expanded }
+                    .combinedClickable(
+                        onClick = { expanded = !expanded },
+                        onLongClick = { openContext(menuItem) },
+                    )
                     .padding(2.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -2361,20 +2369,6 @@ private fun ShowEpisodeCard(
                         ) {
                             Text("🍿 Party", color = SoulSyncColors.AccentLight, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                         }
-                        OfflineDownloadButton(
-                            api = api,
-                            itemType = "episode",
-                            itemId = episode.id.toString(),
-                            title = "$showTitle · S${seasonNumber}E${episode.episodeNumber}",
-                            subtitle = episode.title ?: "",
-                            artworkUrl = api.artwork.episodeStill(episode.id),
-                            streamUrl = api.streamUrl("episode", episode.id.toString()),
-                            isVideo = true,
-                            parentId = showId.toString(),
-                            compact = true,
-                            groupTitle = showTitle,
-                            sortIndex = seasonNumber * 1000 + episode.episodeNumber,
-                        )
                     } else if (canRequest) {
                         Button(
                             onClick = { triggerEpisodeRequest() },
@@ -2396,19 +2390,7 @@ private fun ShowEpisodeCard(
                             Text(reqLabel, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1)
                         }
                     }
-                    ItemInfoIconButton(
-                        api = api,
-                        itemType = "episode",
-                        itemId = episode.id.toString(),
-                        title = "$showTitle · S${seasonNumber}E${episode.episodeNumber}",
-                        subtitle = episode.title ?: "",
-                        artworkUrl = api.artwork.episodeStill(episode.id),
-                        size = 38.dp,
-                    )
-                    ReportIssuePillButton(
-                        onClick = onReportIssue,
-                        compact = true,
-                    )
+                    MoreActionsButton(item = menuItem, size = 38.dp, outlined = true)
                 }
                 if (reqError != null) {
                     Text(
@@ -2636,32 +2618,6 @@ fun EpisodeDetailScreen(
                         modifier = Modifier.dpadFocusable(),
                     )
                 }
-                if (ep.owned) {
-                    item {
-                        OfflineDownloadButton(
-                            api = api,
-                            itemType = "episode",
-                            itemId = ep.id.toString(),
-                            title = ep.title ?: "$code",
-                            subtitle = "${show.title} · $code",
-                            artworkUrl = api.artwork.episodeStill(ep.id),
-                            isVideo = true,
-                            parentId = show.id.toString(),
-                            groupTitle = show.title,
-                            sortIndex = season.seasonNumber * 1000 + ep.episodeNumber,
-                        )
-                    }
-                }
-                item {
-                    ItemInfoPillButton(
-                        api = api,
-                        itemType = "episode",
-                        itemId = ep.id.toString(),
-                        title = ep.title ?: "$code",
-                        subtitle = "${show.title} · $code",
-                        artworkUrl = api.artwork.episodeStill(ep.id),
-                    )
-                }
                 if (prev != null) {
                     item {
                         FilterChip(
@@ -2689,6 +2645,25 @@ fun EpisodeDetailScreen(
                             modifier = Modifier.dpadFocusable(),
                         )
                     }
+                }
+                item {
+                    // download, info and report live behind one ⋯
+                    MoreActionsButton(
+                        item = MediaContextItem(
+                            itemType = "episode",
+                            itemId = ep.id.toString(),
+                            title = ep.title ?: "$code",
+                            subtitle = "${show.title} · $code",
+                            artworkUrl = api.artwork.episodeStill(ep.id),
+                            isVideo = true,
+                            parentId = show.id.toString(),
+                            owned = ep.owned,
+                            actionsOnly = true,
+                            groupTitle = show.title,
+                            sortIndex = season.seasonNumber * 1000 + ep.episodeNumber,
+                        ),
+                        outlined = true,
+                    )
                 }
             }
         }

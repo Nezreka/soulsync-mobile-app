@@ -88,39 +88,6 @@ private val VIDEO_ISSUE_CATEGORIES = listOf(
     VideoIssueCategoryOption("other", "Something else", setOf("movie", "show", "episode")),
 )
 
-@Composable
-internal fun ReportIssuePillButton(
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-    compact: Boolean = false,
-) {
-    OutlinedButton(
-        onClick = onClick,
-        shape = CircleShape,
-        border = BorderStroke(1.dp, SoulSyncColors.Line),
-        contentPadding = if (compact) {
-            PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-        } else {
-            PaddingValues(horizontal = 14.dp, vertical = 8.dp)
-        },
-        modifier = modifier.height(if (compact) 38.dp else 40.dp).dpadFocusable(androidx.compose.foundation.shape.RoundedCornerShape(999.dp)),
-    ) {
-        Icon(
-            imageVector = Icons.Default.Flag,
-            contentDescription = "Report issue",
-            tint = SoulSyncColors.TextSoft,
-            modifier = Modifier.size(15.dp),
-        )
-        Spacer(modifier = Modifier.width(6.dp))
-        Text(
-            text = "Report issue",
-            color = SoulSyncColors.TextSoft,
-            fontSize = if (compact) 12.sp else 13.sp,
-            fontWeight = FontWeight.Medium,
-        )
-    }
-}
-
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 internal fun ReportIssueSheet(

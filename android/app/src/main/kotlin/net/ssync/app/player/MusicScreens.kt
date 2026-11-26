@@ -160,7 +160,6 @@ fun MusicScreen(
     var moreByArtistRails by remember(api.baseUrl) { mutableStateOf(if (warmHit) HomeWarmCache.musicMoreByArtistRails else emptyList()) }
     var similarAlbumsRail by remember(api.baseUrl) { mutableStateOf(if (warmHit) HomeWarmCache.musicSimilarAlbums else null) }
     var genreRails by remember(api.baseUrl) { mutableStateOf(if (warmHit) HomeWarmCache.musicGenreRails else emptyList()) }
-    var playlistPickerSong by remember { mutableStateOf<SongRefPayload?>(null) }
     val likedState = rememberLikedTracksState(api)
 
     val activeTrackId = coordinator.activeItem?.takeIf { it.itemType == "track" }?.itemId
@@ -658,6 +657,21 @@ fun MusicScreen(
                     ) {
                         itemsIndexed(songs, key = { _, s -> s.id }) { idx, song ->
                             val isPlayingThis = activeTrackId == song.id.toString()
+                            val songRef = SongRefPayload(
+                                title = song.title,
+                                artist = song.artistName ?: "Unknown Artist",
+                                album = song.albumTitle,
+                                durationMs = song.duration,
+                                lib2TrackId = song.id,
+                            )
+                            val playable = ActivePlayable(
+                                itemType = "track",
+                                itemId = song.id.toString(),
+                                title = song.title,
+                                subtitle = song.artistName ?: "Unknown Artist",
+                                artworkUrl = api.artwork.albumArtwork(song.albumId),
+                                streamUrl = api.streamUrl("track", song.id.toString()),
+                            )
                             MusicTrackRow(
                                 title = song.title,
                                 subtitle = listOfNotNull(song.artistName, song.albumTitle).joinToString(" · "),
@@ -665,28 +679,12 @@ fun MusicScreen(
                                 duration = formatTrackDuration(song.duration),
                                 isActive = isPlayingThis,
                                 showDivider = idx < songs.lastIndex,
+                                contextItem = playable.toContextItem(songRef),
                                 trailingActions = {
-                                    val songRef = SongRefPayload(
-                                        title = song.title,
-                                        artist = song.artistName ?: "Unknown Artist",
-                                        album = song.albumTitle,
-                                        durationMs = song.duration,
-                                        lib2TrackId = song.id,
-                                    )
-                                    val playable = ActivePlayable(
-                                        itemType = "track",
-                                        itemId = song.id.toString(),
-                                        title = song.title,
-                                        subtitle = song.artistName ?: "Unknown Artist",
-                                        artworkUrl = api.artwork.albumArtwork(song.albumId),
-                                        streamUrl = api.streamUrl("track", song.id.toString()),
-                                    )
                                     TrackRowActionIcons(
                                         song = songRef,
                                         playable = playable,
                                         likedState = likedState,
-                                        coordinator = coordinator,
-                                        onAddToPlaylist = { playlistPickerSong = it },
                                     )
                                 },
                                 onClick = {
@@ -1288,13 +1286,6 @@ fun MusicScreen(
                 PageRowsEditor(pageRows, "Music")
             }
         }
-        if (playlistPickerSong != null) {
-            AddToPlaylistSheet(
-                song = playlistPickerSong!!,
-                api = api,
-                onDismiss = { playlistPickerSong = null },
-            )
-        }
         }
     }
 }
@@ -1886,6 +1877,7 @@ private fun ArtistListRow(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun MusicTrackRow(
     title: String,
@@ -1895,14 +1887,26 @@ private fun MusicTrackRow(
     isActive: Boolean,
     showDivider: Boolean,
     playable: Boolean = true,
+    contextItem: MediaContextItem? = null,
     trailingActions: (@Composable () -> Unit)? = null,
     onClick: () -> Unit,
 ) {
+    val openContext = LocalMediaContextMenu.current
+    val haptic = LocalHapticFeedback.current
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .background(if (isActive) SoulSyncColors.Accent.copy(alpha = 0.09f) else Color.Transparent)
-            .clickable(enabled = playable, onClick = onClick),
+            .combinedClickable(
+                enabled = playable,
+                onClick = onClick,
+                onLongClick = contextItem?.let { ci ->
+                    {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        openContext(ci)
+                    }
+                },
+            ),
     ) {
         Row(
             modifier = Modifier
@@ -1994,15 +1998,6 @@ private fun MusicTrackRow(
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
-                if (playable && trailingActions != null) {
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(2.dp),
-                    ) {
-                        trailingActions()
-                    }
-                }
             }
             if (!duration.isNullOrBlank()) {
                 Spacer(modifier = Modifier.width(8.dp))
@@ -2012,6 +2007,10 @@ private fun MusicTrackRow(
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Medium,
                 )
+            }
+            if (playable && trailingActions != null) {
+                Spacer(modifier = Modifier.width(4.dp))
+                trailingActions()
             }
         }
         if (showDivider) {
@@ -2353,7 +2352,6 @@ fun AlbumDetailScreen(
     var isLoading by remember { mutableStateOf(true) }
     var loadError by remember { mutableStateOf<String?>(null) }
     var reloadNonce by remember { mutableStateOf(0) }
-    var playlistPickerSong by remember { mutableStateOf<SongRefPayload?>(null) }
     val likedState = rememberLikedTracksState(api)
 
     LaunchedEffect(albumId, api, reloadNonce) {
@@ -2723,13 +2721,12 @@ fun AlbumDetailScreen(
                             subtitle = al.primaryArtist?.name ?: al.title,
                             artworkUrl = api.artwork.resolve(al.imageUrl),
                             streamUrl = api.streamUrl("track", t.id.toString()),
+                            parentId = al.id.toString(),
                         )
                         TrackRowActionIcons(
                             song = songRef,
                             playable = pItem,
                             likedState = likedState,
-                            coordinator = coordinator,
-                            onAddToPlaylist = { playlistPickerSong = it },
                         )
                     }
                 } else {
@@ -2747,13 +2744,6 @@ fun AlbumDetailScreen(
                 },
             )
         }
-    }
-    if (playlistPickerSong != null) {
-        AddToPlaylistSheet(
-            song = playlistPickerSong!!,
-            api = api,
-            onDismiss = { playlistPickerSong = null },
-        )
     }
 }
 
@@ -2885,16 +2875,6 @@ private fun AlbumTrackRow(
                         color = SoulSyncColors.TextSecondary,
                         fontSize = 11.5.sp,
                     )
-                } else if (trailingActions != null) {
-                    // 2-tier mobile layout: full width for the track title above,
-                    // crisp always-visible action buttons tucked neatly underneath!
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(2.dp),
-                    ) {
-                        trailingActions()
-                    }
                 }
             }
 
@@ -2929,6 +2909,7 @@ private fun AlbumTrackRow(
                             fontWeight = FontWeight.Medium,
                         )
                     }
+                    trailingActions?.invoke()
                 }
             } else if (requestable || requestStatus != null) {
                 val pillText = when (requestStatus) {
@@ -2979,7 +2960,6 @@ fun PlaylistDetailScreen(
 ) {
     var playlist by remember { mutableStateOf<PlaylistDetail?>(null) }
     var isLoading by remember { mutableStateOf(true) }
-    var playlistPickerSong by remember { mutableStateOf<SongRefPayload?>(null) }
     val likedState = rememberLikedTracksState(api)
 
     LaunchedEffect(playlistId, api) {
@@ -3098,6 +3078,21 @@ fun PlaylistDetailScreen(
         }
         itemsIndexed(pl.tracks) { idx, item ->
             val isPlayable = item.trackId != null
+            val songRef = SongRefPayload(
+                title = item.title,
+                artist = item.artist,
+                album = item.album,
+                durationMs = item.durationMs,
+                lib2TrackId = item.trackId,
+            )
+            val pItem = ActivePlayable(
+                itemType = "track",
+                itemId = item.trackId.toString(),
+                title = item.title,
+                subtitle = item.artist,
+                artworkUrl = api.artwork.albumArtwork(item.albumId),
+                streamUrl = api.streamUrl("track", item.trackId.toString()),
+            )
             MusicTrackRow(
                 title = item.title,
                 subtitle = listOfNotNull(item.artist, item.album).joinToString(" · "),
@@ -3106,29 +3101,13 @@ fun PlaylistDetailScreen(
                 isActive = isPlayable && activeTrackId == item.trackId?.toString(),
                 showDivider = idx < pl.tracks.lastIndex,
                 playable = isPlayable,
+                contextItem = if (isPlayable) pItem.toContextItem(songRef) else null,
                 trailingActions = if (isPlayable) {
                     {
-                        val songRef = SongRefPayload(
-                            title = item.title,
-                            artist = item.artist,
-                            album = item.album,
-                            durationMs = item.durationMs,
-                            lib2TrackId = item.trackId,
-                        )
-                        val pItem = ActivePlayable(
-                            itemType = "track",
-                            itemId = item.trackId.toString(),
-                            title = item.title,
-                            subtitle = item.artist,
-                            artworkUrl = api.artwork.albumArtwork(item.albumId),
-                            streamUrl = api.streamUrl("track", item.trackId.toString()),
-                        )
                         TrackRowActionIcons(
                             song = songRef,
                             playable = pItem,
                             likedState = likedState,
-                            coordinator = coordinator,
-                            onAddToPlaylist = { playlistPickerSong = it },
                         )
                     }
                 } else {
@@ -3140,13 +3119,6 @@ fun PlaylistDetailScreen(
                 },
             )
         }
-    }
-    if (playlistPickerSong != null) {
-        AddToPlaylistSheet(
-            song = playlistPickerSong!!,
-            api = api,
-            onDismiss = { playlistPickerSong = null },
-        )
     }
 }
 
@@ -3165,7 +3137,6 @@ fun DiscoverPlaylistDetailScreen(
 ) {
     var playlist by remember { mutableStateOf<DiscoverPlaylistDetail?>(null) }
     var isLoading by remember { mutableStateOf(true) }
-    var playlistPickerSong by remember { mutableStateOf<SongRefPayload?>(null) }
     val likedState = rememberLikedTracksState(api)
 
     LaunchedEffect(key, api) {
@@ -3273,6 +3244,21 @@ fun DiscoverPlaylistDetailScreen(
         }
         itemsIndexed(pl.songs) { idx, item ->
             val isPlayable = item.trackId != null
+            val songRef = SongRefPayload(
+                title = item.title,
+                artist = item.artist,
+                album = item.album,
+                durationMs = item.durationMs,
+                lib2TrackId = item.trackId,
+            )
+            val pItem = ActivePlayable(
+                itemType = "track",
+                itemId = item.trackId.toString(),
+                title = item.title,
+                subtitle = item.artist,
+                artworkUrl = api.artwork.albumArtwork(item.albumId),
+                streamUrl = api.streamUrl("track", item.trackId.toString()),
+            )
             MusicTrackRow(
                 title = item.title,
                 subtitle = listOfNotNull(item.artist, item.album).joinToString(" · "),
@@ -3281,27 +3267,13 @@ fun DiscoverPlaylistDetailScreen(
                 isActive = isPlayable && activeTrackId == item.trackId?.toString(),
                 showDivider = idx < pl.songs.lastIndex,
                 playable = isPlayable,
+                contextItem = if (isPlayable) pItem.toContextItem(songRef) else null,
                 trailingActions = if (isPlayable) {
                     {
                         TrackRowActionIcons(
-                            song = SongRefPayload(
-                                title = item.title,
-                                artist = item.artist,
-                                album = item.album,
-                                durationMs = item.durationMs,
-                                lib2TrackId = item.trackId,
-                            ),
-                            playable = ActivePlayable(
-                                itemType = "track",
-                                itemId = item.trackId.toString(),
-                                title = item.title,
-                                subtitle = item.artist,
-                                artworkUrl = api.artwork.albumArtwork(item.albumId),
-                                streamUrl = api.streamUrl("track", item.trackId.toString()),
-                            ),
+                            song = songRef,
+                            playable = pItem,
                             likedState = likedState,
-                            coordinator = coordinator,
-                            onAddToPlaylist = { playlistPickerSong = it },
                         )
                     }
                 } else {
@@ -3313,9 +3285,6 @@ fun DiscoverPlaylistDetailScreen(
                 },
             )
         }
-    }
-    if (playlistPickerSong != null) {
-        AddToPlaylistSheet(song = playlistPickerSong!!, api = api, onDismiss = { playlistPickerSong = null })
     }
 }
 
@@ -3330,20 +3299,27 @@ private fun NothingToDownload(why: String) {
 
 // ── Shared Clean Row (kept for Queue, Watchlist, Podcasts, Audiobooks) ───────
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun SimpleTrackRow(
     title: String,
     subtitle: String,
     artworkUrl: String?,
     trailingBadge: String? = null,
+    // a long press (holding select on a tv) opens its menu
+    contextItem: MediaContextItem? = null,
     onClick: () -> Unit,
 ) {
+    val openContext = LocalMediaContextMenu.current
     // Sleek borderless Plexamp/Spotify row (no boxy white border around track rows)
     Surface(
         modifier = Modifier
             .fillMaxWidth()
             .dpadFocusable(RoundedCornerShape(10.dp))
-            .clickable(onClick = onClick),
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = contextItem?.let { ci -> { openContext(ci) } },
+            ),
         shape = RoundedCornerShape(10.dp),
         color = Color.White.copy(alpha = 0.035f),
     ) {

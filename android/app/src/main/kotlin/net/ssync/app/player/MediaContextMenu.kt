@@ -25,6 +25,8 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.BookmarkAdd
 import androidx.compose.material.icons.filled.BookmarkRemove
 import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.Flag
+import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.SendToMobile
 import androidx.compose.material.icons.filled.PlayArrow
@@ -75,7 +77,61 @@ data class MediaContextItem(
     val songRef: SongRefPayload? = null,
     val owned: Boolean = true,
     val onRequest: (() -> Unit)? = null,
+    // a page's own report flow; null uses the plain report dialog where the type has one
+    val onReport: (() -> Unit)? = null,
+    // the ⋯ on a detail page: play, queue and watchlist already sit in the hero
+    val actionsOnly: Boolean = false,
+    val groupTitle: String = "",
+    val sortIndex: Int = 0,
+    // where a download sits on the Downloads screen when it isn't the usual show or album
+    val groupType: String = "",
+    val groupId: String = "",
 )
+
+private val PLAIN_REPORT_TYPES = setOf("track", "episode", "movie", "audiobook", "podcast_episode", "youtube")
+
+/** builds the menu item for a track row from what the row already has */
+fun ActivePlayable.toContextItem(songRef: SongRefPayload? = null) = MediaContextItem(
+    itemType = itemType,
+    itemId = itemId,
+    title = title,
+    subtitle = subtitle,
+    artworkUrl = artworkUrl,
+    streamUrl = streamUrl,
+    isVideo = isVideo,
+    parentId = parentId,
+    songRef = songRef,
+)
+
+/** the ⋯ on a row or a detail page; opens the same menu as a long press */
+@Composable
+fun MoreActionsButton(
+    item: MediaContextItem,
+    modifier: Modifier = Modifier,
+    size: androidx.compose.ui.unit.Dp = 34.dp,
+    iconSize: androidx.compose.ui.unit.Dp = 18.dp,
+    tint: Color = SoulSyncColors.TextSecondary,
+    outlined: Boolean = false,
+) {
+    val openContext = LocalMediaContextMenu.current
+    androidx.compose.material3.IconButton(
+        onClick = { openContext(item) },
+        modifier = modifier
+            .size(size)
+            .then(
+                if (outlined) Modifier.border(1.dp, SoulSyncColors.Line, androidx.compose.foundation.shape.CircleShape)
+                else Modifier,
+            )
+            .dpadFocusable(androidx.compose.foundation.shape.CircleShape),
+    ) {
+        Icon(
+            imageVector = Icons.Default.MoreHoriz,
+            contentDescription = "More actions",
+            tint = tint,
+            modifier = Modifier.size(iconSize),
+        )
+    }
+}
 
 val LocalMediaContextMenu = staticCompositionLocalOf<(MediaContextItem) -> Unit> { {} }
 
@@ -97,6 +153,8 @@ fun MediaContextMenuSheet(
     var statusBanner by remember { mutableStateOf<String?>(null) }
     var showPlaylistSheet by remember { mutableStateOf(false) }
     var infoSheet by remember { mutableStateOf(false) }
+    var reportOpen by remember { mutableStateOf(false) }
+    val canReport = item.onReport != null || item.itemType in PLAIN_REPORT_TYPES
 
     val kindLabel = when (item.itemType) {
         "movie" -> "Movie"
@@ -116,7 +174,7 @@ fun MediaContextMenuSheet(
     val canDownload = item.owned &&
         item.itemType in setOf("movie", "episode", "track", "youtube", "home", "audiobook", "podcast", "podcast_episode", "show", "season", "album", "artist", "playlist")
 
-    if (!dlSheet && !infoSheet) AdaptiveTvSheet(
+    if (!dlSheet && !infoSheet && !reportOpen) AdaptiveTvSheet(
         onDismissRequest = onDismiss,
         containerColor = Color(0xFF131520),
         contentColor = Color.White,
@@ -183,7 +241,7 @@ fun MediaContextMenuSheet(
             }
 
             // 1. Play Now (owned items only)
-            if (item.owned && (item.onPlayOverride != null || !item.streamUrl.isNullOrBlank() || item.itemType == "album")) {
+            if (!item.actionsOnly && item.owned && (item.onPlayOverride != null || !item.streamUrl.isNullOrBlank() || item.itemType == "album")) {
                 ContextMenuRow(
                     icon = Icons.Default.PlayArrow,
                     label = "Play now",
@@ -238,7 +296,7 @@ fun MediaContextMenuSheet(
             }
 
             // 2. Shuffle Album (owned only)
-            if (item.owned && item.itemType == "album") {
+            if (!item.actionsOnly && item.owned && item.itemType == "album") {
                 ContextMenuRow(
                     icon = Icons.Default.Shuffle,
                     label = "Shuffle album",
@@ -270,7 +328,7 @@ fun MediaContextMenuSheet(
             }
 
             // 3. Add to Queue (owned audio items only)
-            if (item.owned && !item.isVideo && !item.streamUrl.isNullOrBlank()) {
+            if (!item.actionsOnly && item.owned && !item.isVideo && !item.streamUrl.isNullOrBlank()) {
                 ContextMenuRow(
                     icon = Icons.AutoMirrored.Filled.QueueMusic,
                     label = "Add to queue",
@@ -302,7 +360,7 @@ fun MediaContextMenuSheet(
             }
 
             // 5. Watchlist (Movies & Shows)
-            if (item.owned && (item.itemType == "movie" || item.itemType == "show")) {
+            if (!item.actionsOnly && item.owned && (item.itemType == "movie" || item.itemType == "show")) {
                 ContextMenuRow(
                     icon = Icons.Default.BookmarkAdd,
                     label = "Add to Watchlist",
@@ -377,6 +435,23 @@ fun MediaContextMenuSheet(
                 )
             }
 
+            // 9. Report a problem with it
+            if (canReport) {
+                ContextMenuRow(
+                    icon = Icons.Default.Flag,
+                    label = "Report issue",
+                    onClick = {
+                        val own = item.onReport
+                        if (own != null) {
+                            onDismiss()
+                            own()
+                        } else {
+                            reportOpen = true
+                        }
+                    },
+                )
+            }
+
             if (statusBanner != null) {
                 Spacer(modifier = Modifier.height(6.dp))
                 Surface(
@@ -405,13 +480,19 @@ fun MediaContextMenuSheet(
                 title = item.title,
                 subtitle = item.subtitle,
                 artwork = relativeArt(item.artworkUrl),
-                groupType = when (item.itemType) {
-                    "episode" -> if (item.parentId != null) "show" else ""
-                    "track" -> if (item.parentId != null) "album" else ""
-                    else -> ""
+                groupType = item.groupType.ifBlank {
+                    when (item.itemType) {
+                        "episode" -> if (item.parentId != null) "show" else ""
+                        "track" -> if (item.parentId != null) "album" else ""
+                        else -> ""
+                    }
                 },
-                groupId = if (item.itemType == "episode" || item.itemType == "track") item.parentId.orEmpty() else "",
+                groupId = item.groupId.ifBlank {
+                    if (item.itemType == "episode" || item.itemType == "track") item.parentId.orEmpty() else ""
+                },
+                groupTitle = item.groupTitle,
                 parentId = item.parentId,
+                sortIndex = item.sortIndex,
             ),
             sendMode = isTv,
             onDismiss = {
@@ -431,6 +512,20 @@ fun MediaContextMenuSheet(
             fallbackArtwork = item.artworkUrl,
             onDismiss = {
                 infoSheet = false
+                onDismiss()
+            },
+        )
+    }
+
+    if (reportOpen) {
+        ReportIssueDialog(
+            api = api,
+            itemType = item.itemType,
+            itemId = item.itemId,
+            title = item.title,
+            subtitle = item.subtitle,
+            onDismiss = {
+                reportOpen = false
                 onDismiss()
             },
         )
