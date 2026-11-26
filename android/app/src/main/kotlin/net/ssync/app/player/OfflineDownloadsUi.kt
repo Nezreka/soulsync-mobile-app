@@ -479,6 +479,8 @@ fun DownloadSheet(
     target: DownloadTarget,
     sendMode: Boolean,
     onDismiss: () -> Unit,
+    /** open on another of the profile's devices (managing a phone from this one) */
+    initialDeviceId: String? = null,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -490,7 +492,9 @@ fun DownloadSheet(
     val askNotify = rememberNotificationAsk()
 
     var devices by remember { mutableStateOf<List<OfflineDevice>>(emptyList()) }
-    var deviceId by remember { mutableStateOf<String?>(if (sendMode) null else myId) }
+    var deviceId by remember { mutableStateOf<String?>(initialDeviceId ?: if (sendMode) null else myId) }
+    // newest episodes of a podcast to take (the server's default is 5)
+    var podcastCount by remember { mutableStateOf(5) }
     var plan by remember { mutableStateOf<OfflinePlan?>(null) }
     var loadError by remember { mutableStateOf<String?>(null) }
     var quality by remember { mutableStateOf("") }
@@ -504,34 +508,36 @@ fun DownloadSheet(
         else -> null
     }
     val ruleId = if (target.type == "season") target.id.substringBefore(':') else target.id
+    // somewhere other than this phone: it goes as a wish the device picks up next time it's online
+    val remote = deviceId != myId
     val existingRule = remember(rules, devices, deviceId, plan) {
         // the plan says the device's rule when the server knows it; else what this phone last heard
         plan?.rule?.takeIf { it.type == ruleType }
-            ?: (if (sendMode) devices.firstOrNull { it.deviceId == deviceId }?.rules.orEmpty() else rules)
+            ?: (if (remote) devices.firstOrNull { it.deviceId == deviceId }?.rules.orEmpty() else rules)
                 .firstOrNull { it.type == ruleType && it.id == ruleId }
     }
-    var keepOn by remember(existingRule) { mutableStateOf(existingRule?.keepNext != null && existingRule.keepNext!! > 0) }
+    // keep_next 0 is a rule that only deletes watched ones
+    var keepOn by remember(existingRule) { mutableStateOf((existingRule?.keepNext ?: 0) > 0) }
     var keepNext by remember(existingRule) { mutableStateOf(existingRule?.keepNext?.takeIf { it > 0 } ?: if (ruleType == "podcast") 5 else 3) }
     var deleteWatched by remember(existingRule) { mutableStateOf(existingRule?.deleteWatched ?: false) }
     var follow by remember(existingRule) { mutableStateOf(existingRule?.follow ?: false) }
 
-    // the phones of this profile, for the tv's "send to"
-    LaunchedEffect(sendMode) {
-        if (!sendMode) return@LaunchedEffect
+    // the profile's other phones and tablets: a download can go to any of them (a web player keeps its own files)
+    LaunchedEffect(Unit) {
         when (val r = offline.devices()) {
             is MusicApiResult.Success -> {
                 devices = r.data.filter { it.deviceId != myId && it.platform != "web" }
                 if (deviceId == null) deviceId = devices.firstOrNull()?.deviceId
-                if (devices.isEmpty()) loadError = "No phones yet. Open SoulSync on a phone or tablet signed in to this profile, and it shows up here."
+                if (sendMode && devices.isEmpty()) loadError = "No phones yet. Open SoulSync on a phone or tablet signed in to this profile, and it shows up here."
             }
-            is MusicApiResult.Error -> loadError = r.message
+            is MusicApiResult.Error -> if (sendMode) loadError = r.message
             MusicApiResult.DeviceRevoked -> loadError = "This device was signed out."
         }
     }
-    LaunchedEffect(target, deviceId) {
+    LaunchedEffect(target, deviceId, podcastCount) {
         val dev = deviceId ?: return@LaunchedEffect
         plan = null
-        when (val r = offline.plan(target.type, target.id, dev)) {
+        when (val r = offline.plan(target.type, target.id, dev, if (target.type == "podcast") podcastCount else null)) {
             is MusicApiResult.Success -> {
                 plan = r.data
                 loadError = null
@@ -551,7 +557,8 @@ fun DownloadSheet(
 
     val p = plan
     val localKeys = remember(tasks) { tasks.map { it.key }.toSet() }
-    val missing = p?.items.orEmpty().filter { !it.onDevice && (sendMode || it.key !in localKeys) }
+    // not there yet: for another device, also not already waiting on it
+    val missing = p?.items.orEmpty().filter { if (remote) !it.onDevice && it.deviceState == null else it.key !in localKeys }
     val q = p?.qualities?.firstOrNull { it.id == quality }
     fun bytesFor(qid: String): Long {
         val qq = p?.qualities?.firstOrNull { it.id == qid } ?: return 0L
@@ -561,9 +568,9 @@ fun DownloadSheet(
     }
     val need = if (q != null) bytesFor(q.id) else 0L
     val dev = devices.firstOrNull { it.deviceId == deviceId }
-    val used = if (sendMode) dev?.usedBytes ?: 0L else tasks.sumOf { it.diskBytes } + tasks.sumOf { it.remainingBytes }
-    val limit = if (sendMode) (p?.limitBytes?.takeIf { it > 0 } ?: dev?.limitBytes ?: 0L) else settings.limitBytes
-    val free = if (sendMode) (p?.freeBytes?.takeIf { it > 0 } ?: dev?.freeBytes ?: 0L) else OfflineDownloads.freeBytes()
+    val used = if (remote) dev?.usedBytes ?: 0L else tasks.sumOf { it.diskBytes } + tasks.sumOf { it.remainingBytes }
+    val limit = if (remote) (p?.limitBytes?.takeIf { it > 0 } ?: dev?.limitBytes ?: 0L) else settings.limitBytes
+    val free = if (remote) (p?.freeBytes?.takeIf { it > 0 } ?: dev?.freeBytes ?: 0L) else OfflineDownloads.freeBytes()
     val fit = OfflineStorage.check(need, used, limit, free)
     val video = p?.isVideo ?: (target.type in OFFLINE_VIDEO_KINDS || target.type in setOf("season", "show"))
 
@@ -585,7 +592,7 @@ fun DownloadSheet(
                     modifier = Modifier.size(if (video) 46.dp else 56.dp, 56.dp).clip(RoundedCornerShape(10.dp)),
                 )
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text(sheetHeading(target.type, sendMode), color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                    Text(sheetHeading(target.type, remote), color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold)
                     Text(
                         listOfNotNull(p?.title?.ifBlank { null } ?: target.title, (p?.subtitle ?: target.subtitle).ifBlank { null }).joinToString(" · "),
                         color = DlColors.Muted, fontSize = 12.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
@@ -593,7 +600,7 @@ fun DownloadSheet(
                     if (p != null && p.items.size > 1) {
                         val n = p.items.size
                         Text(
-                            "$n ${groupNoun(target.type, n, video)}" + if (missing.size in 1 until n) " · ${missing.size} not downloaded" else if (missing.isEmpty()) " · all on ${if (sendMode) "the phone" else "this phone"}" else "",
+                            "$n ${groupNoun(target.type, n, video)}" + if (missing.size in 1 until n) " · ${missing.size} not downloaded" else if (missing.isEmpty()) " · all on ${if (remote) "the phone" else "this phone"}" else "",
                             color = DlColors.Muted, fontSize = 12.sp,
                         )
                     }
@@ -614,9 +621,28 @@ fun DownloadSheet(
                 return@Column
             }
 
-            // which phone (tv only)
-            if (sendMode && devices.isNotEmpty()) {
-                Text("SEND TO", color = DlColors.Muted, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.8.sp)
+            // where it goes: this phone or another of the profile's devices (a tv only sends)
+            if (devices.isNotEmpty() && p != null || sendMode && devices.isNotEmpty()) {
+                Text(if (sendMode) "SEND TO" else "DOWNLOAD TO", color = DlColors.Muted, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.8.sp)
+                if (!sendMode) {
+                    val on = deviceId == myId
+                    Row(
+                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                            .border(1.dp, if (on) SoulSyncColors.Accent else DlColors.Line, RoundedCornerShape(12.dp))
+                            .background(if (on) SoulSyncColors.Accent.copy(alpha = 0.07f) else Color.Transparent)
+                            .dpadFocusable(RoundedCornerShape(12.dp))
+                            .clickable { deviceId = myId }
+                            .padding(10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Icon(Icons.Default.PhoneAndroid, contentDescription = null, tint = if (on) SoulSyncColors.AccentLight else DlColors.Muted)
+                        Column(Modifier.weight(1f)) {
+                            Text("This phone", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                            Text("${OfflineFormat.bytes(OfflineDownloads.freeBytes())} free", color = DlColors.Muted, fontSize = 12.sp)
+                        }
+                    }
+                }
                 devices.forEach { d ->
                     val on = d.deviceId == deviceId
                     Row(
@@ -686,11 +712,32 @@ fun DownloadSheet(
                     Text("Only the original is offered: smaller copies are turned off for this profile.", color = DlColors.Muted, fontSize = 12.sp)
                 }
 
+                // a podcast: how many of the newest
+                if (target.type == "podcast") {
+                    Text("NEWEST EPISODES", color = DlColors.Muted, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.8.sp)
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        listOf(1, 3, 5, 10, 25).forEach { n ->
+                            val on = n == podcastCount
+                            Box(
+                                Modifier.clip(CircleShape)
+                                    .background(if (on) SoulSyncColors.Accent.copy(alpha = 0.15f) else DlColors.Raise2)
+                                    .dpadFocusable(CircleShape)
+                                    .clickable { podcastCount = n }
+                                    .padding(horizontal = 12.dp, vertical = 5.dp),
+                            ) { Text("$n", color = if (on) SoulSyncColors.AccentLight else DlColors.Muted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold) }
+                        }
+                    }
+                }
+
                 // smart downloads
+                if (ruleType != null) {
+                    Text("SMART DOWNLOAD", color = DlColors.Muted, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.8.sp)
+                }
                 if (ruleType == "show" || ruleType == "podcast") {
                     SheetToggle(
                         if (ruleType == "podcast") "Keep the newest $keepNext episodes ready" else "Keep the next $keepNext unwatched ready",
                         keepOn,
+                        hint = if (ruleType == "podcast") "New episodes download on their own." else "As you watch, the next ones download on their own.",
                     ) { keepOn = it }
                     if (keepOn) {
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(start = 2.dp)) {
@@ -743,12 +790,13 @@ fun DownloadSheet(
                     }
                     val rule = OfflineRule(
                         deviceId = dev, type = ruleType, id = ruleId, quality = quality,
-                        keepNext = if ((ruleType == "show" || ruleType == "podcast") && keepOn) keepNext else null,
+                        // 0 keeps no next ones: the rule only deletes watched
+                        keepNext = if ((ruleType == "show" || ruleType == "podcast") && keepOn) keepNext else 0,
                         deleteWatched = deleteWatched, follow = follow,
                     )
                     return when (val r = offline.saveRule(rule)) {
                         is MusicApiResult.Success -> {
-                            if (!sendMode) OfflineDownloads.setRules(rules.filterNot { it.type == ruleType && it.id == ruleId } + (r.data ?: rule))
+                            if (!remote) OfflineDownloads.setRules(rules.filterNot { it.type == ruleType && it.id == ruleId } + (r.data ?: rule))
                             "Smart downloads on"
                         }
                         is MusicApiResult.Error -> "Smart downloads didn't save: ${r.message}"
@@ -764,13 +812,13 @@ fun DownloadSheet(
                 if (missing.isNotEmpty() && q != null) {
                     val room = fit.roomBytes
                     val line = when {
-                        fit.fits && limit > 0 -> "Fits: ${OfflineFormat.bytes(room)} free under ${if (sendMode) "its" else "your"} ${OfflineFormat.bytes(limit)} limit"
-                        fit.fits -> "Fits: ${OfflineFormat.bytes(room)} free on ${if (sendMode) "the phone" else "this phone"}"
+                        fit.fits && limit > 0 -> "Fits: ${OfflineFormat.bytes(room)} free under ${if (remote) "its" else "your"} ${OfflineFormat.bytes(limit)} limit"
+                        fit.fits -> "Fits: ${OfflineFormat.bytes(room)} free on ${if (remote) "the phone" else "this phone"}"
                         fit.verdict == net.ssync.player.FitVerdict.OVER_LIMIT -> "Needs ${OfflineFormat.bytes(need)}, only ${OfflineFormat.bytes(room)} left under the ${OfflineFormat.bytes(limit)} limit. Pick a smaller quality, free up space or raise the limit."
-                        else -> "Needs ${OfflineFormat.bytes(need)}, only ${OfflineFormat.bytes(room)} free on ${if (sendMode) "the phone" else "this phone"}."
+                        else -> "Needs ${OfflineFormat.bytes(need)}, only ${OfflineFormat.bytes(room)} free on ${if (remote) "the phone" else "this phone"}."
                     }
                     Text(line, color = if (fit.fits) DlColors.Muted else DlColors.Warn, fontSize = 12.5.sp)
-                    if (!sendMode && settings.wifiOnly && !onUnmetered(context)) {
+                    if (!remote && settings.wifiOnly && !onUnmetered(context)) {
                         Text("It waits for Wi-Fi. Turn off Wi-Fi only in Downloads settings to use mobile data.", color = DlColors.Muted, fontSize = 12.sp)
                     }
                 }
@@ -779,17 +827,17 @@ fun DownloadSheet(
                 val noun = groupNoun(target.type, count, video)
                 val primary = when {
                     count == 0 && ruleChanged -> if (ruleWanted) "Save smart downloads" else "Turn off smart downloads"
-                    count == 0 -> if (sendMode) "Already on the phone" else "Already on this phone"
-                    sendMode -> "Send ${if (count > 1) "$count $noun" else "it"}${if (need > 0) " · ${OfflineFormat.bytes(need)}" else ""}"
+                    count == 0 -> if (remote) "Already on the phone" else "Already on this phone"
+                    remote -> "Send ${if (count > 1) "$count $noun" else "it"}${if (need > 0) " · ${OfflineFormat.bytes(need)}" else ""}"
                     count == 1 && p.items.size == 1 -> "Download${if (need > 0) " · ${OfflineFormat.bytes(need)}" else ""}"
                     else -> "Download $count $noun${if (need > 0) " · ${OfflineFormat.bytes(need)}" else ""}"
                 }
-                SheetButton(primary, primary = true, enabled = !busy && (count > 0 || ruleChanged) && (sendMode || count == 0 || fit.fits)) {
+                SheetButton(primary, primary = true, enabled = !busy && (count > 0 || ruleChanged) && (remote || count == 0 || fit.fits)) {
                     busy = true
                     scope.launch {
                         val dev = deviceId ?: myId
                         val ruleNote = saveRule(dev)
-                        if (sendMode) {
+                        if (remote) {
                             val r = if (count > 0) offline.wish(dev, "add", target.type, target.id, quality) else MusicApiResult.Success(Unit)
                             doneMessage = when (r) {
                                 is MusicApiResult.Success -> {
@@ -861,7 +909,7 @@ fun DownloadSheet(
                 }
 
                 // already here: offer to take it off
-                if (!sendMode) {
+                if (!remote) {
                     val here = p.items.filter { it.key in localKeys }
                     if (here.isNotEmpty()) {
                         SheetButton(
@@ -887,13 +935,16 @@ private fun onUnmetered(context: Context): Boolean {
 }
 
 @Composable
-internal fun SheetToggle(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+internal fun SheetToggle(label: String, checked: Boolean, hint: String? = null, onChange: (Boolean) -> Unit) {
     Row(
         modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).dpadFocusable(RoundedCornerShape(10.dp))
             .clickable { onChange(!checked) }.padding(horizontal = 2.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(label, color = Color.White, fontSize = 13.5.sp, modifier = Modifier.weight(1f))
+        Column(Modifier.weight(1f)) {
+            Text(label, color = Color.White, fontSize = 13.5.sp)
+            if (hint != null) Text(hint, color = DlColors.Muted, fontSize = 11.5.sp)
+        }
         Switch(
             checked = checked,
             onCheckedChange = onChange,

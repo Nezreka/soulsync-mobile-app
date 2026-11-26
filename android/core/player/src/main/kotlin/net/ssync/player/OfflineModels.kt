@@ -78,6 +78,8 @@ data class OfflinePlanItem(
     @SerialName("size_bytes") @Serializable(with = FlexLongSerializer::class) val sizeBytes: Long = 0L,
     val source: OfflineSource? = null,
     @SerialName("on_device") val onDevice: Boolean = false,
+    /** the asked-about device's state for it (queued, downloading...), null when it has none */
+    @SerialName("device_state") val deviceState: String? = null,
     val watched: Boolean = false,
     @SerialName("position_s") @Serializable(with = FlexDoubleSerializer::class) val positionS: Double = 0.0,
 ) {
@@ -283,6 +285,23 @@ data class OfflineWish(
 
 @Serializable
 data class OfflineDevices(val devices: List<OfflineDevice> = emptyList())
+
+/** the admin's download settings (GET/PUT /api/player/offline/settings) */
+@Serializable
+data class OfflineAdminSettings(
+    @SerialName("allow_conversion_for_members") val allowConversionForMembers: Boolean = true,
+    @SerialName("max_conversions") @Serializable(with = LenientIntSerializer::class) val maxConversions: Int? = 1,
+    @SerialName("cache_gb") @Serializable(with = LenientIntSerializer::class) val cacheGb: Int? = 50,
+)
+
+@Serializable
+data class OfflineSettingsInfo(
+    val settings: OfflineAdminSettings = OfflineAdminSettings(),
+    @SerialName("is_admin") val isAdmin: Boolean = false,
+    @SerialName("allow_downloads") val allowDownloads: Boolean = true,
+    @SerialName("can_convert") val canConvert: Boolean = true,
+    @SerialName("cache_used_bytes") @Serializable(with = FlexLongSerializer::class) val cacheUsedBytes: Long = 0L,
+)
 
 /** a play, position or watched mark made offline (route 9) */
 @Serializable

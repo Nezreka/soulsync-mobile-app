@@ -74,6 +74,8 @@ import net.ssync.player.DownloadTask
 import net.ssync.player.MusicApiResult
 import net.ssync.player.OfflineApiClient
 import net.ssync.player.OfflineDevice
+import net.ssync.player.OfflineDeviceItem
+import net.ssync.player.OfflineRule
 import net.ssync.player.OfflineFormat
 import net.ssync.player.OfflineGroup
 import net.ssync.player.OfflineGrouping
@@ -160,6 +162,20 @@ fun DownloadsScreen(
     var tick by remember { mutableIntStateOf(0) }
     LaunchedEffect(tasks.size) { tick++ }
 
+    // the profile's other phones and tablets, managed from here like the web player does
+    val offlineApi = remember(api) { OfflineApiClient(api.baseUrl, api.pinnedAuthenticatedClient) }
+    val myId = remember(context) { OfflineDownloads.deviceId(context) }
+    var others by remember { mutableStateOf<List<OfflineDevice>>(emptyList()) }
+    var shown by remember { mutableStateOf<String?>(null) }
+    var devicesTick by remember { mutableIntStateOf(0) }
+    LaunchedEffect(online, devicesTick) {
+        if (!online) return@LaunchedEffect
+        (offlineApi.devices() as? MusicApiResult.Success)?.data?.let { list ->
+            others = list.filter { it.deviceId != myId && it.platform != "web" }
+        }
+    }
+    val remoteDev = others.firstOrNull { it.deviceId == shown }?.takeIf { online && !offlineMode }
+
     val free = remember(tick, tasks) { OfflineDownloads.freeBytes() }
     val used = tasks.sumOf { it.diskBytes }
     val byShelf = OfflineStorage.bytesByShelf(tasks)
@@ -179,6 +195,31 @@ fun DownloadsScreen(
                 Text("Downloads", color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-0.4).sp, modifier = Modifier.weight(1f))
                 CircleIcon(Icons.Default.Settings, "Download settings") { showSettings = true }
             }
+        }
+        if (others.isNotEmpty() && online && !offlineMode) {
+            item {
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    item {
+                        DeviceChip("This phone", "${OfflineFormat.bytes(used)}${if (settings.limitBytes > 0) " of ${OfflineFormat.bytes(settings.limitBytes)}" else ""}", shown == null) { shown = null }
+                    }
+                    items(others, key = { it.deviceId }) { d ->
+                        DeviceChip(
+                            d.deviceName.ifBlank { "Phone" },
+                            listOfNotNull(
+                                if (d.limitBytes > 0) "${OfflineFormat.bytes(d.usedBytes)} of ${OfflineFormat.bytes(d.limitBytes)}" else OfflineFormat.bytes(d.usedBytes),
+                                d.lastSeen?.let { "seen ${seenAgo(it)}" },
+                            ).joinToString(" · "),
+                            shown == d.deviceId,
+                        ) { shown = d.deviceId; devicesTick++ }
+                    }
+                }
+            }
+        }
+        if (remoteDev != null) {
+            item(key = "remote-" + remoteDev.deviceId) {
+                RemoteDeviceCard(api, offlineApi, remoteDev, onChanged = { devicesTick++ })
+            }
+            return@LazyColumn
         }
         if (offlineMode || !online) {
             item {
@@ -333,7 +374,7 @@ fun DownloadsScreen(
         }
     }
 
-    if (showSettings) DownloadSettingsSheet(onDismiss = { showSettings = false })
+    if (showSettings) DownloadSettingsSheet(api, onDismiss = { showSettings = false })
     menuTask?.let { t ->
         DownloadItemMenu(api = api, task = t, onDismiss = { menuTask = null }, onPlay = { playDownloaded(coordinator, api, t) })
     }
@@ -365,6 +406,26 @@ fun DownloadsScreen(
             },
             dismissButton = { TextButton(onClick = { freeUp = null }) { Text("Keep", color = Color.White) } },
         )
+    }
+}
+
+@Composable
+private fun DeviceChip(name: String, sub: String, on: Boolean, onClick: () -> Unit) {
+    Row(
+        Modifier.clip(RoundedCornerShape(14.dp))
+            .border(1.dp, if (on) SoulSyncColors.Accent else DlColors.Line2, RoundedCornerShape(14.dp))
+            .background(if (on) SoulSyncColors.Accent.copy(alpha = 0.08f) else DlColors.Raise)
+            .dpadFocusable(RoundedCornerShape(14.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Icon(Icons.Default.PhoneAndroid, contentDescription = null, tint = if (on) SoulSyncColors.AccentLight else DlColors.Muted, modifier = Modifier.size(18.dp))
+        Column {
+            Text(name, color = Color.White, fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+            Text(sub, color = DlColors.Muted, fontSize = 11.5.sp, maxLines = 1)
+        }
     }
 }
 
@@ -506,11 +567,13 @@ private fun GroupCard(
 }
 
 /** one group's downloads: play any, remove any, remove all, smart settings */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun GroupSheet(api: PlayerApiClient, coordinator: PlaybackCoordinator, group: OfflineGroup, ruleText: String?, onDismiss: () -> Unit) {
     var menuTask by remember { mutableStateOf<DownloadTask?>(null) }
     var smart by remember { mutableStateOf(false) }
     var confirmAll by remember { mutableStateOf(false) }
+    var addRest by remember { mutableStateOf(false) }
     val canSmart = group.groupType in setOf("show", "playlist", "podcast")
     AdaptiveTvSheet(onDismissRequest = onDismiss, containerColor = DlColors.Raise, panelWidth = 480.dp) {
         Column(
@@ -529,11 +592,14 @@ private fun GroupSheet(api: PlayerApiClient, coordinator: PlaybackCoordinator, g
                     if (ruleText != null) DlTag(ruleText, DlColors.Smart, DlColors.SmartBg)
                 }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 PillButton("Play", Icons.Default.PlayArrow) {
                     val firstUnwatched = group.tasks.firstOrNull { !it.watched } ?: group.tasks.first()
                     onDismiss()
                     playDownloaded(coordinator, api, firstUnwatched, group.tasks)
+                }
+                if (group.groupType in setOf("show", "album", "artist", "playlist", "podcast", "audiobook")) {
+                    PillButton("Add the rest", Icons.Default.Download) { addRest = true }
                 }
                 if (canSmart) PillButton("Smart settings", Icons.Default.AutoAwesome) { smart = true }
                 PillButton("Remove all", Icons.Default.DeleteOutline) { confirmAll = true }
@@ -558,6 +624,15 @@ private fun GroupSheet(api: PlayerApiClient, coordinator: PlaybackCoordinator, g
         }
     }
     menuTask?.let { t -> DownloadItemMenu(api = api, task = t, onDismiss = { menuTask = null }, onPlay = { playDownloaded(coordinator, api, t, group.tasks) }) }
+    if (addRest) {
+        val first = group.tasks.first()
+        DownloadSheet(
+            api = api,
+            target = DownloadTarget(type = group.groupType, id = group.groupId, title = group.title, artwork = first.groupArtwork ?: first.artwork, groupTitle = group.title),
+            sendMode = false,
+            onDismiss = { addRest = false },
+        )
+    }
     if (smart) {
         val first = group.tasks.first()
         DownloadSheet(
@@ -601,8 +676,31 @@ private val LIMITS_GB = listOf(0L, 5L, 10L, 25L, 50L, 100L, 200L)
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun DownloadSettingsSheet(onDismiss: () -> Unit) {
+private fun DownloadSettingsSheet(api: PlayerApiClient, onDismiss: () -> Unit) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val offlineApi = remember(api) { OfflineApiClient(api.baseUrl, api.pinnedAuthenticatedClient) }
+    var server by remember { mutableStateOf<net.ssync.player.OfflineSettingsInfo?>(null) }
+    var adminNote by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(api) { (offlineApi.settings() as? MusicApiResult.Success)?.let { server = it.data } }
+    fun saveAdmin(allow: Boolean? = null, max: Int? = null, cache: Int? = null) {
+        val before = server ?: return
+        // shown at once, put back if the server says no
+        server = before.copy(
+            settings = before.settings.copy(
+                allowConversionForMembers = allow ?: before.settings.allowConversionForMembers,
+                maxConversions = max ?: before.settings.maxConversions,
+                cacheGb = cache ?: before.settings.cacheGb,
+            ),
+        )
+        scope.launch {
+            when (val r = offlineApi.saveSettings(allow, max, cache)) {
+                is MusicApiResult.Success -> { server = server?.copy(settings = r.data); adminNote = null }
+                is MusicApiResult.Error -> { server = before; adminNote = r.message }
+                MusicApiResult.DeviceRevoked -> server = before
+            }
+        }
+    }
     val settings by OfflineDownloads.settings.collectAsState()
     val tasks by OfflineDownloads.tasks.collectAsState()
     var confirmAll by remember { mutableStateOf(false) }
@@ -643,6 +741,41 @@ private fun DownloadSettingsSheet(onDismiss: () -> Unit) {
             }
             Text("Picked once, used for songs you download from a track list. Films and shows always show the sizes first.", color = DlColors.Muted, fontSize = 12.sp)
 
+            server?.takeIf { !it.allowDownloads }?.let {
+                Text("Downloads are turned off for this profile. An admin can turn them on.", color = DlColors.Warn, fontSize = 12.5.sp)
+            }
+            server?.takeIf { !it.canConvert && it.allowDownloads }?.let {
+                Text("This profile downloads originals only: smaller copies are off for members.", color = DlColors.Muted, fontSize = 12.sp)
+            }
+
+            // the admin's server-wide settings, as on the web player's settings page
+            server?.takeIf { it.isAdmin }?.let { info ->
+                Spacer(Modifier.height(4.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    SectionLabel("For everyone on this server", Modifier.weight(1f))
+                    DlTag("ADMIN")
+                }
+                SheetToggle(
+                    "Members may ask for smaller copies",
+                    info.settings.allowConversionForMembers,
+                    hint = "Off: members download originals only. Admins always can.",
+                ) { saveAdmin(allow = it) }
+                Text("Copies made at once", color = Color.White, fontSize = 13.5.sp)
+                Text("Each one keeps a CPU core or the GPU busy.", color = DlColors.Muted, fontSize = 11.5.sp)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf(1, 2, 3, 4, 6, 8).forEach { n -> FilterChipPill("$n", info.settings.maxConversions == n) { saveAdmin(max = n) } }
+                }
+                Text("Room for smaller copies", color = Color.White, fontSize = 13.5.sp)
+                Text(
+                    "${OfflineFormat.bytes(info.cacheUsedBytes)} in use. When it's full, the copies used longest ago go first.",
+                    color = DlColors.Muted, fontSize = 11.5.sp,
+                )
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf(10, 25, 50, 100, 250, 500).forEach { n -> FilterChipPill("$n GB", info.settings.cacheGb == n) { saveAdmin(cache = n) } }
+                }
+                adminNote?.let { Text(it, color = DlColors.Bad, fontSize = 12.sp) }
+            }
+
             if (tasks.isNotEmpty()) SheetButton("Remove all downloads", primary = false, danger = true) { confirmAll = true }
             Spacer(Modifier.height(6.dp))
         }
@@ -665,11 +798,9 @@ private fun DownloadSettingsSheet(onDismiss: () -> Unit) {
 @Composable
 private fun TvDeviceDownloads(api: PlayerApiClient) {
     val offline = remember(api) { OfflineApiClient(api.baseUrl, api.pinnedAuthenticatedClient) }
-    val scope = rememberCoroutineScope()
     var devices by remember { mutableStateOf<List<OfflineDevice>?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var refresh by remember { mutableIntStateOf(0) }
-    var note by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(refresh) {
         when (val r = offline.devices()) {
             is MusicApiResult.Success -> { devices = r.data.filter { it.platform != "web" }; error = null }
@@ -689,7 +820,6 @@ private fun TvDeviceDownloads(api: PlayerApiClient) {
                     "Your phones and tablets keep the downloads. Send a movie or a season to one from its page, and manage what's on each here.",
                     color = DlColors.Muted, fontSize = 13.sp,
                 )
-                note?.let { Text(it, color = SoulSyncColors.AccentLight, fontSize = 13.sp) }
             }
         }
         val list = devices
@@ -700,66 +830,126 @@ private fun TvDeviceDownloads(api: PlayerApiClient) {
                 Text("No phones yet. Open SoulSync on a phone or tablet signed in to this profile.", color = DlColors.Muted, fontSize = 14.sp)
             }
             else -> items(list, key = { it.deviceId }) { d ->
-                Column(
-                    Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(DlColors.Raise).border(1.dp, DlColors.Line, RoundedCornerShape(16.dp)).padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Icon(Icons.Default.PhoneAndroid, contentDescription = null, tint = SoulSyncColors.AccentLight)
-                        Column(Modifier.weight(1f)) {
-                            Text(d.deviceName.ifBlank { "Phone" }, color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold)
-                            Text(
-                                listOfNotNull(
-                                    if (d.limitBytes > 0) "${OfflineFormat.bytes(d.usedBytes)} of ${OfflineFormat.bytes(d.limitBytes)}" else "${OfflineFormat.bytes(d.usedBytes)} used",
-                                    "${OfflineFormat.bytes(d.freeBytes)} free",
-                                    d.lastSeen?.let { "seen ${seenAgo(it)}" },
-                                ).joinToString(" · "),
-                                color = DlColors.Muted, fontSize = 12.5.sp,
-                            )
-                        }
+                RemoteDeviceCard(api, offline, d, onChanged = { refresh++ })
+            }
+        }
+    }
+}
+
+/**
+ * another device of the profile, managed from here like the web player does:
+ * its storage, what it's waiting for (cancel), its shows, albums and
+ * playlists with add the rest, smart settings and remove all, and each item.
+ * changes go as wishes the device picks up the next time it's online
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+internal fun RemoteDeviceCard(api: PlayerApiClient, offline: OfflineApiClient, d: OfflineDevice, onChanged: () -> Unit) {
+    val scope = rememberCoroutineScope()
+    var note by remember { mutableStateOf<String?>(null) }
+    var sheetFor by remember { mutableStateOf<DownloadTarget?>(null) }
+    val name = d.deviceName.ifBlank { "the phone" }
+    fun wishRemove(type: String, id: String, quality: String = "original") {
+        scope.launch {
+            val r = offline.wish(d.deviceId, "remove", type, id, quality)
+            note = if (r is MusicApiResult.Success) "Done. $name changes the next time it's online." else "Didn't change: ${(r as? MusicApiResult.Error)?.message.orEmpty()}"
+            onChanged()
+        }
+    }
+    Column(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(DlColors.Raise).border(1.dp, DlColors.Line, RoundedCornerShape(16.dp)).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Icon(Icons.Default.PhoneAndroid, contentDescription = null, tint = SoulSyncColors.AccentLight)
+            Column(Modifier.weight(1f)) {
+                Text(d.deviceName.ifBlank { "Phone" }, color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                Text(
+                    listOfNotNull(
+                        if (d.limitBytes > 0) "${OfflineFormat.bytes(d.usedBytes)} of ${OfflineFormat.bytes(d.limitBytes)}" else "${OfflineFormat.bytes(d.usedBytes)} used",
+                        "${OfflineFormat.bytes(d.freeBytes)} free",
+                        if (d.wifiOnly) "Wi-Fi only" else null,
+                        d.lastSeen?.let { "seen ${seenAgo(it)}" },
+                    ).joinToString(" · "),
+                    color = DlColors.Muted, fontSize = 12.5.sp,
+                )
+            }
+        }
+        val scale = if (d.limitBytes > 0) d.limitBytes else (d.usedBytes + d.freeBytes).coerceAtLeast(1L)
+        Box(Modifier.fillMaxWidth().height(6.dp).clip(CircleShape).background(DlColors.Raise2)) {
+            Box(Modifier.fillMaxHeight().fillMaxWidth((d.usedBytes.toFloat() / scale).coerceIn(0f, 1f)).background(SoulSyncColors.Accent))
+        }
+        note?.let { Text(it, color = SoulSyncColors.AccentLight, fontSize = 12.5.sp) }
+
+        val waiting = d.wishes.filter { it.action == "add" }
+        if (waiting.isNotEmpty()) {
+            SectionLabel("Waiting for $name")
+            waiting.forEach { w ->
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    SoulSyncArtwork(url = api.artwork.resolve(w.artwork), contentDescription = w.title, modifier = Modifier.size(40.dp).clip(RoundedCornerShape(8.dp)))
+                    Column(Modifier.weight(1f)) {
+                        Text(w.title ?: w.id, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(listOfNotNull(w.subtitle?.ifBlank { null }, OfflineFormat.qualityTag(w.quality), "next time it's online").joinToString(" · "), color = DlColors.Muted, fontSize = 12.sp, maxLines = 1)
                     }
-                    if (d.limitBytes > 0) {
-                        Box(Modifier.fillMaxWidth().height(6.dp).clip(CircleShape).background(DlColors.Raise2)) {
-                            Box(Modifier.fillMaxHeight().fillMaxWidth((d.usedBytes.toFloat() / d.limitBytes).coerceIn(0f, 1f)).background(SoulSyncColors.Accent))
-                        }
+                    PillButton("Cancel") { wishRemove(w.type, w.id, w.quality) }
+                }
+            }
+        }
+
+        if (d.items.isEmpty() && waiting.isEmpty()) Text("Nothing on it yet.", color = DlColors.Muted, fontSize = 13.sp)
+        remoteGroups(d.items).forEach { g ->
+            val rule = ruleFor(g.type, g.id, d.rules)
+            val single = g.items.size == 1 && g.type in setOf("movie", "youtube", g.items.first().itemType)
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(top = 6.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    SoulSyncArtwork(url = api.artwork.resolve(g.artwork), contentDescription = g.title, modifier = Modifier.width(40.dp).height(56.dp).clip(RoundedCornerShape(8.dp)))
+                    Column(Modifier.weight(1f)) {
+                        Text(g.title, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text("${g.items.size} on $name · ${OfflineFormat.bytes(g.items.sumOf { it.sizeBytes })}", color = DlColors.Muted, fontSize = 12.sp)
+                        rule?.let { DlTag(ruleTag(it), DlColors.Smart, DlColors.SmartBg) }
                     }
-                    val waitingAdds = d.wishes.filter { it.action == "add" }
-                    if (waitingAdds.isNotEmpty()) {
-                        Text(
-                            "Sent, waiting for it to come online: " + waitingAdds.joinToString(", ") { it.title ?: it.id },
-                            color = DlColors.Smart, fontSize = 12.5.sp, maxLines = 2, overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                    if (d.items.isEmpty() && waitingAdds.isEmpty()) Text("Nothing on it yet.", color = DlColors.Muted, fontSize = 13.sp)
-                    d.items.take(40).forEach { item ->
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Column(Modifier.weight(1f)) {
-                                Text(item.title ?: item.itemId, color = Color.White, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text(
-                                    listOfNotNull(
-                                        item.groupRef()?.title?.takeIf { it.isNotBlank() },
-                                        OfflineFormat.qualityTag(item.quality),
-                                        OfflineFormat.bytes(item.sizeBytes).takeIf { item.sizeBytes > 0 },
-                                        when (item.state) {
-                                            "downloaded" -> null
-                                            "downloading" -> "downloading ${(item.progress * 100).toInt()}%"
-                                            else -> item.state
-                                        },
-                                    ).joinToString(" · "),
-                                    color = DlColors.Muted, fontSize = 12.sp,
+                }
+                if (!single) {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        PillButton("Add the rest") { sheetFor = DownloadTarget(type = g.type, id = g.id, title = g.title, artwork = g.artwork, groupTitle = g.title) }
+                        if (g.type in setOf("season", "show", "playlist", "podcast")) {
+                            PillButton("Smart settings") {
+                                sheetFor = DownloadTarget(
+                                    type = if (g.type == "season") "show" else g.type,
+                                    id = if (g.type == "season") g.id.substringBefore(':') else g.id,
+                                    title = g.title, artwork = g.artwork, groupTitle = g.title,
                                 )
                             }
-                            PillButton("Remove", Icons.Default.DeleteOutline) {
-                                scope.launch {
-                                    val r = offline.wish(d.deviceId, "remove", item.itemType, item.itemId, item.quality)
-                                    note = if (r is MusicApiResult.Success) "Removed from ${d.deviceName.ifBlank { "the phone" }} the next time it's online." else "Didn't remove: ${(r as? MusicApiResult.Error)?.message.orEmpty()}"
-                                    refresh++
-                                }
-                            }
                         }
+                        PillButton("Remove all") { wishRemove(g.type, g.id) }
+                    }
+                }
+                g.items.forEach { item ->
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.padding(start = if (single) 0.dp else 12.dp)) {
+                        Column(Modifier.weight(1f)) {
+                            Text(item.title ?: item.itemId, color = if (item.watched) DlColors.Muted else Color.White, fontSize = 13.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(
+                                listOfNotNull(
+                                    OfflineFormat.qualityTag(item.quality),
+                                    OfflineFormat.bytes(item.sizeBytes).takeIf { item.sizeBytes > 0 },
+                                    when (item.state) {
+                                        "downloaded" -> if (item.watched) "watched" else "on the phone"
+                                        "downloading" -> "downloading ${(item.progress * 100).toInt()}%"
+                                        "queued" -> "waiting"
+                                        else -> item.state
+                                    },
+                                ).joinToString(" · "),
+                                color = if (item.state == "downloaded" && !item.watched) DlColors.Done else DlColors.Muted, fontSize = 12.sp,
+                            )
+                        }
+                        PillButton(if (item.state == "downloaded") "Remove" else "Cancel") { wishRemove(item.itemType, item.itemId, item.quality) }
                     }
                 }
             }
         }
+        Text("Changes reach $name the next time it's online.", color = DlColors.Muted, fontSize = 12.sp)
+    }
+    sheetFor?.let { t ->
+        DownloadSheet(api = api, target = t, sendMode = LocalIsTv.current, initialDeviceId = d.deviceId, onDismiss = { sheetFor = null; onChanged() })
     }
 }

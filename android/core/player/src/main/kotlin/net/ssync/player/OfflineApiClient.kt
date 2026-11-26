@@ -34,11 +34,13 @@ class OfflineApiClient(
 
     fun fileUrl(prepareId: String): String = "$root/file/$prepareId"
 
-    suspend fun plan(type: String, id: String, deviceId: String?): MusicApiResult<OfflinePlan> {
+    /** [count]: a podcast's newest episodes (server default 5, at most 50) */
+    suspend fun plan(type: String, id: String, deviceId: String?, count: Int? = null): MusicApiResult<OfflinePlan> {
         val b = "$root/plan".toHttpUrl().newBuilder()
             .addQueryParameter("type", type)
             .addQueryParameter("id", id)
         if (!deviceId.isNullOrBlank()) b.addQueryParameter("device", deviceId)
+        if (count != null) b.addQueryParameter("count", count.toString())
         return get(b.build().toString()) { json.decodeFromString(OfflinePlan.serializer(), it) }
     }
 
@@ -100,7 +102,8 @@ class OfflineApiClient(
             put("type", rule.type)
             put("id", rule.id)
             put("quality", rule.quality)
-            rule.keepNext?.let { put("keep_next", it) }
+            // always sent: the server reads a missing keep_next as 3. 0 = delete watched only
+            put("keep_next", rule.keepNext ?: 0)
             put("delete_watched", rule.deleteWatched)
             put("follow", rule.follow)
         }) { body ->
@@ -121,6 +124,28 @@ class OfflineApiClient(
             put("events", json.encodeToJsonElement(kotlinx.serialization.builtins.ListSerializer(OfflineSyncEvent.serializer()), events) as JsonArray)
         }
         return postRaw("$root/sync", body.toString()) { }
+    }
+
+    suspend fun settings(): MusicApiResult<OfflineSettingsInfo> =
+        get("$root/settings") { json.decodeFromString(OfflineSettingsInfo.serializer(), it) }
+
+    /** admin only; send just the keys that change */
+    suspend fun saveSettings(
+        allowConversionForMembers: Boolean? = null,
+        maxConversions: Int? = null,
+        cacheGb: Int? = null,
+    ): MusicApiResult<OfflineAdminSettings> {
+        val body = buildJsonObject {
+            allowConversionForMembers?.let { put("allow_conversion_for_members", it) }
+            maxConversions?.let { put("max_conversions", it) }
+            cacheGb?.let { put("cache_gb", it) }
+        }
+        return withContext(Dispatchers.IO) {
+            execute(Request.Builder().url("$root/settings").put(body.toString().toRequestBody(JSON_TYPE)).build()) {
+                val o = json.parseToJsonElement(it).jsonObject
+                json.decodeFromJsonElement(OfflineAdminSettings.serializer(), o["settings"] ?: o)
+            }
+        }
     }
 
     /** true when the server answers at all (any status): the phone is online */

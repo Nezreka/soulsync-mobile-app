@@ -62,11 +62,42 @@ class OfflineTextTest {
     fun smartTagsComeFromThisPhonesRules() {
         val group = OfflineGrouping.groups(listOf(ep("5", 2005), ep("6", 2006))).single()
         assertNull(smartTag(group, emptyList()))
-        assertEquals("Smart · next 3 unwatched", smartTag(group, listOf(OfflineRule(type = "show", id = "12", keepNext = 3))))
-        assertEquals("Smart · deletes watched", smartTag(group, listOf(OfflineRule(type = "show", id = "12", deleteWatched = true))))
+        assertEquals("Smart · next 3 unwatched · 720p", smartTag(group, listOf(OfflineRule(type = "show", id = "12", keepNext = 3, quality = "phone"))))
+        // keep_next 0: a rule that only deletes watched ones
+        assertEquals("Smart · deletes watched · Original", smartTag(group, listOf(OfflineRule(type = "show", id = "12", keepNext = 0, deleteWatched = true))))
+        assertEquals(
+            "Smart · next 3 unwatched · deletes watched · 720p",
+            ruleTag(OfflineRule(type = "show", id = "12", keepNext = 3, deleteWatched = true, quality = "phone")),
+        )
         val list = DownloadTask(key = "track:1", itemType = "track", itemId = "1", title = "t", groupType = "playlist", groupId = "user:4", state = TaskState.DOWNLOADED)
         val pl = OfflineGrouping.groups(listOf(list)).single()
-        assertEquals("Smart · stays in step", smartTag(pl, listOf(OfflineRule(type = "playlist", id = "user:4", follow = true))))
+        assertEquals("Smart · stays in step · 256 kbps", smartTag(pl, listOf(OfflineRule(type = "playlist", id = "user:4", follow = true, quality = "256"))))
+        assertEquals("Smart · newest 5 · deletes played · Original", ruleTag(OfflineRule(type = "podcast", id = "7", keepNext = 5, deleteWatched = true)))
+    }
+
+    @Test
+    fun remoteDevicesFoldIntoTheServersGroups() {
+        fun season(n: String) = kotlinx.serialization.json.buildJsonObject {
+            put("type", kotlinx.serialization.json.JsonPrimitive("season"))
+            put("id", kotlinx.serialization.json.JsonPrimitive("12:$n"))
+            put("title", kotlinx.serialization.json.JsonPrimitive("Avatar"))
+        }
+        val items = listOf(
+            net.ssync.player.OfflineDeviceItem("episode", "1", title = "S2 E1", group = season("2")),
+            net.ssync.player.OfflineDeviceItem("episode", "2", title = "S2 E2", group = season("2")),
+            net.ssync.player.OfflineDeviceItem("movie", "9", title = "2:22"),
+        )
+        val groups = remoteGroups(items)
+        assertEquals(2, groups.size)
+        val s2 = groups.first { it.type == "season" }
+        assertEquals("12:2", s2.id)
+        assertEquals("Avatar", s2.title)
+        assertEquals(2, s2.items.size)
+        assertEquals("2:22", groups.first { it.type == "movie" }.title)
+        // a season's smart rule is its show's
+        val rules = listOf(OfflineRule(ruleId = "4", type = "show", id = "12", keepNext = 3))
+        assertEquals("4", ruleFor("season", "12:2", rules)?.ruleId)
+        assertNull(ruleFor("playlist", "12", rules))
     }
 
     @Test

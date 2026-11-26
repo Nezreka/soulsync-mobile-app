@@ -2,6 +2,7 @@ package net.ssync.app.player
 
 import net.ssync.player.DownloadTask
 import net.ssync.player.OfflineFormat
+import net.ssync.player.OfflineDeviceItem
 import net.ssync.player.OfflineGroup
 import net.ssync.player.OfflineRule
 import net.ssync.player.TaskState
@@ -67,13 +68,48 @@ internal fun seenAgo(iso: String): String {
 internal fun smartTag(g: OfflineGroup, rules: List<OfflineRule>): String? {
     val type = when (g.groupType) { "season" -> "show"; else -> g.groupType }
     val r = rules.firstOrNull { it.type == type && it.id == g.groupId } ?: return null
-    return when {
-        r.type == "playlist" && r.follow -> "Smart · stays in step"
-        r.type == "podcast" && (r.keepNext ?: 0) > 0 -> "Smart · newest ${r.keepNext}"
-        (r.keepNext ?: 0) > 0 -> "Smart · next ${r.keepNext} unwatched"
-        r.deleteWatched -> "Smart · deletes watched"
-        else -> "Smart"
-    }
+    return ruleTag(r)
+}
+
+/** "Smart · next 3 unwatched · deletes watched · 720p", like the web player says it */
+internal fun ruleTag(r: OfflineRule): String {
+    val keep = r.keepNext ?: 0
+    val parts = listOfNotNull(
+        "Smart",
+        when {
+            r.type == "playlist" && r.follow -> "stays in step"
+            r.type == "podcast" && keep > 0 -> "newest $keep"
+            r.type != "playlist" && keep > 0 -> "next $keep unwatched"
+            else -> null
+        },
+        if (r.deleteWatched && r.type != "playlist") (if (r.type == "podcast") "deletes played" else "deletes watched") else null,
+        OfflineFormat.qualityTag(r.quality),
+    )
+    return parts.joinToString(" · ")
+}
+
+/** one remote device's group of items: a show (season), an album, a playlist, a movie */
+internal data class RemoteGroup(val type: String, val id: String, val title: String, val artwork: String?, val items: List<OfflineDeviceItem>)
+
+/** a device's items folded by the group the server says they belong to */
+internal fun remoteGroups(items: List<OfflineDeviceItem>): List<RemoteGroup> =
+    items.groupBy { it.groupRef()?.let { g -> "${g.type}|${g.id}" } ?: "${it.itemType}|${it.itemId}" }
+        .map { (k, list) ->
+            val g = list.first().groupRef()
+            RemoteGroup(
+                type = g?.type ?: k.substringBefore('|'),
+                id = g?.id ?: k.substringAfter('|'),
+                title = g?.title?.takeIf { it.isNotBlank() } ?: list.first().title ?: k.substringAfter('|'),
+                artwork = g?.artwork ?: list.first().artwork,
+                items = list,
+            )
+        }
+
+/** the rule (if any) behind a remote group: a season's rule is its show's */
+internal fun ruleFor(type: String, id: String, rules: List<OfflineRule>): OfflineRule? {
+    val rt = if (type == "season") "show" else type
+    val rid = if (type == "season") id.substringBefore(':') else id
+    return rules.firstOrNull { it.type == rt && it.id == rid }
 }
 
 private val SEASON_EPISODE = Regex("""\bS(\d{1,3})\s*[ .:x-]?\s*E(\d{1,4})\b""", RegexOption.IGNORE_CASE)

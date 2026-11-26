@@ -54,6 +54,13 @@ class OfflineApiClientTest {
         )
         val extras = (api.plan("show", "12", "dev-1") as MusicApiResult.Success).data
         assertTrue(extras.conversionOff)
+        server.takeRequest()
+        // a podcast plan takes the subscription id and how many of the newest
+        server.enqueue(MockResponse().setBody("""{"kind":"audio","items":[{"item_type":"podcast_episode","item_id":"7:abc","device_state":"queued"}],"qualities":[],"limit_bytes":null}"""))
+        val pod = (api.plan("podcast", "7", "dev-1", count = 10) as MusicApiResult.Success).data
+        assertEquals("/api/player/offline/plan?type=podcast&id=7&device=dev-1&count=10", server.takeRequest().path)
+        assertEquals("queued", pod.items.single().deviceState)
+        assertEquals(0L, pod.limitBytes)
         assertEquals("3", extras.rule?.ruleId)
         assertEquals(200L, extras.limitBytes)
     }
@@ -123,6 +130,33 @@ class OfflineApiClientTest {
         assertEquals("r5", saved?.ruleId)
         val ruleBody = server.takeRequest().body.readUtf8()
         assertTrue(ruleBody.contains("\"keep_next\":3") && ruleBody.contains("\"id\":\"12\""))
+
+        // keep_next 0 (delete watched only) is sent, not left out: the server reads a missing one as 3
+        server.enqueue(MockResponse().setBody("""{"success":true,"rule":{"rule_id":9,"type":"show","id":"12","keep_next":0,"delete_watched":true}}"""))
+        val del = (api.saveRule(OfflineRule(deviceId = "d1", type = "show", id = "12", keepNext = null, deleteWatched = true)) as MusicApiResult.Success).data
+        assertTrue(server.takeRequest().body.readUtf8().contains("\"keep_next\":0"))
+        assertEquals(0, del?.keepNext)
+
+        // a device with no limit comes back as null
+        server.enqueue(MockResponse().setBody("""{"devices":[{"device_id":"d2","limit_bytes":null,"free_bytes":null,"wishes":[{"wish_id":3,"action":"add","type":"season","id":"12:2","quality":"phone","title":"Avatar"}]}]}"""))
+        val d2 = (api.devices() as MusicApiResult.Success).data.single()
+        server.takeRequest()
+        assertEquals(0L, d2.limitBytes)
+        assertEquals("3", d2.wishes.single().wishId)
+
+        // admin settings
+        server.enqueue(MockResponse().setBody("""{"success":true,"settings":{"allow_conversion_for_members":false,"max_conversions":2,"cache_gb":100},"is_admin":true,"allow_downloads":true,"can_convert":true,"cache_used_bytes":1234}"""))
+        val info = (api.settings() as MusicApiResult.Success).data
+        assertEquals("/api/player/offline/settings", server.takeRequest().path)
+        assertTrue(info.isAdmin)
+        assertEquals(2, info.settings.maxConversions)
+        assertEquals(1234L, info.cacheUsedBytes)
+        server.enqueue(MockResponse().setBody("""{"success":true,"settings":{"allow_conversion_for_members":true,"max_conversions":4,"cache_gb":100}}"""))
+        val saved2 = (api.saveSettings(maxConversions = 4) as MusicApiResult.Success).data
+        val put = server.takeRequest()
+        assertEquals("PUT", put.method)
+        assertEquals("""{"max_conversions":4}""", put.body.readUtf8())
+        assertEquals(4, saved2.maxConversions)
 
         server.enqueue(MockResponse().setBody("{}"))
         api.sync("d1", listOf(OfflineSyncEvent("watched", "episode", "9", 0.0, 0.0, "2026-11-25T00:00:00Z")))
