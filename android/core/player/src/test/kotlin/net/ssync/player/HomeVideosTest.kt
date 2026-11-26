@@ -64,6 +64,23 @@ class HomeVideosTest {
         assertEquals("VID_1.mp4", d.video.fileName)
         assertEquals(false, d.video.canEdit)
         assertEquals(1.2, d.frames.single().atS, 0.0)
+        assertEquals("", d.video.filmedSource)
+        assertEquals("name", HomeVideoParser.detail("""{"id":1,"filmed_source":"name"}""")!!.video.filmedSource)
+        assertTrue(HomeVideoText.dateHint("file").startsWith("The file's own date"))
+        assertTrue(HomeVideoText.dateHint("camera").startsWith("Read from the video"))
+    }
+
+    @Test fun `the guide pool's home videos`() {
+        val cat = VideoCatalogDecoder.decode(
+            kotlinx.serialization.json.Json.parseToJsonElement(
+                """{"home":[{"id":3,"title":"First snow","duration_s":98.4,"thumb_url":null,"album":"Winter","filmed_at":"2019-11-25T09:00:00"},{"title":"no id"}]}""",
+            ) as kotlinx.serialization.json.JsonObject,
+        )
+        val h = cat.home.single()
+        assertEquals("3", h.id)
+        assertEquals(98.4, h.durationS, 0.0)
+        assertNull(h.thumbUrl)
+        assertEquals("Winter", h.album)
     }
 
     @Test fun `overview survives missing and odd fields`() {

@@ -45,6 +45,8 @@ data class HomeVideo(
     val autoTitle: String = "",
     /** may this profile edit it; null when the server didn't say */
     val canEdit: Boolean? = null,
+    /** where the date came from: you, camera, name, server, file, added */
+    val filmedSource: String = "",
 ) {
     /** how far in, 0..1, null when not started or done */
     val progressFraction: Float?
@@ -177,6 +179,7 @@ object HomeVideoParser {
             userFilmedAt = edited?.bool("filmed_at") ?: !o.str("user_filmed_at").isNullOrBlank(),
             autoTitle = o.str("auto_title").orEmpty(),
             canEdit = o.bool("can_edit"),
+            filmedSource = o.str("filmed_source").orEmpty(),
         )
     }
 
@@ -274,6 +277,16 @@ object HomeVideoText {
     /** "from Plex “Home Videos” and /media/family" */
     fun sourcesLine(o: HomeOverview): String? = o.sources.filter { it.isNotBlank() }.takeIf { it.isNotEmpty() }?.let { s ->
         "from " + if (s.size == 1) s[0] else s.dropLast(1).joinToString(", ") + " and " + s.last()
+    }
+
+    /** the date field's hint: where the date came from */
+    fun dateHint(source: String): String = when (source) {
+        "you" -> "Your date is kept, even after a rescan."
+        "name" -> "Read from the file name. Change it if it's wrong."
+        "server" -> "From your media server. Change it if it's wrong."
+        "file" -> "The file's own date, so it may be when it was copied. Change it if it's wrong."
+        "added" -> "When it was added, since the video had no date. Change it if it's wrong."
+        else -> "Read from the video itself. Change it if the camera's clock was wrong."
     }
 
     fun count(n: Int): String = if (n == 1) "1 video" else "%,d videos".format(Locale.US, n)

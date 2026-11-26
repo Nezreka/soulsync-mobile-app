@@ -177,6 +177,20 @@ data class CatalogRecentEpisode(
     val runtimeSeconds: Int? = null,
 )
 
+/** a home video the guide may schedule (only home libraries switched into the guide, guide=1) */
+@Serializable
+data class CatalogHome(
+    val id: String,
+    val title: String = "",
+    @SerialName("duration_s")
+    val durationS: Double = 0.0,
+    @SerialName("thumb_url")
+    val thumbUrl: String? = null,
+    val album: String = "",
+    @SerialName("filmed_at")
+    val filmedAt: String? = null,
+)
+
 @Serializable
 data class CatalogYoutube(
     val id: String,
@@ -239,6 +253,8 @@ data class VideoCatalog(
     val youtube: List<CatalogYoutube> = emptyList(),
     val kinds: VideoCatalogKinds = VideoCatalogKinds(),
     val libraries: List<PlayerLibrary> = emptyList(),
+    /** home videos in the guide's pool (guide=1 only) */
+    val home: List<CatalogHome> = emptyList(),
 ) {
     /** the ids of the libraries that have a page of their own */
     val ownPageLibraryIds: Set<Int> get() = libraries.filter { it.hasOwnPage }.map { it.id }.toSet()
@@ -1940,7 +1956,12 @@ internal object VideoCatalogDecoder {
                 inGuide = o["in_guide"].boolOrNull() ?: (o["kind"].strOrNull() != "home"),
             )
         } ?: emptyList()
-        return VideoCatalog(movies, shows, recent, youtube, kinds, libraries)
+        val home = (root["home"] as? JsonArray)?.mapNotNull { el ->
+            HomeVideoParser.video(el)?.let { v ->
+                CatalogHome(id = v.id, title = v.title, durationS = v.durationS, thumbUrl = v.thumbUrl, album = v.album, filmedAt = v.filmedAt)
+            }
+        } ?: emptyList()
+        return VideoCatalog(movies, shows, recent, youtube, kinds, libraries, home)
     }
 
     private fun JsonElement?.strOrNull(): String? {

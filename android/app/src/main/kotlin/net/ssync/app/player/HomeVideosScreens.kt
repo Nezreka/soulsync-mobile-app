@@ -139,6 +139,33 @@ internal class HomeLibraryState(val libraryId: Int) {
     var retryEpoch by mutableIntStateOf(0)
     val slots = mutableStateMapOf<String, List<HomeVideo?>>()
     private val inflight = java.util.Collections.synchronizedSet(HashSet<String>())
+    private val lists = java.util.concurrent.ConcurrentHashMap<String, HomeList>()
+
+    fun awaitingPictures(): Boolean =
+        overview?.onThisDay?.any { it.thumbUrl == null && !it.missing } == true ||
+            slots.values.any { l -> l.any { it != null && it.thumbUrl == null && !it.missing } }
+
+    /** the pages holding clips with no picture yet, asked for again (a few at a time) */
+    suspend fun refreshPictures(home: HomeVideosApiClient) {
+        if (overview?.onThisDay?.any { it.thumbUrl == null && !it.missing } == true) {
+            (home.overview(libraryId) as? MusicApiResult.Success)?.data?.let { o ->
+                overview?.let { cur -> overview = cur.copy(onThisDay = o.onThisDay, albums = if (cur.albums.map { it.key } == o.albums.map { it.key }) o.albums else cur.albums) }
+            }
+        }
+        var budget = 4
+        for ((key, l) in slots.toMap()) {
+            val list = lists[key] ?: continue
+            val starts = l.indices.filter { l[it] != null && l[it]!!.thumbUrl == null && !l[it]!!.missing }
+                .map { (it / HomePaging.PAGE) * HomePaging.PAGE }.distinct()
+            for (start in starts) {
+                if (budget-- <= 0) return
+                val r = home.videos(libraryId, month = list.month, album = list.album, query = list.query, offset = start)
+                if (r is MusicApiResult.Success) {
+                    slots[key] = HomePaging.merge(slots[key] ?: l, r.data.total, start, r.data.videos)
+                }
+            }
+        }
+    }
 
     var folders by mutableStateOf(false)
     var scrollIndex = 0
@@ -149,7 +176,7 @@ internal class HomeLibraryState(val libraryId: Int) {
             is MusicApiResult.Success -> {
                 val o = r.data
                 // the months moved (a scan, an edit): the loaded pages no longer line up
-                if (overview?.months != o.months || overview?.albums != o.albums) slots.clear()
+                if (overview?.months != o.months || overview?.albums?.map { it.key to it.count } != o.albums.map { it.key to it.count }) slots.clear()
                 overview = o
                 error = null
             }
@@ -163,6 +190,7 @@ internal class HomeLibraryState(val libraryId: Int) {
         val cur = slots[list.key]
         val base = cur ?: List(list.count) { null }
         val start = HomePaging.pageFor(base, index) ?: if (cur == null) 0 else return
+        lists[list.key] = list
         val tag = "${list.key}@$start"
         if (!inflight.add(tag)) return
         try {
@@ -199,7 +227,46 @@ internal object HomeVideosStore {
     }
 }
 
-internal fun homeThumb(home: HomeVideosApiClient, v: HomeVideo): String = home.absolute(v.thumbUrl) ?: home.thumbUrl(v.id)
+/** the clip's picture; null until the server has made it (its url carries ?v=, so a new pick is a new url) */
+internal fun homeThumb(home: HomeVideosApiClient, v: HomeVideo): String? = home.absolute(v.thumbUrl)
+
+/** a clip's picture, or a steady coloured stand-in while the server is still making it */
+@Composable
+internal fun HomeThumb(v: HomeVideo, home: HomeVideosApiClient, modifier: Modifier = Modifier, maxPx: Int = 480) {
+    val url = homeThumb(home, v)
+    val dim = if (v.missing) 0.35f else 1f
+    if (url == null) {
+        val hue = ((v.id.toLongOrNull() ?: v.id.hashCode().toLong()) * 47 % 360).toFloat().let { if (it < 0) it + 360 else it }
+        Box(
+            modifier.alpha(dim).background(
+                Brush.linearGradient(listOf(Color.hsv(hue, 0.45f, 0.42f), Color.hsv(hue, 0.55f, 0.16f))),
+            ),
+            contentAlignment = Alignment.Center,
+        ) { Icon(Icons.Default.Videocam, contentDescription = HomeVideoText.title(v), tint = Color.White.copy(alpha = 0.45f), modifier = Modifier.size(22.dp)) }
+    } else {
+        SoulSyncArtwork(
+            url = url,
+            contentDescription = HomeVideoText.title(v),
+            fallbackIcon = Icons.Default.Videocam,
+            maxPx = maxPx,
+            modifier = modifier.alpha(dim),
+        )
+    }
+}
+
+/**
+ * pictures are made in the background after a scan: while clips on screen
+ * have none, their pages are asked for again now and then
+ */
+@Composable
+internal fun PictureWatcher(state: HomeLibraryState, home: HomeVideosApiClient) {
+    LaunchedEffect(state) {
+        repeat(40) {
+            delay(6_000)
+            if (state.awaitingPictures()) state.refreshPictures(home)
+        }
+    }
+}
 
 internal fun homePlayable(api: PlayerApiClient, home: HomeVideosApiClient, v: HomeVideo): ActivePlayable = ActivePlayable(
     itemType = "home",
@@ -273,6 +340,7 @@ fun HomeVideosScreen(
     }
     LaunchedEffect(state.revoked) { if (state.revoked) onDeviceRevoked() }
     RefreshAfterPlay(coordinator, state, home)
+    PictureWatcher(state, home)
 
     val o = state.overview
     val name = library.name.ifBlank { "Home videos" }
@@ -312,6 +380,7 @@ fun HomeVideoAlbumScreen(
     val list = HomeList.album(a)
     LaunchedEffect(state.revoked) { if (state.revoked) onDeviceRevoked() }
     RefreshAfterPlay(coordinator, state, home)
+    PictureWatcher(state, home)
     if (LocalIsTv.current) {
         TvHomeAlbum(a, list, state, home, api, coordinator)
     } else {
@@ -467,7 +536,7 @@ private fun PhoneHomeVideos(
                             horizontalArrangement = Arrangement.spacedBy(16.dp),
                         ) {
                             chunks[r].forEach { a ->
-                                AlbumCard(a, home, Modifier.weight(1f)) { onOpenAlbum(a) }
+                                AlbumCard(a, home, state, Modifier.weight(1f)) { onOpenAlbum(a) }
                             }
                             repeat(albumCols - chunks[r].size) { Spacer(Modifier.weight(1f)) }
                         }
@@ -703,13 +772,7 @@ private fun ClipCell(v: HomeVideo, home: HomeVideosApiClient, onClick: () -> Uni
                 },
             ),
     ) {
-        SoulSyncArtwork(
-            url = homeThumb(home, v),
-            contentDescription = title,
-            fallbackIcon = Icons.Default.Videocam,
-            maxPx = 360,
-            modifier = Modifier.fillMaxSize().alpha(if (v.missing) 0.35f else 1f),
-        )
+        HomeThumb(v, home, Modifier.fillMaxSize(), maxPx = 360)
         val day = HomeVideoText.day(v)
         if (day.isNotBlank()) Chip(day, Modifier.align(Alignment.TopStart).padding(4.dp))
         val dur = if (v.missing) "Missing" else HomeVideoText.duration(v.durationS)
@@ -749,7 +812,7 @@ private fun MemoryCard(v: HomeVideo, home: HomeVideosApiClient, modifier: Modifi
                 onLongClick()
             }),
     ) {
-        SoulSyncArtwork(url = homeThumb(home, v), contentDescription = title, fallbackIcon = Icons.Default.Videocam, modifier = Modifier.fillMaxSize())
+        HomeThumb(v, home, Modifier.fillMaxSize(), maxPx = 720)
         Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.4f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.78f))))
         HomeVideoText.duration(v.durationS).takeIf { it.isNotBlank() }?.let { Chip(it, Modifier.align(Alignment.TopEnd).padding(10.dp), tabular = true, big = true) }
         Column(Modifier.align(Alignment.BottomStart).padding(14.dp)) {
@@ -779,14 +842,22 @@ internal fun YearsPill(text: String, big: Boolean = false) {
 
 /** a folder as a stack of its pictures */
 @Composable
-internal fun AlbumStack(a: HomeAlbum, home: HomeVideosApiClient, modifier: Modifier = Modifier, radius: androidx.compose.ui.unit.Dp = 12.dp) {
+internal fun AlbumStack(
+    a: HomeAlbum,
+    home: HomeVideosApiClient,
+    modifier: Modifier = Modifier,
+    radius: androidx.compose.ui.unit.Dp = 12.dp,
+    /** a cover's url: the loaded clip's own (it carries ?v=) when there is one */
+    state: HomeLibraryState? = null,
+    cover: (String) -> String? = { id -> state?.find(id)?.let { homeThumb(home, it) } ?: home.thumbUrl(id) },
+) {
     val covers = a.covers.take(3)
     val density = LocalDensity.current
     Box(modifier.aspectRatio(4f / 3f).padding(top = 8.dp, end = 10.dp)) {
         // the back two lean out behind the front one
         val back = listOf(Triple(10, -8, 4f) to 0.55f, Triple(5, -4, 2f) to 0.8f)
         back.forEachIndexed { i, (t, fade) ->
-            val url = covers.getOrNull(covers.size - 1 - i)?.let { home.thumbUrl(it) }
+            val url = covers.getOrNull(covers.size - 1 - i)?.let(cover)
             Box(
                 Modifier.fillMaxSize()
                     .offset { with(density) { IntOffset(t.first.dp.roundToPx(), t.second.dp.roundToPx()) } }
@@ -803,7 +874,7 @@ internal fun AlbumStack(a: HomeAlbum, home: HomeVideosApiClient, modifier: Modif
         }
         Box(Modifier.fillMaxSize().clip(RoundedCornerShape(radius)).border(1.dp, HomeColors.Line2, RoundedCornerShape(radius))) {
             SoulSyncArtwork(
-                url = covers.firstOrNull()?.let { home.thumbUrl(it) },
+                url = covers.firstOrNull()?.let(cover),
                 contentDescription = HomeVideoText.albumName(a),
                 fallbackIcon = Icons.Default.PhotoLibrary,
                 maxPx = 480,
@@ -814,9 +885,9 @@ internal fun AlbumStack(a: HomeAlbum, home: HomeVideosApiClient, modifier: Modif
 }
 
 @Composable
-private fun AlbumCard(a: HomeAlbum, home: HomeVideosApiClient, modifier: Modifier, onClick: () -> Unit) {
+private fun AlbumCard(a: HomeAlbum, home: HomeVideosApiClient, state: HomeLibraryState, modifier: Modifier, onClick: () -> Unit) {
     Column(modifier.clip(RoundedCornerShape(12.dp)).clickable(onClick = onClick), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        AlbumStack(a, home, Modifier.fillMaxWidth())
+        AlbumStack(a, home, Modifier.fillMaxWidth(), state = state)
         Column {
             Text(HomeVideoText.albumName(a), color = Color.White, fontSize = 14.5.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(HomeVideoText.albumLine(a), color = HomeColors.Muted, fontSize = 12.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -947,7 +1018,7 @@ private fun PhoneHomeAlbum(
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 96.dp)) {
             item(key = "head") {
                 Row(Modifier.fillMaxWidth().padding(start = side, end = side, top = 8.dp, bottom = 18.dp), verticalAlignment = Alignment.CenterVertically) {
-                    AlbumStack(a, home, Modifier.width(92.dp), radius = 10.dp)
+                    AlbumStack(a, home, Modifier.width(92.dp), radius = 10.dp, state = state)
                     Spacer(Modifier.width(16.dp))
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text(HomeVideoText.albumName(a), color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.ExtraBold, maxLines = 2, overflow = TextOverflow.Ellipsis)

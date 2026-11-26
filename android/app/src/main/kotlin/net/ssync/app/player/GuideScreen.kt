@@ -80,6 +80,7 @@ import net.ssync.pairing.ui.dpadFocusable
 import net.ssync.player.CatalogMovie
 import net.ssync.player.CatalogShow
 import net.ssync.player.CatalogShowEpisode
+import net.ssync.player.CatalogHome
 import net.ssync.player.CatalogYoutube
 import net.ssync.player.CommercialClip
 import net.ssync.player.GuidePremiere
@@ -122,7 +123,7 @@ private enum class ChannelKind(val groupLabel: String) {
 
 private data class PoolItem(
     val key: String,
-    val itemType: String, // "movie" | "episode" | "youtube" | "track"
+    val itemType: String, // "movie" | "episode" | "youtube" | "home" | "track"
     val itemId: String,
     val detailId: Int?,
     val title: String,
@@ -308,6 +309,22 @@ private fun youtubePoolItem(v: CatalogYoutube, api: PlayerApiClient): PoolItem =
     posterUrl = api.artwork.resolve(v.thumbnailUrl) ?: api.artwork.forItem("youtube", v.id),
     backdropUrl = api.artwork.resolve(v.thumbnailUrl) ?: api.artwork.forItem("youtube", v.id),
 )
+
+/** a home video as a guide item (the web's homeGuideItem): no picture until the server has made one */
+private fun homePoolItem(v: CatalogHome, api: PlayerApiClient): PoolItem {
+    val art = api.artwork.resolve(v.thumbUrl)
+    return PoolItem(
+        key = "home:${v.id}",
+        itemType = "home",
+        itemId = v.id,
+        detailId = null,
+        title = v.title,
+        subtitle = v.album,
+        seconds = v.durationS.toInt(),
+        posterUrl = art,
+        backdropUrl = art,
+    )
+}
 
 private fun songPoolItem(s: LibSong, api: PlayerApiClient): PoolItem {
     val secs = s.duration?.let { if (it > 10_000L) (it / 1000L).toInt() else it.toInt() } ?: 210
@@ -840,6 +857,16 @@ private fun buildDesktopParityChannels(
             kind = ChannelKind.TYPE,
             blurb = "your downloaded videos",
             pool = youtube.map { youtubePoolItem(it, api) },
+        ),
+    )
+    // home libraries an admin switched into the guide (off by default); same place as the web's, so channel numbers match
+    addChannel(
+        RawChannel(
+            id = "type-home",
+            name = "Home videos",
+            kind = ChannelKind.TYPE,
+            blurb = "your own clips",
+            pool = catalog.home.map { homePoolItem(it, api) },
         ),
     )
     addChannel(

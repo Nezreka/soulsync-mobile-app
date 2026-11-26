@@ -188,6 +188,7 @@ internal fun TvHomeVideos(
                                 TvAlbumCard(
                                     a = a,
                                     home = home,
+                                    state = state,
                                     modifier = if (a.key == o.albums.first().key) Modifier.focusRequester(req("albums")) else Modifier,
                                     onFocused = { currentRow = "albums" },
                                     onClick = { onNavigate(a) },
@@ -374,13 +375,9 @@ private fun TvClipCard(
                 .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onClick),
         ) {
             if (v != null) {
-                SoulSyncArtwork(
-                    url = homeThumb(home, v),
-                    contentDescription = title,
-                    fallbackIcon = Icons.Default.Videocam,
-                    maxPx = if (hero) 720 else 480,
-                    modifier = Modifier.fillMaxSize().alpha(if (v.missing) 0.35f else 1f),
-                )
+                HomeThumb(v, home, Modifier.fillMaxSize(), maxPx = if (hero) 720 else 480)
+                // a missing clip says so without focus
+                if (v.missing && !hero) Chip("Missing", Modifier.align(Alignment.TopStart).padding(6.dp), big = true)
                 if (hero) {
                     Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.4f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.8f))))
                     Column(Modifier.align(Alignment.BottomStart).padding(16.dp)) {
@@ -425,7 +422,7 @@ private fun TvClipCard(
 }
 
 @Composable
-private fun TvAlbumCard(a: HomeAlbum, home: HomeVideosApiClient, modifier: Modifier, onFocused: () -> Unit, onClick: () -> Unit) {
+private fun TvAlbumCard(a: HomeAlbum, home: HomeVideosApiClient, state: HomeLibraryState, modifier: Modifier, onFocused: () -> Unit, onClick: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
     val scale by animateFloatAsState(if (focused) 1.07f else 1f, tween(200), label = "tvAlbumScale")
     Column(Modifier.width(TV_ALBUM_W).zIndex(if (focused) 1f else 0f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -439,7 +436,7 @@ private fun TvAlbumCard(a: HomeAlbum, home: HomeVideosApiClient, modifier: Modif
                 }
                 .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onClick),
         ) {
-            AlbumStack(a, home, Modifier.fillMaxWidth())
+            AlbumStack(a, home, Modifier.fillMaxWidth(), state = state)
             if (focused) {
                 Box(Modifier.matchParentSize().padding(top = 8.dp, end = 10.dp).border(2.5.dp, Color.White, RoundedCornerShape(12.dp)))
             }
@@ -481,7 +478,7 @@ internal fun TvHomeAlbum(
     ) {
         item(key = "head", span = { GridItemSpan(maxLineSpan) }) {
             Row(Modifier.padding(top = 4.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                AlbumStack(a, home, Modifier.width(120.dp), radius = 10.dp)
+                AlbumStack(a, home, Modifier.width(120.dp), radius = 10.dp, state = state)
                 Spacer(Modifier.width(20.dp))
                 Column {
                     Text(HomeVideoText.albumName(a), color = Color.White, fontSize = 30.sp, fontWeight = FontWeight.ExtraBold)

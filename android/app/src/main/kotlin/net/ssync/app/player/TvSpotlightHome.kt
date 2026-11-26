@@ -44,6 +44,7 @@ import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Podcasts
 import androidx.compose.material.icons.filled.SmartDisplay
+import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -310,6 +311,33 @@ internal fun TvSpotlightHome(
                                                 artworkUrl = api.artwork.forItem("youtube", item.itemId, preferBackdrop = true),
                                                 streamUrl = api.streamUrl("youtube", item.itemId),
                                                 isVideo = true,
+                                            ),
+                                        )
+                                    },
+                                )
+                            }
+                            "home" -> {
+                                val art = api.artwork.resolve(item.meta?.backdrop ?: item.meta?.artwork)
+                                    ?: api.artwork.forItem("home", item.itemId)
+                                TvSpotlightCard(
+                                    key = "cw-home-${item.itemId}",
+                                    title = item.meta?.title ?: "Home video",
+                                    subtitle = item.meta?.subtitle ?: "Home video",
+                                    posterUrl = art,
+                                    backdropUrl = art,
+                                    fallbackIcon = Icons.Default.Videocam,
+                                    progress = frac,
+                                    onClick = {
+                                        coordinator.playVideo(
+                                            ActivePlayable(
+                                                itemType = "home",
+                                                itemId = item.itemId,
+                                                title = item.meta?.title ?: "Home video",
+                                                subtitle = item.meta?.subtitle.orEmpty(),
+                                                artworkUrl = art,
+                                                streamUrl = api.streamUrl("home", item.itemId),
+                                                isVideo = true,
+                                                resumePositionMs = if (item.finished) 0L else (item.positionSeconds * 1000.0).toLong(),
                                             ),
                                         )
                                     },

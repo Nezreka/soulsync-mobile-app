@@ -156,16 +156,13 @@ internal fun HomeVideoSheet(
             when (val r = home.update(v.id, sent)) {
                 is MusicApiResult.Success -> {
                     val fresh = r.data ?: (home.detail(v.id) as? MusicApiResult.Success)?.data?.video
-                    var saved = (fresh ?: v.copy(
+                    val saved = (fresh ?: v.copy(
                         title = if (nameAuto) v.title else name.trim().ifBlank { v.title },
                         filmedAt = at?.let { HomeVideoText.isoLocal(it) } ?: v.filmedAt,
                         notes = notes.trim(),
                     )).let { it.copy(album = it.album.ifBlank { v.album }, albumKey = it.albumKey.ifBlank { v.albumKey }) }
-                    // a new picture under the same address: ask for it fresh
-                    if ("thumb_at_s" in sent && saved.thumbUrl == v.thumbUrl) {
-                        val base = saved.thumbUrl ?: home.thumbUrl(v.id)
-                        saved = saved.copy(thumbUrl = base + (if ('?' in base) "&" else "?") + "v=" + System.currentTimeMillis())
-                    }
+                    // the server's thumb_url carries ?v= for the frame it shows, so a new pick is a new url;
+                    // one still being made comes back null and the page's watcher picks it up
                     busy = false
                     onSaved(saved, "filmed_at" in sent)
                     android.widget.Toast.makeText(context, "Saved", android.widget.Toast.LENGTH_SHORT).show()
@@ -185,13 +182,7 @@ internal fun HomeVideoSheet(
         ) {
             // what it is
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                SoulSyncArtwork(
-                    url = thumb,
-                    contentDescription = title,
-                    fallbackIcon = Icons.Default.Videocam,
-                    maxPx = 480,
-                    modifier = Modifier.width(132.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(10.dp)),
-                )
+                HomeThumb(v, home, Modifier.width(132.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(10.dp)))
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Text(title, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     Text(
@@ -276,7 +267,7 @@ internal fun HomeVideoSheet(
 
             Field(
                 "Date filmed",
-                hint = if (dateAuto) "The video's own date comes back when you save." else "Read from the video itself. Change it if the camera's clock was wrong.",
+                hint = if (dateAuto) "The video's own date comes back when you save." else HomeVideoText.dateHint(v.filmedSource),
                 reset = if (v.userFilmedAt && !dateAuto) "Use the video's date" else null,
                 onReset = { dateAuto = true; at = startAt },
             ) {
