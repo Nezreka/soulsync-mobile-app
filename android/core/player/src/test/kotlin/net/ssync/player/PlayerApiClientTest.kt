@@ -76,4 +76,20 @@ class PlayerApiClientTest {
         server.enqueue(MockResponse().setResponseCode(401).setBody("""{"success":false,"error":"device_token_invalid","message":"This device isn't paired with this server any more."}"""))
         assertTrue(client.fetchContinue() is MusicApiResult.DeviceRevoked)
     }
+
+    @Test
+    fun asksTheServerWhereACopiedStreamReallyStarts() = runTest {
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"success":true,"start":118.0,"seek":118.3}"""))
+        val point = client.transcodeStart("movie", "7", 121.25)
+        assertEquals(TranscodeStart(118.0, 118.3), point)
+        val asked = server.takeRequest().path.orEmpty()
+        assertTrue(asked, asked.startsWith("/api/player/transcode/movie/7/start?q=original&t=121.250"))
+        // the seek point goes back exactly, not rounded to a tenth
+        assertTrue(client.transcodeUrl("movie", "7", startSec = 118.3).endsWith("&t=118.300"))
+        // a server that can't say: null, and the player asks for the time it wanted
+        server.enqueue(MockResponse().setResponseCode(500).setBody("{}"))
+        assertEquals(null, client.transcodeStart("movie", "7", 50.0))
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"success":true,"start":60.0,"seek":59.0}"""))
+        assertEquals(null, client.transcodeStart("movie", "7", 61.0))
+    }
 }

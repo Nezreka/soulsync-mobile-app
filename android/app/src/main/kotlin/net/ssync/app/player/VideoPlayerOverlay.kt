@@ -228,6 +228,9 @@ fun VideoPlayerOverlay(
         }
     }
 
+    // the last start still asking the server where it lands: a newer seek replaces it
+    var transcodeStartJob by remember(item.streamUrl) { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+
     fun startTranscodeAt(targetMs: Long) {
         val clamped = targetMs.coerceAtLeast(0L).let {
             if (durationMs > 0L) it.coerceAtMost((durationMs - 1000L).coerceAtLeast(0L)) else it
@@ -237,16 +240,31 @@ fun VideoPlayerOverlay(
         positionMs = clamped
         playbackError = null
         isBuffering = true
-        val url = api.transcodeUrl(
-            itemType = item.itemType,
-            itemId = item.itemId,
-            startSec = clamped / 1000.0,
-            screenId = transcodeScreenId,
-        )
         exoPlayer.stop()
-        exoPlayer.setMediaItem(MediaItem.fromUri(url))
-        exoPlayer.prepare()
-        exoPlayer.playWhenReady = true
+        transcodeStartJob?.cancel()
+        transcodeStartJob = scope.launch {
+            // a copied picture starts on the keyframe before the asked time, often
+            // seconds early: the server says where, so the clock, the progress bar
+            // and the subtitles match the picture (the web player does the same)
+            var startSec = clamped / 1000.0
+            if (clamped > 500L) {
+                val point = api.transcodeStart(item.itemType, item.itemId, startSec)
+                if (point != null) {
+                    startSec = point.seek
+                    transcodeOffsetMs = (point.start * 1000.0).toLong()
+                    positionMs = transcodeOffsetMs
+                }
+            }
+            val url = api.transcodeUrl(
+                itemType = item.itemType,
+                itemId = item.itemId,
+                startSec = startSec,
+                screenId = transcodeScreenId,
+            )
+            exoPlayer.setMediaItem(MediaItem.fromUri(url))
+            exoPlayer.prepare()
+            exoPlayer.playWhenReady = true
+        }
     }
 
     LaunchedEffect(item.streamUrl, item.itemType, item.itemId) {

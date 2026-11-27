@@ -2245,3 +2245,6 @@ data class ResolvedTrackInfo(
     @SerialName("album_id")
     val albumId: Int? = null,
 )
+
+/** where a converted stream really starts (a copied picture begins on a keyframe) */
+data class TranscodeStart(val start: Double, val seek: Double)

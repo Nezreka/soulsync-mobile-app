@@ -78,11 +78,35 @@ class PlayerApiClient(
     ): String = buildString {
         append("$base/api/player/transcode/$itemType/$itemId?q=$quality")
         if (startSec > 0.5) {
-            append("&t=${String.format(java.util.Locale.US, "%.1f", startSec)}")
+            // three places: the server's seek point sits a fraction past a keyframe
+            append("&t=${String.format(java.util.Locale.US, "%.3f", startSec)}")
         }
         if (!screenId.isNullOrBlank()) {
             append("&ps=$screenId")
         }
+    }
+
+    /**
+     * where a converted stream asked to start at [atSec] really starts. a
+     * copied picture can only begin on a keyframe, often seconds before the
+     * asked time: [TranscodeStart.start] is the stream's clock (subtitles and
+     * the progress bar), [TranscodeStart.seek] the t to ask for so ffmpeg
+     * lands on it. null when the server can't say: ask for [atSec] as before.
+     */
+    suspend fun transcodeStart(
+        itemType: String,
+        itemId: String,
+        atSec: Double,
+        quality: String = "original",
+    ): TranscodeStart? {
+        val t = String.format(java.util.Locale.US, "%.3f", atSec)
+        val res = getJson("$base/api/player/transcode/$itemType/$itemId/start?q=$quality&t=$t") { body ->
+            val root = json.parseToJsonElement(body).jsonObject
+            val start = (root["start"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toDoubleOrNull()
+            val seek = (root["seek"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toDoubleOrNull()
+            if (start != null && seek != null && start >= 0.0 && seek >= start) TranscodeStart(start, seek) else null
+        }
+        return (res as? MusicApiResult.Success)?.data
     }
 
     // ── Home & Continue Watching ─────────────────────────────────────────────
