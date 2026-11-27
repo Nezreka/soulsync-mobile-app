@@ -82,7 +82,8 @@ sealed interface AdmitResult<out T> {
     data class Success<T>(val data: T) : AdmitResult<T>
     data object UnprofiledTokenExpired : AdmitResult<Nothing>
     data object InvalidCredentials : AdmitResult<Nothing>
-    data class Failed(val message: String) : AdmitResult<Nothing>
+    /** [status] is the HTTP status, 0 when the server never answered */
+    data class Failed(val message: String, val status: Int = 0) : AdmitResult<Nothing>
 }
 
 @Serializable
@@ -191,7 +192,7 @@ class AdmitClient(
                     response.code == 409 && body.contains("device_pick_expired") ->
                         AdmitResult.UnprofiledTokenExpired
                     response.code == 403 -> AdmitResult.InvalidCredentials
-                    else -> AdmitResult.Failed("Admit request failed (HTTP ${response.code})")
+                    else -> AdmitResult.Failed("Admit request failed (HTTP ${response.code})", response.code)
                 }
             }
         } catch (e: Exception) {

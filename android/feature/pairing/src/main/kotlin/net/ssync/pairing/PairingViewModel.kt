@@ -11,6 +11,7 @@ import kotlinx.coroutines.launch
 import net.ssync.connect.LookupOutcome
 import net.ssync.connect.PairingCode
 import net.ssync.connect.PairingLink
+import net.ssync.connect.PairingMessages
 import net.ssync.connect.RendezvousClient
 import net.ssync.connect.VerifiedServerAnswer
 import net.ssync.network.AdmitClient
@@ -144,9 +145,10 @@ class PairingViewModel(
             val racer = CandidateAddressRacer(pinnedClient)
             val baseUrl = racer.selectBestBaseUrl(current.answer.candidateAddresses)
             if (baseUrl == null) {
+                // the relay found the server; none of its addresses answered (#2328)
                 _step.value = current.copy(
                     isBusy = false,
-                    errorMessage = LookupOutcome.DEFAULT_UNREACHABLE_MESSAGE,
+                    errorMessage = PairingMessages.CANT_CONNECT,
                 )
                 return@launch
             }
@@ -155,8 +157,9 @@ class PairingViewModel(
             val deviceName = "${Build.MANUFACTURER} ${Build.MODEL}".trim().ifBlank { "Android Device" }
             val redeem = admit.redeemCode(current.code, deviceName)
             if (redeem !is AdmitResult.Success) {
+                val status = (redeem as? AdmitResult.Failed)?.status ?: -1
                 _step.value = PairingStep.CodeEntry(
-                    errorMessage = LookupOutcome.DEFAULT_UNREACHABLE_MESSAGE,
+                    errorMessage = PairingMessages.forRedeemStatus(status),
                 )
                 return@launch
             }

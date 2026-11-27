@@ -9,16 +9,35 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import java.io.IOException
 
 sealed interface LookupOutcome {
     data class Verified(val answer: VerifiedServerAnswer) : LookupOutcome
 
     /**
-     * Collapsed honest failure message (DESIGN-CONNECT v0 Section 3: no existence oracle).
+     * The lookup failed. The relay itself never says whether a code exists
+     * (DESIGN-CONNECT v0 Section 3: no existence oracle), but what failed
+     * (the phone's internet, the relay, the answer) is said plainly (#2328).
      */
     data class Unreachable(
         val userMessage: String = DEFAULT_UNREACHABLE_MESSAGE,
+        val reason: Reason = Reason.OTHER,
     ) : LookupOutcome
+
+    enum class Reason {
+        /** 404 unknown_or_expired_code: unknown, expired, or the server isn't connected */
+        UNKNOWN_CODE,
+
+        /** the relay answered with an error it doesn't name, or a 5xx */
+        RELAY_ERROR,
+
+        /** the phone couldn't reach the relay at all */
+        NO_INTERNET,
+
+        /** the sealed answer didn't open or verify */
+        BAD_ANSWER,
+        OTHER,
+    }
 
     data class RateLimited(
         val retryAfterSeconds: Long,
@@ -57,8 +76,8 @@ private data class LookupResponseBody(
  * Security invariants:
  * - Sends ONLY `code_hash` + ephemeral X25519 public key; NEVER sends the raw pairing code.
  * - Lookups never burn a code.
- * - Collapses all unknown / expired / offline / verification failures into [LookupOutcome.Unreachable]
- *   with a single honest message (no existence oracle).
+ * - Never tells an unknown code from an expired one or an offline server (the relay can't either:
+ *   no existence oracle); it does say whether the phone's internet, the relay or the answer failed.
  */
 class RendezvousClient(
     private val baseUrl: String = PROD_BASE_URL,
@@ -103,19 +122,26 @@ class RendezvousClient(
                 if (!response.isSuccessful) {
                     return@withContext mapErrorResponse(bodyString)
                 }
-                val parsed = json.decodeFromString<LookupResponseBody>(bodyString)
+                val parsed = runCatching { json.decodeFromString<LookupResponseBody>(bodyString) }.getOrNull()
+                    ?: return@withContext relayError()
                 val sealedEncoded = parsed.sealedAnswer ?: parsed.sealed
-                    ?: return@withContext LookupOutcome.Unreachable()
+                    ?: return@withContext relayError()
                 val sealedBytes = decodeSealedBytes(sealedEncoded)
-                    ?: return@withContext LookupOutcome.Unreachable()
+                    ?: return@withContext badAnswer()
 
-                val verified = verifier.verifyAndUnseal(
-                    ephemeralPrivateKey = ephemeral.privateKey,
-                    sealedBytes = sealedBytes,
-                    requestedCodeHash = pairingCode.codeHash,
-                )
+                val verified = try {
+                    verifier.verifyAndUnseal(
+                        ephemeralPrivateKey = ephemeral.privateKey,
+                        sealedBytes = sealedBytes,
+                        requestedCodeHash = pairingCode.codeHash,
+                    )
+                } catch (_: Exception) {
+                    return@withContext badAnswer()
+                }
                 LookupOutcome.Verified(verified)
             }
+        } catch (_: IOException) {
+            LookupOutcome.Unreachable(PairingMessages.NO_INTERNET, LookupOutcome.Reason.NO_INTERNET)
         } catch (_: Exception) {
             LookupOutcome.Unreachable()
         } finally {
@@ -126,16 +152,28 @@ class RendezvousClient(
     private fun mapErrorResponse(bodyString: String): LookupOutcome {
         val envelope = runCatching {
             json.decodeFromString<ConnectErrorEnvelope>(bodyString)
-        }.getOrNull() ?: return LookupOutcome.Unreachable()
+        }.getOrNull() ?: return relayError()
 
         return when (envelope.error.errorCode) {
             ConnectErrorCode.RATE_LIMITED -> LookupOutcome.RateLimited(
                 retryAfterSeconds = envelope.error.retryAfterSeconds ?: 60L,
             )
             ConnectErrorCode.VERSION_MISMATCH -> LookupOutcome.VersionMismatch()
-            else -> LookupOutcome.Unreachable()
+            // what connect.ssync.net says for an unknown or expired code, and
+            // for a server that isn't connected (its codes go with it)
+            ConnectErrorCode.UNKNOWN_OR_EXPIRED_CODE -> LookupOutcome.Unreachable(
+                PairingMessages.UNKNOWN_CODE,
+                LookupOutcome.Reason.UNKNOWN_CODE,
+            )
+            else -> relayError()
         }
     }
+
+    private fun relayError() =
+        LookupOutcome.Unreachable(PairingMessages.RELAY_ERROR, LookupOutcome.Reason.RELAY_ERROR)
+
+    private fun badAnswer() =
+        LookupOutcome.Unreachable(PairingMessages.BAD_ANSWER, LookupOutcome.Reason.BAD_ANSWER)
 
     private fun decodeSealedBytes(encoded: String): ByteArray? {
         val trimmed = encoded.trim()

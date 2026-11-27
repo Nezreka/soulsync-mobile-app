@@ -1,5 +1,6 @@
 package net.ssync.network
 
+import net.ssync.connect.ConnectLabelDns
 import net.ssync.connect.CryptoUtils
 import okhttp3.ConnectionPool
 import okhttp3.Dispatcher
@@ -58,6 +59,9 @@ object CertPinningOkHttp {
             }
             .connectTimeout(connectTimeoutSeconds, TimeUnit.SECONDS)
             .readTimeout(readTimeoutSeconds, TimeUnit.SECONDS)
+            // a connect name carries its own ip: no dns, so a router's rebinding
+            // protection can't hide the server's home address (#2328)
+            .dns(ConnectLabelDns.INSTANCE)
 
         if (deviceTokenProvider != null) {
             builder.addInterceptor(BearerTokenInterceptor(deviceTokenProvider, onUnauthorized))
