@@ -392,4 +392,22 @@ class OfflineLogicTest {
         assertEquals(tasks, OfflineCodec.decodeTasks(OfflineCodec.encodeTasks(tasks)))
         assertTrue(OfflineCodec.decodeTasks("{broken").isEmpty())
     }
+
+    @Test
+    fun autoDeleteWatchedVideosRespectsDelayAndLeavesAudioAlone() {
+        val hour = 3_600_000L
+        val now = 100 * hour
+        val tasks = listOf(
+            task("m1", type = "movie", state = TaskState.DOWNLOADED, watched = true).copy(isVideo = true, watchedAtMs = now - 25 * hour),
+            task("e1", type = "episode", state = TaskState.DOWNLOADED, watched = true).copy(isVideo = true, watchedAtMs = now - 2 * hour),
+            task("m2", type = "movie", state = TaskState.DOWNLOADED, watched = false).copy(isVideo = true),
+            task("s1", type = "track", state = TaskState.DOWNLOADED, watched = true).copy(isVideo = false, watchedAtMs = now - 50 * hour),
+        )
+        // off deletes nothing
+        assertEquals(emptySet<String>(), DownloadQueue.expiredWatchedVideoKeys(tasks, 0, now))
+        // right away deletes both watched videos, never unwatched or audio
+        assertEquals(setOf("movie:m1", "episode:e1"), DownloadQueue.expiredWatchedVideoKeys(tasks, -1, now))
+        // 24h delay only deletes m1 (25h ago), keeps e1 (2h ago)
+        assertEquals(setOf("movie:m1"), DownloadQueue.expiredWatchedVideoKeys(tasks, 24, now))
+    }
 }

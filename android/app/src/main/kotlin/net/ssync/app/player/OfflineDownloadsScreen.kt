@@ -794,6 +794,25 @@ private fun DownloadSettingsSheet(api: PlayerApiClient, onDismiss: () -> Unit) {
                 color = DlColors.Muted, fontSize = 12.sp,
             )
 
+            SectionLabel("Auto-delete watched videos")
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                listOf(
+                    0 to "Off",
+                    -1 to "Right away",
+                    24 to "After 1 day",
+                    168 to "After 7 days",
+                    720 to "After 30 days",
+                ).forEach { (hours, label) ->
+                    FilterChipPill(label, settings.autoDeleteWatchedVideoHours == hours) {
+                        OfflineDownloads.updateSettings(context) { it.copy(autoDeleteWatchedVideoHours = hours) }
+                    }
+                }
+            }
+            Text(
+                "Removes finished movies and episodes from this phone automatically after you watch them. Music and books stay.",
+                color = DlColors.Muted, fontSize = 12.sp,
+            )
+
             SectionLabel("Quality for films and TV")
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 listOf("" to "Ask each time", "original" to "Original", "high" to "1080p", "phone" to "720p", "small" to "480p").forEach { (id, label) ->

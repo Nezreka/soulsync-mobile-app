@@ -26,6 +26,8 @@ data class OfflineSettings(
     /** remembered per kind; blank until someone picks one */
     val videoQuality: String = "",
     val audioQuality: String = "",
+    /** auto-delete watched videos: 0 = off, -1 = right away, >0 = hours after watching (#2340) */
+    val autoDeleteWatchedVideoHours: Int = 0,
 )
 
 /** live numbers for a download in flight (not saved: they change every half second) */
@@ -100,6 +102,7 @@ object OfflineDownloads {
                 limitBytes = sp.getLong("limit_bytes", 0L),
                 videoQuality = sp.getString("video_quality", "").orEmpty(),
                 audioQuality = sp.getString("audio_quality", "").orEmpty(),
+                autoDeleteWatchedVideoHours = sp.getInt("auto_delete_watched_video_hours", 0),
             )
             val store = File(d, "downloads.json")
             val loaded = if (store.exists()) {
@@ -115,6 +118,7 @@ object OfflineDownloads {
             ops = File(d, "ops.json").takeIf { it.exists() }?.let { OfflineCodec.decodeOps(it.readText()) }.orEmpty()
             _rules.value = File(d, "rules.json").takeIf { it.exists() }?.let { OfflineCodec.decodeRules(it.readText()) }.orEmpty()
         }
+        pruneExpiredWatchedVideos()
     }
 
     /**
@@ -325,7 +329,22 @@ object OfflineDownloads {
 
     fun markWatched(itemType: String, itemId: String, watched: Boolean = true) {
         val key = task(itemType, itemId)?.key ?: return
-        updateTask(key) { if (it.watched == watched) it else it.copy(watched = watched) }
+        val now = System.currentTimeMillis()
+        updateTask(key) {
+            if (it.watched == watched && (!watched || it.watchedAtMs > 0L)) it
+            else it.copy(watched = watched, watchedAtMs = if (watched) now else 0L)
+        }
+        if (watched) pruneExpiredWatchedVideos(now)
+    }
+
+    /** remove downloaded videos past the configured auto-delete-after-viewing window (#2340) */
+    fun pruneExpiredWatchedVideos(nowMs: Long = System.currentTimeMillis()): Int {
+        val delayHours = _settings.value.autoDeleteWatchedVideoHours
+        if (delayHours == 0) return 0
+        val expired = DownloadQueue.expiredWatchedVideoKeys(_tasks.value, delayHours, nowMs)
+        if (expired.isEmpty()) return 0
+        remove(expired, tellServer = false)
+        return expired.size
     }
 
     fun savePosition(itemType: String, itemId: String, positionS: Double, durationS: Double) {
@@ -353,7 +372,11 @@ object OfflineDownloads {
             .putLong("limit_bytes", next.limitBytes)
             .putString("video_quality", next.videoQuality)
             .putString("audio_quality", next.audioQuality)
+            .putInt("auto_delete_watched_video_hours", next.autoDeleteWatchedVideoHours)
             .apply()
+        if (next.autoDeleteWatchedVideoHours != 0 && next.autoDeleteWatchedVideoHours != before.autoDeleteWatchedVideoHours) {
+            pruneExpiredWatchedVideos()
+        }
         if (before.wifiOnly != next.wifiOnly || before.limitBytes != next.limitBytes) {
             // a looser rule may let waiting downloads go now
             update { list -> list.map { if (it.state == TaskState.FAILED && it.error?.startsWith("Over") == true) it.copy(state = TaskState.QUEUED, error = null) else it } }
