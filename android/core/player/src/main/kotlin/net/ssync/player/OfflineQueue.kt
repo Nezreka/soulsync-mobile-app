@@ -61,6 +61,8 @@ data class DownloadTask(
     /** manual | wish | rule | migrated */
     val reason: String = "manual",
     val watched: Boolean = false,
+    /** epoch ms when the item was marked watched on this device (0 = unknown) */
+    val watchedAtMs: Long = 0L,
     val positionS: Double = 0.0,
     val durationS: Double = 0.0,
     val addedAtMs: Long = 0L,
@@ -165,6 +167,25 @@ object DownloadQueue {
     }
 
     fun moveToTop(tasks: List<DownloadTask>, key: String): List<DownloadTask> = move(tasks, key, 0)
+
+    /**
+     * keys of downloaded video tasks that should be auto-deleted after viewing (#2340).
+     * delayHours: 0 = off, <0 = right away, >0 = remove once that many hours have passed since watchedAtMs.
+     * music, podcasts and audiobooks are never auto-deleted.
+     */
+    fun expiredWatchedVideoKeys(
+        tasks: List<DownloadTask>,
+        delayHours: Int,
+        nowMs: Long,
+    ): Set<String> {
+        if (delayHours == 0) return emptySet()
+        val delayMs = if (delayHours < 0) 0L else delayHours.toLong() * 3_600_000L
+        return tasks.asSequence()
+            .filter { it.state == TaskState.DOWNLOADED && it.isVideo && it.watched }
+            .filter { delayHours < 0 || (it.watchedAtMs > 0L && nowMs - it.watchedAtMs >= delayMs) }
+            .map { it.key }
+            .toSet()
+    }
 
     /** a dropped connection retries on its own this many times before it waits for a person */
     const val MAX_AUTO_ATTEMPTS = 5
