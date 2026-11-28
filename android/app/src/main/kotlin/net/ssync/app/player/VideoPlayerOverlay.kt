@@ -20,6 +20,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -103,6 +104,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
@@ -406,6 +408,35 @@ fun VideoPlayerOverlay(
             runCatching { exoPlayer.release() }
             latestOnClose(pos, dur)
         }
+    }
+
+    // the server's subtitles (sidecars and ai ones too), drawn by the app so a delay can move them
+    val serverSubs = remember(item.itemType, item.itemId) {
+        ServerSubtitleState(
+            client = net.ssync.player.SubtitleApiClient(api.baseUrl, api.pinnedAuthenticatedClient),
+            itemType = item.itemType,
+            itemId = item.itemId,
+            scope = scope,
+        )
+    }
+    LaunchedEffect(serverSubs) {
+        if (isRemoteStream && canTranscode) serverSubs.refreshTracks()
+    }
+    // an ai job keeps being asked about while the player is open, sheet or not
+    LaunchedEffect(serverSubs, serverSubs.aiJob?.id, serverSubs.aiJob?.isActive == true) {
+        serverSubs.pollAi()
+    }
+    // the app draws a server subtitle itself, so the player's own ones go off
+    LaunchedEffect(serverSubs.selected?.id) {
+        if (serverSubs.selected != null) {
+            exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters
+                .buildUpon()
+                .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+                .build()
+        }
+    }
+    DisposableEffect(serverSubs) {
+        onDispose { serverSubs.flushDelay() }
     }
 
     var watchedMarked by remember(item.itemType, item.itemId) { mutableStateOf(false) }
@@ -874,6 +905,13 @@ fun VideoPlayerOverlay(
                     .background(Color.Black.copy(alpha = dimAlpha)),
             )
         }
+
+        ServerSubtitleCues(
+            state = serverSubs,
+            positionMs = { effectivePositionMs() },
+            raised = showHud,
+            modifier = Modifier.align(Alignment.BottomCenter),
+        )
 
         if (isBuffering && playbackError == null) {
             var bufferSeconds by remember(item.streamUrl, usingTranscode) { mutableStateOf(0) }
@@ -1930,7 +1968,8 @@ fun VideoPlayerOverlay(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 20.dp)
-                        .padding(bottom = 28.dp),
+                        .padding(bottom = 28.dp)
+                        .verticalScroll(androidx.compose.foundation.rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     Row(
@@ -1992,19 +2031,36 @@ fun VideoPlayerOverlay(
                         Text("SUBTITLES", color = SoulSyncColors.TextSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                         TrackOptionRow(
                             label = "Off",
-                            selected = textGroups.none { it.isSelected },
+                            selected = textGroups.none { it.isSelected } && serverSubs.selected == null,
                         ) {
+                            serverSubs.select(null)
                             exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters
                                 .buildUpon()
                                 .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
                                 .build()
                             showTracksSheet = false
                         }
-                        textGroups.forEachIndexed { gIdx, group ->
+                        // the server's text subtitles, drawn by the app (works on a converted stream too)
+                        val serverText = serverSubs.textSubtitles
+                        serverText.forEach { sub ->
+                            ServerSubtitleRow(sub = sub, selected = serverSubs.selected?.id == sub.id) {
+                                serverSubs.select(sub)
+                                showTracksSheet = false
+                            }
+                        }
+                        // the player's own ones: all of them, or only picture ones the server can't send as text
+                        val imageMimes = setOf(MimeTypes.APPLICATION_PGS, MimeTypes.APPLICATION_VOBSUB, MimeTypes.APPLICATION_DVBSUBS)
+                        val ownGroups = if (serverText.isEmpty()) {
+                            textGroups
+                        } else {
+                            textGroups.filter { it.getTrackFormat(0).sampleMimeType in imageMimes }
+                        }
+                        ownGroups.forEachIndexed { gIdx, group ->
                             val fmt = group.getTrackFormat(0)
                             val label = listOfNotNull(fmt.label, fmt.language?.uppercase()).joinToString(" · ")
                                 .ifBlank { "Subtitle ${gIdx + 1}" }
-                            TrackOptionRow(label = label, selected = group.isSelected) {
+                            TrackOptionRow(label = label, selected = group.isSelected && serverSubs.selected == null) {
+                                serverSubs.select(null)
                                 exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters
                                     .buildUpon()
                                     .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
@@ -2012,6 +2068,14 @@ fun VideoPlayerOverlay(
                                     .build()
                                 showTracksSheet = false
                             }
+                        }
+                        if (serverSubs.selected != null) {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            when {
+                                serverSubs.loadingCues -> Text("Loading subtitle…", color = SoulSyncColors.TextSoft, fontSize = 12.sp)
+                                serverSubs.cueError != null -> Text(serverSubs.cueError.orEmpty(), color = SoulSyncColors.AccentLight, fontSize = 12.sp)
+                            }
+                            SubtitleDelayControl(serverSubs)
                         }
                     } else {
                         // Find Subtitles via SoulSync's subtitle providers
@@ -2028,6 +2092,12 @@ fun VideoPlayerOverlay(
                                 ) {
                                     Text(code.uppercase(), color = if (on) Color.White else SoulSyncColors.TextSoft, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                                 }
+                            }
+                        }
+                        if (serverSubs.canAi) {
+                            AiSubtitleRow(state = serverSubs, lang = subLang) { made ->
+                                serverSubs.select(made)
+                                showTracksSheet = false
                             }
                         }
                         if (subStatus != null) {
@@ -2067,6 +2137,18 @@ fun VideoPlayerOverlay(
                                                 scope.launch {
                                                     when (val r = api.downloadSubtitle(item.itemType, idInt, subLang, cand.candidateId)) {
                                                         is MusicApiResult.Success -> {
+                                                            // the new file sits beside the video: show it from the server, no reload
+                                                            if (serverSubs.loaded && serverSubs.refreshTracks()) {
+                                                                val saved = serverSubs.textSubtitles.lastOrNull {
+                                                                    it.external && !it.ai && net.ssync.player.SubtitleLanguages.same(it.language, subLang)
+                                                                }
+                                                                if (saved != null) {
+                                                                    subStatus = "Subtitle saved."
+                                                                    serverSubs.select(saved)
+                                                                    showTracksSheet = false
+                                                                    return@launch
+                                                                }
+                                                            }
                                                             subStatus = "Subtitle saved! Reloading stream…"
                                                             val resumeAt = effectivePositionMs()
                                                             if (usingTranscode) {
